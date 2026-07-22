@@ -93,6 +93,23 @@ Gemini 3 models use string-based thinking levels. Available levels differ by mod
 }
 ```
 
+### Gemini 3.6 Flash Example
+
+```json
+{
+  "antigravity-gemini-3.6-flash": {
+    "name": "Gemini 3.6 Flash (Antigravity)",
+    "limit": { "context": 1048576, "output": 65536 },
+    "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
+    "variants": {
+      "low": { "thinkingLevel": "low" },
+      "medium": { "thinkingLevel": "medium" },
+      "high": { "thinkingLevel": "high" }
+    }
+  }
+}
+```
+
 ---
 
 ## Claude Thinking Budget

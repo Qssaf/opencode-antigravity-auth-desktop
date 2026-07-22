@@ -446,12 +446,13 @@ describe("isLikelyAntigravityOnlyModel", () => {
     expect(isLikelyAntigravityOnlyModel("claude-opus-4-6-thinking")).toBe(true);
   });
 
-  it("does NOT flag public-API Gemini 3 ids (preview / lite / 3.5-flash)", () => {
+  it("does NOT flag public-API Gemini 3 ids (preview / lite / 3.5-flash / 3.6-flash)", () => {
     expect(isLikelyAntigravityOnlyModel("gemini-3.1-pro-preview")).toBe(false);
     expect(isLikelyAntigravityOnlyModel("gemini-3-pro-preview")).toBe(false);
     expect(isLikelyAntigravityOnlyModel("gemini-3.1-flash-lite")).toBe(false);
     expect(isLikelyAntigravityOnlyModel("gemini-3-flash-preview")).toBe(false);
     expect(isLikelyAntigravityOnlyModel("gemini-3.5-flash")).toBe(false);
+    expect(isLikelyAntigravityOnlyModel("gemini-3.6-flash")).toBe(false);
   });
 
   it("does NOT flag Gemini 2.x ids", () => {
