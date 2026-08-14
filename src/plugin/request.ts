@@ -2376,6 +2376,32 @@ export function buildThinkingWarmupBody(
 }
 
 /**
+ * Google's Gemini API returns a confusing IAM permission error when the
+ * free/paid Antigravity quota is exhausted:
+ *
+ *   Your account lacks the required IAM permission "cloudaicompanion.instances.completeTask"
+ *   on resource "projects/rising-fact-p41fc". Please contact your administrator.
+ *
+ * Detect that error and rewrite it into a clear, actionable message.
+ */
+const QUOTA_EXHAUSTED_PATTERNS: Array<RegExp> = [
+  /cloudaicompanion\.instances\.completeTask/i,
+  /lacks the required IAM permission/i,
+  /please contact your administrator/i,
+];
+
+export function rewriteQuotaExhaustedError(message: string): string | null {
+  if (!message) return null;
+  const isQuotaError = QUOTA_EXHAUSTED_PATTERNS.some((pattern) => pattern.test(message));
+  if (!isQuotaError) return null;
+  return (
+    "You've run out of Gemini/Antigravity quota. " +
+    "Your subscription's usage limit is exhausted — wait for it to reset, " +
+    "add another account, or switch to a different model/provider."
+  );
+}
+
+/**
  * Normalizes Antigravity responses: applies retry headers, extracts cache usage into headers,
  * rewrites preview errors, flattens streaming payloads, and logs debug metadata.
  *
@@ -2478,10 +2504,16 @@ export async function transformAntigravityResponse(
           errorBody.error.message.length > 0
             ? errorBody.error.message
             : "Unknown error";
-        const errorType = detectErrorType(rawErrorMessage);
+
+        // Rewrite Google's misleading IAM-permission error (returned when the
+        // Gemini/Antigravity quota is exhausted) into a clear quota message.
+        const quotaMessage = rewriteQuotaExhaustedError(rawErrorMessage);
+        const rewrittenErrorMessage = quotaMessage ?? rawErrorMessage;
+
+        const errorType = detectErrorType(rewrittenErrorMessage);
         const debugInfo = `\n\n[Debug Info]\nRequested Model: ${requestedModel || "Unknown"}\nEffective Model: ${effectiveModel || "Unknown"}\nProject: ${projectId || "Unknown"}\nEndpoint: ${endpoint || "Unknown"}\nStatus: ${response.status}\nRequest ID: ${headers.get("x-request-id") || "N/A"}${toolDebugMissing !== undefined ? `\nTool Debug Missing: ${toolDebugMissing}` : ""}${toolDebugSummary ? `\nTool Debug Summary: ${toolDebugSummary}` : ""}${toolDebugPayload ? `\nTool Debug Payload: ${toolDebugPayload}` : ""}`;
         const injectedDebug = debugText ? `\n\n${debugText}` : "";
-        errorBody.error.message = rawErrorMessage + debugInfo + injectedDebug;
+        errorBody.error.message = rewrittenErrorMessage + debugInfo + injectedDebug;
 
         // Check if this is a recoverable thinking error - throw to trigger retry
         if (errorType === "thinking_block_order") {

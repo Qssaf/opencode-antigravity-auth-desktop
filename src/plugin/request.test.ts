@@ -1627,6 +1627,67 @@ it("removes API key headers", () => {
         ),
       ).rejects.toMatchObject({ message: "THINKING_RECOVERY_NEEDED" });
     });
+
+    it("rewrites the IAM quota-exhausted error into a clear quota message", async () => {
+      const response = new Response(
+        JSON.stringify({
+          error: {
+            code: 403,
+            message:
+              'Your account lacks the required IAM permission "cloudaicompanion.instances.completeTask" on resource "projects/rising-fact-p41fc". Please contact your administrator.',
+            status: "PERMISSION_DENIED",
+          },
+        }),
+        {
+          status: 403,
+          headers: { "content-type": "application/json" },
+        },
+      );
+
+      const transformed = await transformAntigravityResponse(
+        response,
+        false,
+        undefined,
+        "antigravity-gemini-3.1-pro",
+        "rising-fact-p41fc",
+        "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:generateContent",
+        "gemini-3.1-pro",
+        "session-1",
+      );
+
+      const bodyText = await transformed.text();
+      expect(bodyText).toContain("You've run out of Gemini/Antigravity quota.");
+      expect(bodyText).not.toContain("cloudaicompanion.instances.completeTask");
+    });
+
+    it("leaves non-quota errors untouched", async () => {
+      const response = new Response(
+        JSON.stringify({
+          error: {
+            code: 400,
+            message: "Request contains an invalid argument.",
+            status: "INVALID_ARGUMENT",
+          },
+        }),
+        {
+          status: 400,
+          headers: { "content-type": "application/json" },
+        },
+      );
+
+      const transformed = await transformAntigravityResponse(
+        response,
+        false,
+        undefined,
+        "antigravity-gemini-3.1-pro",
+        "test-project",
+        "https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:generateContent",
+        "gemini-3.1-pro",
+        "session-1",
+      );
+
+      await expect(transformed.text()).resolves.toContain("Request contains an invalid argument.");
+    });
   });
 });
 
