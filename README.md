@@ -58,35 +58,52 @@ What that means in practice:
 
 **Option A: Let an LLM do it**
 
-This fork is not on npm, so it is installed from source. Paste this into any LLM agent (Claude Code, OpenCode, Cursor, etc.) — it is written to be executed without follow-up questions:
+This fork is not on npm, so it is installed from source. Paste this into any LLM agent (Claude Code, OpenCode, Cursor, etc.) — it is written to handle existing clones, stale remotes, and build verification automatically without questions:
 
 ```
-Install the opencode-antigravity-auth-desktop plugin from https://github.com/Qssaf/opencode-antigravity-auth-desktop into OpenCode. Steps:
+Install/update the opencode-antigravity-auth-desktop plugin from https://github.com/Qssaf/opencode-antigravity-auth-desktop into OpenCode. Steps:
 
-1. Clone https://github.com/Qssaf/opencode-antigravity-auth-desktop into ~/.config/opencode/opencode-antigravity-auth
-2. In that directory run `npm install` then `npm run build`. This produces dist/index.js, which is gitignored, so the build step is required and cannot be skipped.
-3. In ~/.config/opencode/opencode.json add the built plugin to the "plugin" array as an absolute file URL, expanding ~ to my real home directory:
+1. Target directory: ~/.config/opencode/opencode-antigravity-auth
+   CRITICAL CHECK: If this directory already exists, check `git -C ~/.config/opencode/opencode-antigravity-auth remote get-url origin`.
+   If it is NOT "https://github.com/Qssaf/opencode-antigravity-auth-desktop.git" (e.g. if it points to NoeFabris or another fork), remove the existing folder with `rm -rf ~/.config/opencode/opencode-antigravity-auth` before cloning.
+   Clone fresh: `git clone https://github.com/Qssaf/opencode-antigravity-auth-desktop.git ~/.config/opencode/opencode-antigravity-auth` (or if remote is already Qssaf, run `git pull`).
+
+2. In ~/.config/opencode/opencode-antigravity-auth run `npm install` then `npm run build`.
+   SANITY CHECK: This repo uses esbuild. `npm run build` MUST generate a bundled `dist/index.js` (~550 KB, NOT ~200 bytes).
+   Verify with `grep -c "gemini-3.7-flash" dist/index.js` — it must output >= 1.
+
+3. In ~/.config/opencode/opencode.json add the built plugin to the "plugin" array as an absolute file URL, expanding ~ to my real home directory (e.g. file:///root/... or file:///home/user/...):
    "plugin": ["file:///ABSOLUTE/PATH/TO/.config/opencode/opencode-antigravity-auth/dist/index.js"]
-   If a different antigravity or gemini auth plugin is already listed, remove it — they conflict.
-4. Run `opencode auth login`, choose Google, and complete the OAuth flow in the browser. Repeat it once per Google account to enable multi-account quota rotation.
-5. Verify with: opencode run "Reply with exactly: OK" --model=google/antigravity-gemini-3.7-flash
-   If that prints OK, the install is working. If it errors, run `opencode models | grep antigravity-gemini-3.7` and report the output.
+   If another antigravity/gemini auth plugin (like opencode-antigravity-auth@latest) is in the array, remove it.
 
-Do not publish, commit, or modify my credentials. Do not edit files outside ~/.config/opencode.
+4. Run `opencode auth login`, choose Google, and complete the OAuth flow if not already logged in.
+
+5. Verify with: opencode run "Reply with exactly: OK" --model=google/antigravity-gemini-3.7-flash
+   If that prints OK, the install is verified and operational.
+
+Do not publish, commit, or modify credentials. Do not edit files outside ~/.config/opencode.
 ```
 
 **Option B: Manual setup**
 
-1. **Clone and build** the plugin:
+1. **Clone and build** the plugin (ensure you clone Qssaf's fork, not upstream):
 
    ```bash
+   # Remove stale upstream clone if present
+   if [ -d "$HOME/.config/opencode/opencode-antigravity-auth" ]; then
+     CURRENT_REMOTE=$(git -C "$HOME/.config/opencode/opencode-antigravity-auth" remote get-url origin 2>/dev/null || true)
+     if [[ "$CURRENT_REMOTE" != *"Qssaf/opencode-antigravity-auth-desktop"* ]]; then
+       rm -rf "$HOME/.config/opencode/opencode-antigravity-auth"
+     fi
+   fi
+
    git clone https://github.com/Qssaf/opencode-antigravity-auth-desktop.git \
      ~/.config/opencode/opencode-antigravity-auth
    cd ~/.config/opencode/opencode-antigravity-auth
    npm install && npm run build
    ```
 
-   > `dist/` is gitignored, so `npm run build` is required. Re-run it after every `git pull`.
+   > `dist/index.js` is bundled via esbuild (~550 KB) and gitignored. `npm run build` is required. Re-run it after every `git pull`.
 
 2. **Add the plugin** to `~/.config/opencode/opencode.json` (absolute path — `~` is not expanded inside a `file://` URL):
 
@@ -119,9 +136,9 @@ Do not publish, commit, or modify my credentials. Do not edit files outside ~/.c
 
 ### Step-by-Step Instructions
 
-1. Clone `https://github.com/Qssaf/opencode-antigravity-auth-desktop` to `~/.config/opencode/opencode-antigravity-auth`
+1. Clone `https://github.com/Qssaf/opencode-antigravity-auth-desktop` to `~/.config/opencode/opencode-antigravity-auth`. If that directory already exists from an upstream clone (e.g. NoeFabris), verify `git remote get-url origin` or remove it and re-clone fresh.
 
-2. Run `npm install && npm run build` in that directory — `dist/index.js` is gitignored and **must** be built
+2. Run `npm install && npm run build` in that directory — `dist/index.js` is bundled via esbuild (~550 KB, not ~200 bytes) and **must** be built (verify `grep -c "gemini-3.7-flash" dist/index.js` is >= 1)
 
 3. Edit the OpenCode configuration file at `~/.config/opencode/opencode.json`
 
