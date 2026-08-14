@@ -1,16 +1,30 @@
 # Antigravity + Gemini CLI OAuth Plugin for Opencode
 
-[![npm version](https://img.shields.io/npm/v/opencode-antigravity-auth.svg)](https://www.npmjs.com/package/opencode-antigravity-auth)
-[![npm beta](https://img.shields.io/npm/v/opencode-antigravity-auth/beta.svg?label=beta)](https://www.npmjs.com/package/opencode-antigravity-auth)
-[![npm downloads](https://img.shields.io/npm/dw/opencode-antigravity-auth.svg)](https://www.npmjs.com/package/opencode-antigravity-auth)
+[![Gemini 3.7 Flash](https://img.shields.io/badge/Gemini-3.7%20Flash-4285F4?logo=googlegemini&logoColor=white)](#models)
+[![Claude Opus 4.6](https://img.shields.io/badge/Claude-Opus%204.6-D97757?logo=anthropic&logoColor=white)](#models)
+[![Install from source](https://img.shields.io/badge/install-from%20source-24292e?logo=github&logoColor=white)](#installation)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![X (Twitter)](https://img.shields.io/badge/X-@dopesalmon-000000?style=flat&logo=x)](https://x.com/dopesalmon)
+[![Maintained by AI](https://img.shields.io/badge/maintained%20by-AI-8A2BE2)](#-this-repository-is-maintained-entirely-by-ai)
 
-Enable Opencode to authenticate against **Antigravity** (Google's IDE) via OAuth so you can use Antigravity rate limits and access models like `gemini-3.1-pro` and `claude-opus-4-6-thinking` with your Google credentials.
+Enable Opencode to authenticate against **Antigravity** (Google's IDE) via OAuth so you can use Antigravity rate limits and access models like `gemini-3.7-flash`, `gemini-3.1-pro`, and `claude-opus-4-6-thinking` with your Google credentials.
+
+## 🤖 This repository is maintained entirely by AI
+
+Every line in this fork — source, tests, commit messages, and this README — is written, debugged, and verified by AI agents. A human sets the goal and approves the result; no human hand-writes code here.
+
+What that means in practice:
+
+- **Findings are measured, not assumed.** Model IDs, version thresholds, and endpoint behaviour are confirmed by replaying live API calls before anything is committed — not copied from blog posts or model memory.
+- **Every change ships with evidence.** Full test suite green, `tsc --noEmit` clean, and the built plugin exercised against the real backend.
+- **Commits are atomic and explain the "why".** Each commit body records the reasoning and the measurement behind the change.
+- **Expect fast, frequent updates.** Google reshapes this backend constantly; the fork tracks it aggressively rather than waiting on release cycles.
+
+> [!NOTE]
+> This is a fork of [chrisgeo/opencode-antigravity-auth](https://github.com/chrisgeo/opencode-antigravity-auth), itself a fork of [NoeFabris/opencode-antigravity-auth](https://github.com/NoeFabris/opencode-antigravity-auth). It is **not published to npm** — install it from source using the instructions below.
 
 ## What You Get
 
-- **Claude Opus 4.6, Sonnet 4.6** and **Gemini 3.1 Pro/Flash** via Google OAuth
+- **Gemini 3.7 Flash** (newest), **Gemini 3.1 Pro**, and **Claude Opus 4.6 / Sonnet 4.6** via Google OAuth
 - **Multi-account support** — add multiple Google accounts, auto-rotates when rate-limited
 - **Modern Gemini API support** — use Antigravity SDK-style API keys / Cloud Projects as Gemini backups or opt-in primary routing
 - **Legacy Gemini CLI quota support** — still available for compatibility and quota fallback
@@ -44,38 +58,58 @@ Enable Opencode to authenticate against **Antigravity** (Google's IDE) via OAuth
 
 **Option A: Let an LLM do it**
 
-Paste this into any LLM agent (Claude Code, OpenCode, Cursor, etc.):
+This fork is not on npm, so it is installed from source. Paste this into any LLM agent (Claude Code, OpenCode, Cursor, etc.) — it is written to be executed without follow-up questions:
 
 ```
-Install the opencode-antigravity-auth plugin and add the Antigravity model definitions to ~/.config/opencode/opencode.json by following: https://raw.githubusercontent.com/NoeFabris/opencode-antigravity-auth/dev/README.md
+Install the opencode-antigravity-auth-desktop plugin from https://github.com/Qssaf/opencode-antigravity-auth-desktop into OpenCode. Steps:
+
+1. Clone https://github.com/Qssaf/opencode-antigravity-auth-desktop into ~/.config/opencode/opencode-antigravity-auth
+2. In that directory run `npm install` then `npm run build`. This produces dist/index.js, which is gitignored, so the build step is required and cannot be skipped.
+3. In ~/.config/opencode/opencode.json add the built plugin to the "plugin" array as an absolute file URL, expanding ~ to my real home directory:
+   "plugin": ["file:///ABSOLUTE/PATH/TO/.config/opencode/opencode-antigravity-auth/dist/index.js"]
+   If a different antigravity or gemini auth plugin is already listed, remove it — they conflict.
+4. Run `opencode auth login`, choose Google, and complete the OAuth flow in the browser. Repeat it once per Google account to enable multi-account quota rotation.
+5. Verify with: opencode run "Reply with exactly: OK" --model=google/antigravity-gemini-3.7-flash
+   If that prints OK, the install is working. If it errors, run `opencode models | grep antigravity-gemini-3.7` and report the output.
+
+Do not publish, commit, or modify my credentials. Do not edit files outside ~/.config/opencode.
 ```
 
 **Option B: Manual setup**
 
-1. **Add the plugin** to `~/.config/opencode/opencode.json`:
+1. **Clone and build** the plugin:
+
+   ```bash
+   git clone https://github.com/Qssaf/opencode-antigravity-auth-desktop.git \
+     ~/.config/opencode/opencode-antigravity-auth
+   cd ~/.config/opencode/opencode-antigravity-auth
+   npm install && npm run build
+   ```
+
+   > `dist/` is gitignored, so `npm run build` is required. Re-run it after every `git pull`.
+
+2. **Add the plugin** to `~/.config/opencode/opencode.json` (absolute path — `~` is not expanded inside a `file://` URL):
 
    ```json
    {
-     "plugin": ["opencode-antigravity-auth@latest"]
+     "plugin": ["file:///home/YOUR_USER/.config/opencode/opencode-antigravity-auth/dist/index.js"]
    }
    ```
 
-   > Want bleeding-edge features? Use `opencode-antigravity-auth@beta` instead.
-
-2. **Login** with your Google account:
+3. **Login** with your Google account:
 
    ```bash
    opencode auth login
    ```
 
-3. **Models** — current OpenCode versions can load plugin models dynamically at runtime. If your OpenCode version still requires static provider config, choose one:
+4. **Models** — current OpenCode versions can load plugin models dynamically at runtime. If your OpenCode version still requires static provider config, choose one:
    - Run `opencode auth login` → Google → OAuth with Google (Antigravity) → select **"Configure models in opencode.json"** (auto-configures all models)
    - Or manually copy the [full configuration](#models) below
 
-4. **Use it:**
+5. **Use it:**
 
    ```bash
-   opencode run "Hello" --model=google/antigravity-claude-opus-4-6-thinking --variant=max
+   opencode run "Reply with exactly: OK" --model=google/antigravity-gemini-3.7-flash
    ```
 
 </details>
@@ -85,21 +119,29 @@ Install the opencode-antigravity-auth plugin and add the Antigravity model defin
 
 ### Step-by-Step Instructions
 
-1. Edit the OpenCode configuration file at `~/.config/opencode/opencode.json`
-   
+1. Clone `https://github.com/Qssaf/opencode-antigravity-auth-desktop` to `~/.config/opencode/opencode-antigravity-auth`
+
+2. Run `npm install && npm run build` in that directory — `dist/index.js` is gitignored and **must** be built
+
+3. Edit the OpenCode configuration file at `~/.config/opencode/opencode.json`
+
    > **Note**: This path works on all platforms. On Windows, `~` resolves to your user home directory (e.g., `C:\Users\YourName`).
 
-2. Add the plugin to the `plugin` array
+4. Add the built bundle to the `plugin` array as an absolute `file://` URL — `~` is **not** expanded inside a file URL, so resolve the real home directory first
 
-3. Add the model definitions from the [Full models configuration](#models) section
+5. Remove any other antigravity/gemini auth plugin from the array — they conflict
 
-4. Set `provider` to `"google"` and choose a model
+6. Add the model definitions from the [Full models configuration](#models) section only if your OpenCode build cannot load plugin models dynamically
+
+7. Set `provider` to `"google"` and choose a model
 
 ### Verification
 
 ```bash
-opencode run "Hello" --model=google/antigravity-claude-opus-4-6-thinking --variant=max
+opencode run "Reply with exactly: OK" --model=google/antigravity-gemini-3.7-flash
 ```
+
+If this fails, run `opencode models | grep antigravity-gemini-3.7` — an empty result means the plugin did not load.
 
 </details>
 
@@ -118,7 +160,7 @@ opencode run "Hello" --model=google/antigravity-claude-opus-4-6-thinking --varia
 | `antigravity-gemini-3-flash` | minimal, low, medium, high | Gemini 3 Flash with thinking |
 | `antigravity-gemini-3.5-flash` | minimal, low, medium, high | Gemini 3.5 Flash with thinking (rollout-dependent) |
 | `antigravity-gemini-3.6-flash` | low, medium, high | Gemini 3.6 Flash with thinking (medium default) |
-| `antigravity-gemini-3.7-flash` | low, medium, high | Gemini 3.7 Flash with thinking (medium default, rollout-dependent) |
+| `antigravity-gemini-3.7-flash` | low, medium, high | **Newest.** Gemini 3.7 Flash with thinking (medium default) |
 | `antigravity-claude-sonnet-4-6` | — | Claude Sonnet 4.6 |
 | `antigravity-claude-opus-4-6-thinking` | low, max | Claude Opus 4.6 with extended thinking |
 
@@ -136,7 +178,7 @@ The official Antigravity SDK uses `GEMINI_API_KEY` for local Gemini access. This
 | `gemini-3.5-flash` | Gemini 3.5 Flash (rollout-dependent) |
 | `gemini-3.5-flash-lite` | Gemini 3.5 Flash-Lite (minimal default) |
 | `gemini-3.6-flash` | Gemini 3.6 Flash (medium default) |
-| `gemini-3.7-flash` | Gemini 3.7 Flash (medium default, rollout-dependent) |
+| `gemini-3.7-flash` | **Newest.** Gemini 3.7 Flash (medium default) |
 | `gemini-3-pro-preview` | Gemini 3 Pro (preview) |
 | `gemini-3.1-pro` | Gemini 3.1 Pro |
 | `gemini-3.1-pro-preview-customtools` | Gemini 3.1 Pro Preview Custom Tools |
@@ -150,9 +192,25 @@ The official Antigravity SDK uses `GEMINI_API_KEY` for local Gemini access. This
 > - Claude and image models always use Antigravity.
 > Model names are automatically transformed for the target API (e.g., `antigravity-gemini-3-flash` → `gemini-3-flash-preview` for CLI).
 
+### Tier-specific IDs (from live discovery)
+
+Antigravity does not serve a bare `gemini-3.6-flash` / `gemini-3.7-flash` — it advertises one backend ID per thinking tier. The plugin resolves the friendly name above to the right one automatically, but the raw IDs are also selectable directly:
+
+| Backend ID | Thinking budget |
+|-----------|-----------------|
+| `antigravity-gemini-3.7-flash-low` | 1000 |
+| `antigravity-gemini-3.7-flash-medium` | 4000 (default) |
+| `antigravity-gemini-3.7-flash-high` | dynamic (`-1`) |
+
+The same `-low` / `-medium` / `-high` scheme applies to `antigravity-gemini-3.6-flash`.
+
+> [!IMPORTANT]
+> **The backend gates its model roster on the client version the plugin advertises.** A client reporting `<= 2.5.0` receives 24 models with no Gemini 3.7; `>= 2.5.5` receives 27 including all three 3.7 tiers. This plugin pins a current version and refuses to accept a lower one from the upstream auto-updater, which reports a stale pinned release. If Gemini 3.7 ever disappears from `opencode models`, that guard is the first thing to check.
+
 **Using variants:**
 ```bash
 opencode run "Hello" --model=google/antigravity-claude-opus-4-6-thinking --variant=max
+opencode run "Hello" --model=google/antigravity-gemini-3.7-flash --variant=high
 ```
 
 For details on variant configuration and thinking levels, see [docs/MODEL-VARIANTS.md](docs/MODEL-VARIANTS.md).
@@ -165,7 +223,7 @@ Add this to your `~/.config/opencode/opencode.json`:
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["opencode-antigravity-auth@latest"],
+  "plugin": ["file:///home/YOUR_USER/.config/opencode/opencode-antigravity-auth/dist/index.js"],
   "provider": {
     "google": {
       "models": {
@@ -436,9 +494,9 @@ Invalid JSON payload received. Unknown name "parameters" at 'request.tools[0]'
 - Plugin version regression
 
 **Solutions:**
-1. **Update to latest beta:**
-   ```json
-   { "plugin": ["opencode-antigravity-auth@beta"] }
+1. **Update to the latest build:**
+   ```bash
+   cd ~/.config/opencode/opencode-antigravity-auth && git pull && npm install && npm run build
    ```
 
 2. **Disable MCP servers** one-by-one to find the problematic one
@@ -469,7 +527,7 @@ This usually means an MCP tool name starts with a number (for example, a 1mcp ke
 **Diagnosis:**
 1. Disable all MCP servers in your config
 2. Enable one-by-one until error reappears
-3. Report the specific MCP in a [GitHub issue](https://github.com/NoeFabris/opencode-antigravity-auth/issues)
+3. Report the specific MCP in a [GitHub issue](https://github.com/Qssaf/opencode-antigravity-auth-desktop/issues)
 
 ---
 
@@ -597,7 +655,7 @@ The correct key is `plugin` (singular):
 
 ```json
 {
-  "plugin": ["opencode-antigravity-auth@beta"]
+  "plugin": ["file:///home/YOUR_USER/.config/opencode/opencode-antigravity-auth/dist/index.js"]
 }
 ```
 
@@ -608,7 +666,7 @@ The correct key is `plugin` (singular):
 ### Migrating Accounts Between Machines
 
 When copying `antigravity-accounts.json` to a new machine:
-1. Ensure the plugin is installed: `"plugin": ["opencode-antigravity-auth@beta"]`
+1. Ensure the plugin is installed and built (`npm install && npm run build`) and referenced by its absolute `file://` path
 2. Copy `~/.config/opencode/antigravity-accounts.json`
 3. If you get "API key missing" error, the refresh token may be invalid — re-authenticate
 
@@ -626,7 +684,7 @@ DCP creates synthetic assistant messages that lack thinking blocks. **List this 
 ```json
 {
   "plugin": [
-    "opencode-antigravity-auth@latest",
+    "file:///home/YOUR_USER/.config/opencode/opencode-antigravity-auth/dist/index.js",
     "@tarquinen/opencode-dcp@latest"
   ]
 }
@@ -661,7 +719,7 @@ Create `~/.config/opencode/antigravity.json` for optional settings:
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/NoeFabris/opencode-antigravity-auth/main/assets/antigravity.schema.json"
+  "$schema": "https://raw.githubusercontent.com/Qssaf/opencode-antigravity-auth-desktop/main/assets/antigravity.schema.json"
 }
 ```
 
@@ -788,8 +846,12 @@ See the full [Troubleshooting Guide](docs/TROUBLESHOOTING.md) for solutions to c
 
 ## Credits
 
+- [chrisgeo/opencode-antigravity-auth](https://github.com/chrisgeo/opencode-antigravity-auth) — direct upstream of this fork
+- [NoeFabris/opencode-antigravity-auth](https://github.com/NoeFabris/opencode-antigravity-auth) by [@dopesalmon](https://x.com/dopesalmon) — original plugin
 - [opencode-gemini-auth](https://github.com/jenslys/opencode-gemini-auth) by [@jenslys](https://github.com/jenslys)
 - [CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI)
+
+Upstream authors wrote the original plugin. Everything in *this fork* is authored by AI agents — see [above](#-this-repository-is-maintained-entirely-by-ai).
 
 ## License
 
