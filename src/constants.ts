@@ -70,7 +70,12 @@ export const GEMINI_CLI_ENDPOINT = ANTIGRAVITY_ENDPOINT_PROD;
  */
 export const ANTIGRAVITY_DEFAULT_PROJECT_ID = "rising-fact-p41fc";
 
-export const ANTIGRAVITY_VERSION_FALLBACK = "1.18.3";
+/**
+ * The backend gates its model roster on the version the client advertises.
+ * Verified against v1internal:fetchAvailableModels: <= 2.5.0 returns 24 models,
+ * >= 2.5.5 returns 27 and includes gemini-3.7-flash-{low,medium,high}.
+ */
+export const ANTIGRAVITY_VERSION_FALLBACK = "2.8.0";
 let antigravityVersion = ANTIGRAVITY_VERSION_FALLBACK;
 let versionLocked = false;
 

@@ -34,6 +34,16 @@ describe("ANTIGRAVITY_VERSION_FALLBACK", () => {
     expect(major).toBeGreaterThanOrEqual(1)
     if (major === 1) expect(minor).toBeGreaterThanOrEqual(18)
   })
+
+  it("is at least 2.5.5 so the backend advertises Gemini 3.7 Flash", async () => {
+    const { getAntigravityVersion } = await import("../constants.ts")
+    const [major, minor, patch] = getAntigravityVersion().split(".").map(Number)
+    expect(major).toBeGreaterThanOrEqual(2)
+    if (major === 2) {
+      expect(minor).toBeGreaterThanOrEqual(5)
+      if (minor === 5) expect(patch).toBeGreaterThanOrEqual(5)
+    }
+  })
 })
 
 describe("setAntigravityVersion", () => {
@@ -75,17 +85,34 @@ describe("initAntigravityVersion — network failure path", () => {
     expect(getAntigravityVersion()).toBe(ANTIGRAVITY_VERSION_FALLBACK)
   })
 
-  it("uses API version when auto-updater responds", async () => {
+  it("uses API version when it is newer than the fallback", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue({ ok: true, text: async () => "1.19.0" }),
+      vi.fn().mockResolvedValue({ ok: true, text: async () => "99.1.0" }),
     )
 
     const { getAntigravityVersion } = await import("../constants.ts")
     const { initAntigravityVersion } = await import("./version.ts")
     await initAntigravityVersion()
 
-    expect(getAntigravityVersion()).toBe("1.19.0")
+    expect(getAntigravityVersion()).toBe("99.1.0")
+  })
+
+  it("keeps the fallback when the auto-updater reports a stale pinned version", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        text: async () => "Auto updater is running. Fixed Version: 2.0.6",
+      }),
+    )
+
+    const { ANTIGRAVITY_VERSION_FALLBACK, getAntigravityVersion } = await import("../constants.ts")
+    const { initAntigravityVersion } = await import("./version.ts")
+    await initAntigravityVersion()
+
+    expect(getAntigravityVersion()).toBe(ANTIGRAVITY_VERSION_FALLBACK)
+    expect(getAntigravityVersion()).not.toBe("2.0.6")
   })
 
   it("fallback version appears in User-Agent header", async () => {

@@ -28,6 +28,26 @@ function parseVersion(text: string): string | null {
   return match ? match[0] : null;
 }
 
+function compareVersions(a: string, b: string): number {
+  const left = a.split(".").map(Number);
+  const right = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    const diff = (left[i] ?? 0) - (right[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+/**
+ * The auto-updater reports a pinned "Fixed Version" (2.0.6 as of Aug 2026) that
+ * lags the shipping client. Since the backend gates its model roster on the
+ * advertised version, trusting a lower remote value silently drops models —
+ * so never downgrade below the bundled fallback.
+ */
+function highestVersion(remote: string, fallback: string): string {
+  return compareVersions(remote, fallback) >= 0 ? remote : fallback;
+}
+
 async function tryFetchVersion(url: string, maxChars?: number): Promise<string | null> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -72,10 +92,13 @@ export async function initAntigravityVersion(): Promise<void> {
     }
   }
 
-  if (version !== fallback) {
-    log.info("version-updated", { version, source, previous: fallback });
+  const effective = highestVersion(version, fallback);
+  if (effective !== fallback) {
+    log.info("version-updated", { version: effective, source, previous: fallback });
+  } else if (effective !== version) {
+    log.info("version-remote-stale", { remote: version, source, using: effective });
   } else {
-    log.debug("version-unchanged", { version, source });
+    log.debug("version-unchanged", { version: effective, source });
   }
-  setAntigravityVersion(version);
+  setAntigravityVersion(effective);
 }
