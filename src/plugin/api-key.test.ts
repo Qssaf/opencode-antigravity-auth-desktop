@@ -301,7 +301,7 @@ describe("api-key agy sdk support", () => {
       contents: [],
       generationConfig: {
         thinkingConfig: {
-          thinkingLevel: "low",
+          thinkingLevel: "medium",
           includeThoughts: true,
         },
       },
