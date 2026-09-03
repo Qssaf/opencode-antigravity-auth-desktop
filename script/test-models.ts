@@ -11,6 +11,8 @@ const MODELS: ModelTest[] = [
   { model: "google/gemini-3-flash-preview", category: "gemini-cli" },
   { model: "google/gemini-3.5-flash-lite", category: "gemini-cli" },
   { model: "google/gemini-3.6-flash", category: "gemini-cli" },
+  { model: "google/gemini-3.7-flash", category: "gemini-cli" },
+  { model: "google/gemini-3.8-flash", category: "gemini-cli" },
   { model: "google/gemini-3-pro-preview", category: "gemini-cli" },
   { model: "google/gemini-2.5-pro", category: "gemini-cli" },
   { model: "google/gemini-2.5-flash", category: "gemini-cli" },
@@ -20,6 +22,8 @@ const MODELS: ModelTest[] = [
   { model: "google/antigravity-gemini-3-pro-high", category: "antigravity-gemini" },
   { model: "google/antigravity-gemini-3-flash", category: "antigravity-gemini" },
   { model: "google/antigravity-gemini-3.6-flash", category: "antigravity-gemini" },
+  { model: "google/antigravity-gemini-3.7-flash", category: "antigravity-gemini" },
+  { model: "google/antigravity-gemini-3.8-flash", category: "antigravity-gemini" },
 
   // Antigravity Claude
   { model: "google/antigravity-claude-sonnet-4-6", category: "antigravity-claude" },
