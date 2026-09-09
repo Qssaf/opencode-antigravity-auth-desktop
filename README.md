@@ -119,6 +119,7 @@ opencode run "Hello" --model=google/antigravity-claude-opus-4-6-thinking --varia
 | `antigravity-gemini-3.5-flash` | minimal, low, medium, high | Gemini 3.5 Flash with thinking (rollout-dependent) |
 | `antigravity-gemini-3.6-flash` | low, medium, high | Gemini 3.6 Flash with thinking (medium default) |
 | `antigravity-gemini-3.7-flash` | minimal, low, medium, high | Gemini 3.7 Flash with thinking |
+| `antigravity-gemini-3.8-flash` | minimal, low, medium, high | Gemini 3.8 Flash with thinking |
 | `antigravity-claude-sonnet-4-6` | — | Claude Sonnet 4.6 |
 | `antigravity-claude-opus-4-6-thinking` | low, max | Claude Opus 4.6 with extended thinking |
 
@@ -137,6 +138,7 @@ The official Antigravity SDK uses `GEMINI_API_KEY` for local Gemini access. This
 | `gemini-3.5-flash-lite` | Gemini 3.5 Flash-Lite (minimal default) |
 | `gemini-3.6-flash` | Gemini 3.6 Flash (medium default) |
 | `gemini-3.7-flash` | Gemini 3.7 Flash |
+| `gemini-3.8-flash` | Gemini 3.8 Flash |
 | `gemini-3-pro-preview` | Gemini 3 Pro (preview) |
 | `gemini-3.1-pro` | Gemini 3.1 Pro |
 | `gemini-3.1-pro-preview-customtools` | Gemini 3.1 Pro Preview Custom Tools |
@@ -230,6 +232,17 @@ Add this to your `~/.config/opencode/opencode.json`:
             "high": { "thinkingLevel": "high" }
           }
         },
+        "antigravity-gemini-3.8-flash": {
+          "name": "Gemini 3.8 Flash (Antigravity)",
+          "limit": { "context": 1048576, "output": 65536 },
+          "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
+          "variants": {
+            "minimal": { "thinkingLevel": "minimal" },
+            "low": { "thinkingLevel": "low" },
+            "medium": { "thinkingLevel": "medium" },
+            "high": { "thinkingLevel": "high" }
+          }
+        },
         "antigravity-claude-sonnet-4-6": {
           "name": "Claude Sonnet 4.6 (Antigravity)",
           "limit": { "context": 200000, "output": 64000 },
@@ -286,6 +299,17 @@ Add this to your `~/.config/opencode/opencode.json`:
         },
         "gemini-3.7-flash": {
           "name": "Gemini 3.7 Flash (Gemini CLI)",
+          "limit": { "context": 1048576, "output": 65536 },
+          "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
+          "variants": {
+            "minimal": { "thinkingLevel": "minimal" },
+            "low": { "thinkingLevel": "low" },
+            "medium": { "thinkingLevel": "medium" },
+            "high": { "thinkingLevel": "high" }
+          }
+        },
+        "gemini-3.8-flash": {
+          "name": "Gemini 3.8 Flash (Gemini CLI)",
           "limit": { "context": 1048576, "output": 65536 },
           "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
           "variants": {
