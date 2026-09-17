@@ -2531,6 +2531,10 @@ export const createAntigravityPlugin = (providerId: string) => async (
               prepared: Awaited<ReturnType<typeof prepareAntigravityRequest>>,
               projectId: string,
             ): Promise<void> => {
+              if (!config.enable_thinking_warmup) {
+                return;
+              }
+
               if (!prepared.needsSignedThinkingWarmup || !prepared.sessionId) {
                 return;
               }

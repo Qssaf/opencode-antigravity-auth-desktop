@@ -137,21 +137,32 @@ function singleOptionUnionSchema(
   return undefined;
 }
 
+const geminiSchemaCache = new WeakMap<object, unknown>();
+
 export function toGeminiSchema(schema: unknown): unknown {
   // Return primitives and arrays as-is
   if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
     return schema;
   }
 
+  const cached = geminiSchemaCache.get(schema);
+  if (cached !== undefined) {
+    return cached;
+  }
+
   const inputSchema = schema as Record<string, unknown>;
   const singleOptionSchema = singleOptionUnionSchema(inputSchema);
   if (singleOptionSchema) {
-    return toGeminiSchema(singleOptionSchema);
+    const result = toGeminiSchema(singleOptionSchema);
+    geminiSchemaCache.set(schema, result);
+    return result;
   }
 
   const nullableSchema = nullableUnionSchema(inputSchema);
   if (nullableSchema) {
-    return toGeminiSchema(nullableSchema);
+    const result = toGeminiSchema(nullableSchema);
+    geminiSchemaCache.set(schema, result);
+    return result;
   }
 
   const result: Record<string, unknown> = {};
@@ -229,6 +240,7 @@ export function toGeminiSchema(schema: unknown): unknown {
     result.items = { type: "STRING" };
   }
 
+  geminiSchemaCache.set(schema, result);
   return result;
 }
 
