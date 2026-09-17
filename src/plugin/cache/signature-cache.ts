@@ -13,7 +13,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
-import { tmpdir } from "node:os";
 import type { SignatureCacheConfig } from "../config";
 import { ensureGitignoreSync } from "../storage";
 
@@ -390,20 +389,16 @@ export class SignatureCache {
         },
       };
 
-      // Step 5: Atomic write (temp file + rename)
-      const tmpPath = join(tmpdir(), `antigravity-cache-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
+      const tmpPath = `${this.cacheFilePath}.${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`;
       writeFileSync(tmpPath, JSON.stringify(cacheData, null, 2), "utf-8");
 
       try {
         renameSync(tmpPath, this.cacheFilePath);
       } catch {
-        // On Windows, rename across volumes may fail
-        // Fall back to copy + delete
         writeFileSync(this.cacheFilePath, readFileSync(tmpPath));
         try {
           unlinkSync(tmpPath);
         } catch {
-          // Ignore cleanup errors
         }
       }
 

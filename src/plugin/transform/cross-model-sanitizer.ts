@@ -273,6 +273,17 @@ export function sanitizeCrossModelPayload(
     };
   }
 
+  if (options.sourceModel) {
+    const sourceFamily = getModelFamily(options.sourceModel);
+    if (sourceFamily === targetFamily) {
+      return {
+        payload,
+        modified: false,
+        signaturesStripped: 0,
+      };
+    }
+  }
+
   const preserveNonSignature = options.preserveNonSignatureMetadata ?? true;
   const result = deepSanitizeCrossModelMetadata(
     payload,
@@ -295,6 +306,13 @@ export function sanitizeCrossModelPayloadInPlace(
 
   if (targetFamily === "unknown") {
     return 0;
+  }
+
+  if (options.sourceModel) {
+    const sourceFamily = getModelFamily(options.sourceModel);
+    if (sourceFamily === targetFamily) {
+      return 0;
+    }
   }
 
   const preserveNonSignature = options.preserveNonSignatureMetadata ?? true;

@@ -34,13 +34,13 @@ export const ANTIGRAVITY_ENDPOINT_AUTOPUSH = "https://autopush-cloudcode-pa.sand
 export const ANTIGRAVITY_ENDPOINT_PROD = "https://cloudcode-pa.googleapis.com";
 
 /**
- * Endpoint fallback order (daily → autopush → prod).
- * Shared across request handling and project discovery to mirror CLIProxy behavior.
+ * Endpoint fallback order (prod → daily → autopush).
+ * Production is primary for lowest latency, edge BGP routing, and global reliability.
  */
 export const ANTIGRAVITY_ENDPOINT_FALLBACKS = [
+  ANTIGRAVITY_ENDPOINT_PROD,
   ANTIGRAVITY_ENDPOINT_DAILY,
   ANTIGRAVITY_ENDPOINT_AUTOPUSH,
-  ANTIGRAVITY_ENDPOINT_PROD,
 ] as const;
 
 /**
@@ -54,9 +54,9 @@ export const ANTIGRAVITY_LOAD_ENDPOINTS = [
 ] as const;
 
 /**
- * Primary endpoint to use (daily sandbox - same as CLIProxy/Vibeproxy).
+ * Primary endpoint to use (production).
  */
-export const ANTIGRAVITY_ENDPOINT = ANTIGRAVITY_ENDPOINT_DAILY;
+export const ANTIGRAVITY_ENDPOINT = ANTIGRAVITY_ENDPOINT_PROD;
 
 /**
  * Gemini CLI endpoint (production).

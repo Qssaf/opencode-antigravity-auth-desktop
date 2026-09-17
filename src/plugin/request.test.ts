@@ -8,7 +8,7 @@ import {
 } from "./request";
 import { DEFAULT_CONFIG } from "./config";
 import { initializeDebug } from "./debug";
-import { SKIP_THOUGHT_SIGNATURE } from "../constants";
+import { SKIP_THOUGHT_SIGNATURE, ANTIGRAVITY_ENDPOINT } from "../constants";
 import { cacheSignature, getCachedSignature, clearSignatureCache } from "./cache";
 import * as config from "./config";
 import type { SignatureStore, ThoughtBuffer, StreamingCallbacks, StreamingOptions } from "./core/streaming/types";
@@ -579,7 +579,7 @@ describe("request.ts", () => {
       );
 
       const headers = result.init.headers as Headers;
-      expect(result.request).toBe("https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:generateContent");
+      expect(result.request).toBe(`${ANTIGRAVITY_ENDPOINT}/v1internal:generateContent`);
       expect(headers.get("Authorization")).toBe("Bearer test-token");
       expect(headers.get("x-goog-api-key")).toBeNull();
       expect(result.init.method).toBe("POST");

@@ -161,6 +161,7 @@ export const AntigravityConfigSchema = z.object({
    * @default false
    */
   keep_thinking: z.boolean().default(false),
+  enable_thinking_warmup: z.boolean().default(false),
   
   // =========================================================================
   // Session Recovery
@@ -514,6 +515,7 @@ export const DEFAULT_CONFIG: AntigravityConfig = {
   debug: false,
   debug_tui: false,
   keep_thinking: false,
+  enable_thinking_warmup: false,
   session_recovery: true,
   auto_resume: true,
   resume_text: "continue",

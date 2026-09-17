@@ -37,11 +37,19 @@ function addBoundedThinkingHash(hashes: Set<string>, hash: string): void {
  * Uses DJB2-like algorithm.
  */
 function hashString(str: string): string {
-  let hash = 5381;
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) + hash) + str.charCodeAt(i); /* hash * 33 + c */
+  const len = str.length;
+  let hash = (5381 ^ len) >>> 0;
+  if (len <= 512) {
+    for (let i = 0; i < len; i++) {
+      hash = (((hash << 5) + hash) + str.charCodeAt(i)) >>> 0;
+    }
+  } else {
+    const step = Math.ceil(len / 256);
+    for (let i = 0; i < len; i += step) {
+      hash = (((hash << 5) + hash) + str.charCodeAt(i)) >>> 0;
+    }
   }
-  return (hash >>> 0).toString(16);
+  return hash.toString(16);
 }
 
 export function createThoughtBuffer(): ThoughtBuffer {
@@ -218,6 +226,16 @@ export function transformSseLine(
   try {
     const parsed = JSON.parse(json) as { response?: unknown };
     if (parsed.response !== undefined) {
+      const hasInterestingData =
+        line.includes('"thought"') ||
+        line.includes('"thinking"') ||
+        line.includes('"signature"') ||
+        line.includes('"inlineData"');
+
+      if (!hasInterestingData && (!options.debugText || debugState.injected)) {
+        return `data: ${JSON.stringify(parsed.response)}`;
+      }
+
       if (options.cacheSignatures && options.signatureSessionKey) {
         cacheThinkingSignaturesFromResponse(
           parsed.response,

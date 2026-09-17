@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
+import { ANTIGRAVITY_ENDPOINT } from "../constants";
 import type { HeaderStyle, ModelFamily } from "./accounts";
 import { resetAgySdkCredentialStateForTests } from "./api-key";
 import type { AgySdkCredential } from "./api-key";
@@ -402,7 +403,7 @@ describe("account verification probe", () => {
 
       expect(result?.status).toBe("ok");
       const [url, init] = fetchMock.mock.calls[1]!;
-      expect(url.toString()).toContain("daily-cloudcode-pa.sandbox.googleapis.com");
+      expect(url.toString()).toContain(ANTIGRAVITY_ENDPOINT);
       const headers = new Headers(init?.headers);
       expect(headers.get("x-goog-user-project")).toBeNull();
       expect(JSON.parse(String(init?.body))).toMatchObject({

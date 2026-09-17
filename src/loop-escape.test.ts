@@ -44,14 +44,11 @@ describe("fix 1: capacity-retry loop escape decision (hasUsableEndpointAfterInde
   });
 
   it("gemini-cli has NO usable endpoint after PROD -> must switch account after capacity exhaustion", () => {
-    // This is the crux of the loop-escape fix: for gemini-cli the PROD endpoint
-    // is the last (and only) usable one, so once capacity retries are exhausted
-    // there is nothing else to try and control must return to account rotation.
     expect(hooks.hasUsableEndpointAfterIndex(prodIndex, "gemini-cli")).toBe(false);
-    // Earlier indices also have no *usable* endpoint after them for gemini-cli
-    // because the intermediate sandbox endpoints are skipped.
-    expect(hooks.hasUsableEndpointAfterIndex(0, "gemini-cli")).toBe(true); // PROD still ahead
-    expect(hooks.hasUsableEndpointAfterIndex(prodIndex - 1, "gemini-cli")).toBe(true);
+    if (prodIndex > 0) {
+      expect(hooks.hasUsableEndpointAfterIndex(0, "gemini-cli")).toBe(true);
+      expect(hooks.hasUsableEndpointAfterIndex(prodIndex - 1, "gemini-cli")).toBe(true);
+    }
   });
 
   it("antigravity still tries later endpoints, but switches after the last one", () => {
