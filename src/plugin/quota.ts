@@ -1,4 +1,6 @@
 import {
+  ANTIGRAVITY_ENDPOINT_DAILY,
+  ANTIGRAVITY_ENDPOINT_AUTOPUSH,
   ANTIGRAVITY_ENDPOINT_PROD,
   getAntigravityHeaders,
   ANTIGRAVITY_PROVIDER_ID,
@@ -204,34 +206,48 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = F
   }
 }
 
+const QUOTA_ENDPOINTS = [
+  "https://daily-cloudcode-pa.googleapis.com",
+  ANTIGRAVITY_ENDPOINT_DAILY,
+  ANTIGRAVITY_ENDPOINT_AUTOPUSH,
+  ANTIGRAVITY_ENDPOINT_PROD,
+] as const;
+
 export async function fetchAvailableModels(
   accessToken: string,
   projectId: string,
 ): Promise<FetchAvailableModelsResponse> {
-  const endpoint = ANTIGRAVITY_ENDPOINT_PROD;
   const quotaUserAgent = getAntigravityHeaders()["User-Agent"] || "antigravity/windows/amd64";
   const errors: string[] = [];
-
   const body = projectId ? { project: projectId } : {};
-  const response = await fetchWithTimeout(`${endpoint}/v1internal:fetchAvailableModels`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-      "User-Agent": quotaUserAgent,
-    },
-    body: JSON.stringify(body),
-  });
 
-  if (response.ok) {
-    return (await response.json()) as FetchAvailableModelsResponse;
+  for (const endpoint of QUOTA_ENDPOINTS) {
+    try {
+      const response = await fetchWithTimeout(`${endpoint}/v1internal:fetchAvailableModels`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          "User-Agent": quotaUserAgent,
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (response.ok) {
+        return (await response.json()) as FetchAvailableModelsResponse;
+      }
+
+      const message = await response.text().catch(() => "");
+      const snippet = message.trim().slice(0, 200);
+      errors.push(
+        `fetchAvailableModels ${response.status} at ${endpoint}${snippet ? `: ${snippet}` : ""}`,
+      );
+    } catch (err) {
+      errors.push(
+        `fetchAvailableModels at ${endpoint}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
-
-  const message = await response.text().catch(() => "");
-  const snippet = message.trim().slice(0, 200);
-  errors.push(
-    `fetchAvailableModels ${response.status} at ${endpoint}${snippet ? `: ${snippet}` : ""}`,
-  );
 
   throw new Error(errors.join("; ") || "fetchAvailableModels failed");
 }
@@ -240,36 +256,31 @@ async function fetchGeminiCliQuota(
   accessToken: string,
   projectId: string,
 ): Promise<RetrieveUserQuotaResponse> {
-  const endpoint = ANTIGRAVITY_ENDPOINT_PROD;
-  // Use Gemini CLI user-agent to get CLI quota buckets (not Antigravity buckets)
   const platform = process.platform || "darwin";
   const arch = process.arch || "arm64";
   const geminiCliUserAgent = `GeminiCLI/1.0.0/gemini-2.5-pro (${platform}; ${arch})`;
-
   const body = projectId ? { project: projectId } : {};
-  
-  try {
-    const response = await fetchWithTimeout(`${endpoint}/v1internal:retrieveUserQuota`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        "User-Agent": geminiCliUserAgent,
-      },
-      body: JSON.stringify(body),
-    });
 
-    if (response.ok) {
-      const data = (await response.json()) as RetrieveUserQuotaResponse;
-      return data;
-    }
+  for (const endpoint of QUOTA_ENDPOINTS) {
+    try {
+      const response = await fetchWithTimeout(`${endpoint}/v1internal:retrieveUserQuota`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+          "User-Agent": geminiCliUserAgent,
+        },
+        body: JSON.stringify(body),
+      });
 
-    // Non-OK response - return empty buckets
-    return { buckets: [] };
-  } catch {
-    // Network error or timeout - return empty buckets
-    return { buckets: [] };
+      if (response.ok) {
+        const data = (await response.json()) as RetrieveUserQuotaResponse;
+        return data;
+      }
+    } catch {}
   }
+
+  return { buckets: [] };
 }
 
 function aggregateGeminiCliQuota(response: RetrieveUserQuotaResponse): GeminiCliQuotaSummary {
