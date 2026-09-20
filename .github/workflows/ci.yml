@@ -32,3 +32,7 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      # dist/ is committed so the plugin can be installed straight from GitHub.
+      - name: Check the committed bundles are current
+        run: git diff --exit-code -- dist

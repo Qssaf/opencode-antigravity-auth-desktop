@@ -12,7 +12,7 @@ Enable Opencode to authenticate against **Antigravity** (Google's IDE) via OAuth
 >
 > On top of upstream it adds:
 > - Google's **account chooser on every login**, so a second account can actually be added
-> - **`/antigravity`** — manage accounts from inside OpenCode 2.x, where the 1.x menu cannot run
+> - **the account menu back in `opencode auth login`** on OpenCode 2.x, where the 1.x menu cannot run
 > - the **`antigravity-accounts` CLI** for the same operations outside OpenCode
 > - fixes for accounts being dropped on a transient `invalid_grant`, and for requests
 >   falling through to Google's misleading `API key not valid` error
@@ -421,19 +421,6 @@ opencode auth login google --method antigravity --answer action=disable --answer
 > version is not picked up until you run `opencode service stop` (or
 > `opencode service restart`). `opencode plugin list` shows which copy is loaded.
 
-**Also on 2.x — the `/antigravity` command,** if you would rather not leave the
-session. It answers in place without spending a model call:
-
-```
-/antigravity                 list stored accounts
-/antigravity add             sign in and add another Google account
-/antigravity enable 2        put account 2 back into rotation
-/antigravity disable 2       take account 2 out of rotation
-/antigravity remove 2        delete account 2
-/antigravity quota           remaining quota per account
-/antigravity verify all      check accounts against Antigravity
-```
-
 Changes apply to the requests already running — the in-memory pool is updated and
 the next request re-reads the account file. No restart.
 
@@ -465,7 +452,7 @@ npm run accounts -- list    # any subcommand, after `--`
 
 The CLI edits `antigravity-accounts.json` directly, so quit OpenCode first: a
 running instance holds the pool in memory and can write its own copy back over a
-change made behind its back. `/antigravity` has no such caveat.
+change made behind its back. The login menu has no such caveat.
 
 For details on load balancing, dual quota pools, and account storage, see [docs/MULTI-ACCOUNT.md](docs/MULTI-ACCOUNT.md).
 
@@ -473,7 +460,7 @@ For details on load balancing, dual quota pools, and account storage, see [docs/
 
 ## OpenCode 2.x
 
-One package supports both OpenCode generations. On 2.x the plugin registers its OAuth method, models, `google_search` tool and the `/antigravity` account command through the 2.x plugin API, while requests still run through the same Antigravity pipeline (account rotation, quota handling, model routing, thinking-block handling).
+One package supports both OpenCode generations. On 2.x the plugin registers its OAuth method (carrying the account menu as its login form), models and `google_search` tool through the 2.x plugin API, while requests still run through the same Antigravity pipeline (account rotation, quota handling, model routing, thinking-block handling).
 
 **Config key:** `plugins` (plural) on 2.x, `plugin` (singular) on 1.x.
 
@@ -483,7 +470,7 @@ One package supports both OpenCode generations. On 2.x the plugin registers its 
 
 | | OpenCode 1.x | OpenCode 2.x |
 |---|---|---|
-| Account management | Interactive menu inside `opencode auth login` (add, check quota, enable/disable, verify) | `opencode auth login` / `logout` / `switch` for credentials, and the `/antigravity` command for the pool (list, add, enable/disable, remove, quota, verify). The `antigravity-accounts` CLI does the same from a shell |
+| Account management | Interactive menu inside `opencode auth login` (add, check quota, enable/disable, verify) | The same menu, prompted by OpenCode as the login method's form (add, list, enable/disable, remove, quota, verify). The `antigravity-accounts` CLI does the same from a shell |
 | Status toasts | Shown in the TUI | Not shown — 2.x server plugins cannot raise toasts. Enable `"debug": true` in `antigravity.json` to get the same detail in the log |
 | Session recovery | Plugin re-injects missing `tool_result` blocks | Handled by OpenCode itself |
 | Update checks | Plugin checks on startup | `opencode plugin update` |

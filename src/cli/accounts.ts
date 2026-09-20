@@ -2,9 +2,9 @@
  * Standalone Antigravity account manager.
  *
  * Inside OpenCode, accounts are managed by the menu in `opencode auth login`
- * (1.x) or the `/antigravity` command (2.x). This CLI is the same set of
- * operations for when OpenCode is not running — recovering a pool that has gone
- * wrong, scripting, or checking quota from a shell:
+ * (on both generations). This CLI is the same set of operations for when
+ * OpenCode is not running — recovering a pool that has gone wrong, scripting,
+ * or checking quota from a shell:
  *
  *   antigravity-accounts            # installed
  *   npm run accounts                # from a clone of this repo
@@ -59,8 +59,8 @@ Commands:
   verify [<n>|--all]     Check whether accounts can reach Antigravity
   help                   Show this help
 
-Inside OpenCode, \`/antigravity\` (2.x) or \`opencode auth login\` (1.x) does the
-same thing without stopping the app.
+Inside OpenCode, \`opencode auth login\` shows the same menu without stopping
+the app.
 `;
 
 /**

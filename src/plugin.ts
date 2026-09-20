@@ -1396,8 +1396,8 @@ function createNoUsableCredentialsResponse(urlString: string, detail: string): R
     detail,
     "",
     "Run `opencode auth login` to sign in again or add another account, then retry.",
-    "On OpenCode 2.x, `/antigravity` lists and manages the stored accounts;",
-    "outside OpenCode, the `antigravity-accounts` CLI does the same.",
+    "The login menu lists and manages the stored accounts; outside OpenCode,",
+    "the `antigravity-accounts` CLI does the same.",
   ].join("\n");
   return createSyntheticErrorResponse(errorMessage, requestedModel, family);
 }

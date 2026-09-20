@@ -115,8 +115,7 @@ src/
 
 ```
 src/v2/
-├── plugin.ts         # Plugin.define entry: registers OAuth, models, model.request hook, tools, /antigravity per location
-├── command.ts        # `/antigravity` account command (session.synthetic output)
+├── plugin.ts         # Plugin.define entry: registers OAuth, models, model.request hook, tools per location
 ├── login-menu.ts     # Account menu carried by the OAuth method's form
 ├── runtime.ts        # Process-wide shared runtime (ref-counted across locations)
 ├── proxy.ts          # Loopback listener that runs the pipeline's fetch
@@ -135,7 +134,8 @@ Things to know before changing this:
 - The auth loader is re-run only when the login changes, keyed by `authSignature` (stable across access-token rotation).
 - 2.x server plugins have no toasts, and `src/v2/legacy-client.ts` makes unsupported `session.*` calls throw rather than silently no-op.
 - The 1.x account menu cannot prompt on stdin on 2.x. Two surfaces replace it. The login method's `form` (`login-menu.ts`) is prompted by OpenCode during `opencode auth login` — a `string` field with `options` renders as a select, `when` (AND-only) gates the account picker, and a non-`add` action returns an authorization carrying the result text plus the already-active account's credential. The account options are fixed at registration, so a change calls `ctx.integration.reload()` to rebuild the form.
-- The second surface is the `/antigravity` command: `ctx.command.transform` registers it, `ctx.session.synthetic({ resume: false })` prints the answer without a model turn, and a change mirrors into the live pool (`liveAccountPool`) before `V2Runtime.invalidateAuth()` forces the next request to re-read the account file.
+- A change from the menu mirrors into the live pool (`liveAccountPool`, so a later flush cannot write the old value back) before `V2Runtime.invalidateAuth()` forces the next request to re-read the account file — no restart.
+- The out-of-OpenCode surface is the `antigravity-accounts` CLI (`src/cli/accounts.ts`), which shares `plugin/account-admin.ts` and `plugin/account-login.ts` with the menu.
 
 ## Key Design Patterns
 

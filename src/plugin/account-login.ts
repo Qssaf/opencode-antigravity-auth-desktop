@@ -1,6 +1,5 @@
 /**
- * Adding a Google account to the pool, shared by the surfaces that can do it
- * outside `opencode auth login`: the `/antigravity add` command on OpenCode 2.x
+ * Adding a Google account to the pool, shared by the login menu's "add" action
  * and the standalone CLI.
  *
  * The browser-callback helpers live in `plugin.ts` (they are also used by the

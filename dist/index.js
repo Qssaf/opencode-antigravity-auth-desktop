@@ -616,12 +616,12 @@ function deduplicateAccountsByEmail(accounts) {
 function accountIdentity(account) {
   return account.email ? `email:${account.email}` : `refreshToken:${account.refreshToken}`;
 }
-function clampActiveIndex(activeIndex, accountCount2) {
-  if (accountCount2 === 0) {
+function clampActiveIndex(activeIndex, accountCount) {
+  if (accountCount === 0) {
     return 0;
   }
   const index = Number.isFinite(activeIndex) ? activeIndex : 0;
-  return Math.max(0, Math.min(index, accountCount2 - 1));
+  return Math.max(0, Math.min(index, accountCount - 1));
 }
 function remapActiveIndex(accounts, deduplicatedAccounts, activeIndex) {
   const fallbackIndex = clampActiveIndex(activeIndex, deduplicatedAccounts.length);
@@ -1233,9 +1233,9 @@ function logQuotaStatus(accountEmail, accountIndex, quotaPercent, family) {
     logDebug(`[Quota] ${accountLabel2} remaining=${quotaPercent.toFixed(1)}% status=${status}${familyInfo}`);
   });
 }
-function logQuotaFetch(event, accountCount2, details) {
+function logQuotaFetch(event, accountCount, details) {
   runWithDebugEnabled(() => {
-    const countInfo = accountCount2 !== void 0 ? ` accounts=${accountCount2}` : "";
+    const countInfo = accountCount !== void 0 ? ` accounts=${accountCount}` : "";
     const detailsInfo = details ? ` ${details}` : "";
     logDebug(`[QuotaFetch] ${event.toUpperCase()}${countInfo}${detailsInfo}`);
   });
@@ -1252,7 +1252,7 @@ function initLogger(client) {
 }
 function createLogger(module) {
   const service = `antigravity.${module}`;
-  const log18 = (level, message, extra) => {
+  const log16 = (level, message, extra) => {
     if (isDebugTuiEnabled()) {
       const app = _client?.app;
       if (app && typeof app.log === "function") {
@@ -1269,10 +1269,10 @@ function createLogger(module) {
     }
   };
   return {
-    debug: (message, extra) => log18("debug", message, extra),
-    info: (message, extra) => log18("info", message, extra),
-    warn: (message, extra) => log18("warn", message, extra),
-    error: (message, extra) => log18("error", message, extra)
+    debug: (message, extra) => log16("debug", message, extra),
+    info: (message, extra) => log16("info", message, extra),
+    warn: (message, extra) => log16("warn", message, extra),
+    error: (message, extra) => log16("error", message, extra)
   };
 }
 
@@ -7070,8 +7070,8 @@ function createSessionRecoveryHook(ctx, config) {
     if (!sessionID) return false;
     let assistantMsgID = info.id;
     let msgs;
-    const log18 = createLogger("session-recovery");
-    log18.debug("Recovery attempt started", {
+    const log16 = createLogger("session-recovery");
+    log16.debug("Recovery attempt started", {
       errorType,
       sessionID,
       providedMsgID: assistantMsgID ?? "none"
@@ -7085,7 +7085,7 @@ function createSessionRecoveryHook(ctx, config) {
       });
       msgs = messagesResp.data;
     } catch (err) {
-      log18.error("Failed to fetch session messages during recovery", {
+      log16.error("Failed to fetch session messages during recovery", {
         sessionID,
         error: err instanceof Error ? err.message : String(err)
       });
@@ -7096,7 +7096,7 @@ function createSessionRecoveryHook(ctx, config) {
         const m = msgs[i];
         if (m && m.info?.role === "assistant" && m.info?.id) {
           assistantMsgID = m.info.id;
-          log18.debug("Found assistant message ID from session messages", {
+          log16.debug("Found assistant message ID from session messages", {
             msgID: assistantMsgID,
             msgIndex: i
           });
@@ -7105,7 +7105,7 @@ function createSessionRecoveryHook(ctx, config) {
       }
     }
     if (!assistantMsgID) {
-      log18.debug("No assistant message ID found, cannot recover");
+      log16.debug("No assistant message ID found, cannot recover");
       return false;
     }
     if (processingErrors.has(assistantMsgID)) return false;
@@ -7145,7 +7145,7 @@ function createSessionRecoveryHook(ctx, config) {
       }
       return success;
     } catch (err) {
-      log18.error("Recovery failed", { error: String(err) });
+      log16.error("Recovery failed", { error: String(err) });
       return false;
     } finally {
       processingErrors.delete(assistantMsgID);
@@ -11667,7 +11667,7 @@ async function tryFetchVersion(url, maxChars) {
   }
 }
 async function initAntigravityVersion() {
-  const log18 = createLogger("version");
+  const log16 = createLogger("version");
   const fallback = getAntigravityVersion();
   let version;
   let source;
@@ -11681,14 +11681,14 @@ async function initAntigravityVersion() {
     } else {
       source = "fallback";
       setAntigravityVersion(fallback);
-      log18.info("version-fetch-failed", { fallback });
+      log16.info("version-fetch-failed", { fallback });
       return;
     }
   }
   if (version !== fallback) {
-    log18.info("version-updated", { version, source, previous: fallback });
+    log16.info("version-updated", { version, source, previous: fallback });
   } else {
-    log18.debug("version-unchanged", { version, source });
+    log16.debug("version-unchanged", { version, source });
   }
   setAntigravityVersion(version);
 }
@@ -13235,8 +13235,8 @@ function createNoUsableCredentialsResponse(urlString, detail) {
     detail,
     "",
     "Run `opencode auth login` to sign in again or add another account, then retry.",
-    "On OpenCode 2.x, `/antigravity` lists and manages the stored accounts;",
-    "outside OpenCode, the `antigravity-accounts` CLI does the same."
+    "The login menu lists and manages the stored accounts; outside OpenCode,",
+    "the `antigravity-accounts` CLI does the same."
   ].join("\n");
   return createSyntheticErrorResponse(errorMessage, requestedModel, family);
 }
@@ -13734,12 +13734,12 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
             };
             while (true) {
               checkAborted();
-              const accountCount2 = accountManager.getAccountCount();
-              if (++loopGuard > Math.max(50, accountCount2 * 8)) {
+              const accountCount = accountManager.getAccountCount();
+              if (++loopGuard > Math.max(50, accountCount * 8)) {
                 const guardFallback = await tryAgySdkFallbackForRequest(input2, init, config, agySdkCredentials, urlString);
                 if (guardFallback) return guardFallback;
                 throw lastError || new Error(
-                  `Antigravity request routing did not converge for ${model ?? family}. All ${accountCount2} account(s) appear rate-limited or exhausted for this model. Run \`opencode auth login\` to add accounts or wait for quota reset.`
+                  `Antigravity request routing did not converge for ${model ?? family}. All ${accountCount} account(s) appear rate-limited or exhausted for this model. Run \`opencode auth login\` to add accounts or wait for quota reset.`
                 );
               }
               const routingDecision = resolveHeaderRoutingDecision(urlString, family, config);
@@ -13760,7 +13760,7 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                   return response;
                 }
               }
-              if (accountCount2 === 0) {
+              if (accountCount === 0) {
                 const response = await tryAgySdkFallbackForRequest(input2, init, config, agySdkCredentials, urlString);
                 if (response) return response;
                 throw new Error("No Antigravity accounts available. Run `opencode auth login`.");
@@ -13800,7 +13800,7 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                 }
               }
               if (!account) {
-                if (accountCount2 > 0 && triedSwitchIndices.size >= accountCount2) {
+                if (accountCount > 0 && triedSwitchIndices.size >= accountCount) {
                   const exhaustedFallback = await tryAgySdkFallbackForRequest(input2, init, config, agySdkCredentials, urlString);
                   if (exhaustedFallback) return exhaustedFallback;
                   if (lastFailure) {
@@ -13820,7 +13820,7 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                     );
                   }
                   throw lastError || new Error(
-                    `All ${accountCount2} Antigravity account(s) are rate-limited for ${model ?? family}. Run \`opencode auth login\` to add accounts or wait for quota reset.`
+                    `All ${accountCount} Antigravity account(s) are rate-limited for ${model ?? family}. Run \`opencode auth login\` to add accounts or wait for quota reset.`
                   );
                 }
                 if (accountManager.areAllAccountsOverSoftQuota(
@@ -13848,7 +13848,7 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                       "error"
                     );
                     return createSoftQuotaBlockedResponse({
-                      accountCount: accountCount2,
+                      accountCount,
                       family,
                       threshold,
                       waitMs: softQuotaWaitMs,
@@ -13856,9 +13856,9 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                     });
                   }
                   const waitSecValue2 = Math.max(1, Math.ceil(softQuotaWaitMs / 1e3));
-                  pushDebug(`all-over-soft-quota family=${family} accounts=${accountCount2} waitMs=${softQuotaWaitMs}`);
+                  pushDebug(`all-over-soft-quota family=${family} accounts=${accountCount} waitMs=${softQuotaWaitMs}`);
                   if (!softQuotaToastShown) {
-                    await showToast(`All ${accountCount2} account(s) over ${threshold}% quota. Waiting ${formatWaitTime(softQuotaWaitMs)}...`, "warning");
+                    await showToast(`All ${accountCount} account(s) over ${threshold}% quota. Waiting ${formatWaitTime(softQuotaWaitMs)}...`, "warning");
                     softQuotaToastShown = true;
                   }
                   triedSwitchIndices.clear();
@@ -13873,12 +13873,12 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                   strictWait
                 ) || 6e4;
                 const waitSecValue = Math.max(1, Math.ceil(waitMs / 1e3));
-                pushDebug(`all-rate-limited family=${family} accounts=${accountCount2} waitMs=${waitMs}`);
+                pushDebug(`all-rate-limited family=${family} accounts=${accountCount} waitMs=${waitMs}`);
                 if (isDebugEnabled()) {
                   logAccountContext("All accounts rate-limited", {
                     index: -1,
                     family,
-                    totalAccounts: accountCount2
+                    totalAccounts: accountCount
                   });
                   logRateLimitSnapshot(family, accountManager.getAccountsSnapshot());
                 }
@@ -13892,11 +13892,11 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                     "error"
                   );
                   throw new Error(
-                    `All ${accountCount2} account(s) rate-limited for ${family}. Quota resets in ${waitTimeFormatted}. Add more accounts with \`opencode auth login\` or wait and retry.`
+                    `All ${accountCount} account(s) rate-limited for ${family}. Quota resets in ${waitTimeFormatted}. Add more accounts with \`opencode auth login\` or wait and retry.`
                   );
                 }
                 if (!rateLimitToastShown) {
-                  await showToast(`All ${accountCount2} account(s) rate-limited for ${family}. Waiting ${waitSecValue}s...`, "warning");
+                  await showToast(`All ${accountCount} account(s) rate-limited for ${family}. Waiting ${waitSecValue}s...`, "warning");
                   rateLimitToastShown = true;
                 }
                 triedSwitchIndices.clear();
@@ -13905,23 +13905,23 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
               }
               resetAllAccountsBlockedToasts();
               pushDebug(
-                `selected idx=${account.index} email=${account.email ?? ""} family=${family} accounts=${accountCount2} strategy=${config.account_selection_strategy}`
+                `selected idx=${account.index} email=${account.email ?? ""} family=${family} accounts=${accountCount} strategy=${config.account_selection_strategy}`
               );
               if (isDebugEnabled()) {
                 logAccountContext("Selected", {
                   index: account.index,
                   email: account.email,
                   family,
-                  totalAccounts: accountCount2,
+                  totalAccounts: accountCount,
                   rateLimitState: account.rateLimitResetTimes
                 });
               }
-              if (accountCount2 > 1 && accountManager.shouldShowAccountToast(account.index)) {
+              if (accountCount > 1 && accountManager.shouldShowAccountToast(account.index)) {
                 const accountLabel2 = account.email || `Account ${account.index + 1}`;
                 const enabledAccounts = accountManager.getEnabledAccounts();
                 const enabledPosition = enabledAccounts.findIndex((a) => a.index === account.index) + 1;
                 await showToast(
-                  `Using ${accountLabel2} (${enabledPosition}/${accountCount2})`,
+                  `Using ${accountLabel2} (${enabledPosition}/${accountCount})`,
                   "info"
                 );
                 accountManager.markToastShown(account.index);
@@ -14026,7 +14026,7 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
               const accessToken = authRecord.access;
               if (!accessToken) {
                 lastError = new Error("Missing access token");
-                if (accountCount2 <= 1) {
+                if (accountCount <= 1) {
                   throw lastError;
                 }
                 continue;
@@ -14347,7 +14347,7 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                           }
                           pushDebug(`cache_first: wait ${effectiveDelayMs}ms exceeds max ${maxCacheFirstWaitMs}ms, switching account`);
                         }
-                        if (config.switch_on_first_rate_limit && accountCount2 > 1) {
+                        if (config.switch_on_first_rate_limit && accountCount > 1) {
                           accountManager.markRateLimitedWithReason(account, family, headerStyle, model, rateLimitReason, serverRetryMs, config.failure_ttl_seconds * 1e3);
                           shouldSwitchAccount = true;
                           break;
@@ -14416,7 +14416,7 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                         return agySdkFallbackResponse;
                       }
                       const quotaName = headerStyle === "antigravity" ? "Antigravity" : "Gemini CLI";
-                      if (accountCount2 > 1) {
+                      if (accountCount > 1) {
                         const quotaMsg = bodyInfo.quotaResetTime ? ` (quota resets ${bodyInfo.quotaResetTime})` : ``;
                         await showToast(`Rate limited again. Switching account in 5s...${quotaMsg}`, "warning");
                         await sleep(SWITCH_ACCOUNT_DELAY_MS, abortSignal);
@@ -14641,7 +14641,7 @@ Alternatively, you can:
               }
               if (shouldSwitchAccount) {
                 triedSwitchIndices.add(account.index);
-                if (accountCount2 <= 1) {
+                if (accountCount <= 1) {
                   if (lastFailure) {
                     return transformAntigravityResponse(
                       lastFailure.response,
@@ -15728,7 +15728,7 @@ async function loadAccountPool() {
   const storage = await loadAccounts();
   return storage && storage.accounts.length > 0 ? storage : null;
 }
-var NO_ACCOUNTS_MESSAGE = "No Google accounts are stored. Run `opencode auth login` (or `/antigravity add`) to sign in.";
+var NO_ACCOUNTS_MESSAGE = "No Google accounts are stored. Run `opencode auth login` to sign in.";
 function renderAccountList(storage) {
   if (!storage || storage.accounts.length === 0) {
     return NO_ACCOUNTS_MESSAGE;
@@ -15856,198 +15856,6 @@ async function renderVerification(indices, verify, client, providerId) {
 async function allAccountIndices() {
   const storage = await loadAccountPool();
   return storage ? storage.accounts.map((_, index) => index) : [];
-}
-function parseAccountNumber(value) {
-  const parsed = Number.parseInt(value ?? "", 10);
-  return Number.isInteger(parsed) && parsed >= 1 ? parsed - 1 : null;
-}
-
-// src/plugin/account-login.ts
-var log12 = createLogger("account-login");
-async function accountCount() {
-  return (await loadAccountPool())?.accounts.length ?? 0;
-}
-async function persist(helpers, result, before) {
-  await helpers.persistAccountPool([result], false);
-  const total = await accountCount();
-  const who = result.email ? ` (${result.email})` : "";
-  const added = total > before;
-  return {
-    ok: true,
-    email: result.email,
-    added,
-    total,
-    message: added ? `Added account${who}. ${total} account(s) stored.` : `Signed in${who}, but the pool still holds ${total} account(s) \u2014 Google returned an account that was already stored. Pick a different account in the Google chooser to add another one.`
-  };
-}
-async function createAuthorization(helpers, projectId = "") {
-  const authorization = await authorizeAntigravity(projectId);
-  return { url: authorization.url, state: helpers.getStateFromAuthorizationUrl(authorization.url) };
-}
-async function addAccountViaBrowser(helpers, options = {}) {
-  if (helpers.shouldSkipLocalServer()) {
-    return {
-      ok: false,
-      message: "This environment cannot receive the OAuth redirect (no local callback listener). Run `opencode auth login` in a terminal, or the account CLI with `--no-browser`, and paste the redirect URL."
-    };
-  }
-  const before = await accountCount();
-  let listener;
-  try {
-    listener = await startOAuthListener();
-  } catch (error) {
-    log12.debug("Could not start the OAuth callback listener", { error: String(error) });
-    return {
-      ok: false,
-      message: "Could not start the local OAuth callback listener \u2014 another sign-in may be in progress. Finish or cancel it and try again."
-    };
-  }
-  try {
-    const { url } = await createAuthorization(helpers, options.projectId ?? "");
-    await options.onAuthorizationUrl?.(url);
-    await helpers.openBrowser(url);
-    const callbackUrl = await listener.waitForCallback();
-    const params = helpers.extractOAuthCallbackParams(callbackUrl);
-    if (!params) {
-      return { ok: false, message: "The redirect back from Google carried no code or state." };
-    }
-    const result = await exchangeAntigravity(params.code, params.state);
-    if (result.type === "failed") {
-      return { ok: false, message: `Sign-in failed: ${result.error}` };
-    }
-    return persist(helpers, result, before);
-  } catch (error) {
-    return { ok: false, message: `Sign-in failed: ${error instanceof Error ? error.message : String(error)}` };
-  } finally {
-    await listener.close().catch(() => {
-    });
-  }
-}
-
-// src/v2/command.ts
-var log13 = createLogger("v2-command");
-var ACCOUNT_COMMAND_NAME = "antigravity";
-var USAGE = [
-  "Antigravity accounts:",
-  "  /antigravity                 list stored accounts",
-  "  /antigravity add             sign in and add another Google account",
-  "  /antigravity enable <n>      put account n back into rotation",
-  "  /antigravity disable <n>     take account n out of rotation",
-  "  /antigravity remove <n>      delete account n",
-  "  /antigravity quota           remaining quota per account",
-  "  /antigravity verify [n|all]  check accounts against Antigravity"
-].join("\n");
-function splitArguments(text) {
-  return text.trim().split(/\s+/).filter(Boolean);
-}
-function createAccountCommand(deps) {
-  async function run(input2) {
-    const [subcommand = "", argument] = splitArguments(input2.prompt.text);
-    switch (subcommand.toLowerCase()) {
-      case "":
-      case "list":
-        return `${await renderAccounts()}
-
-${USAGE}`;
-      case "help":
-        return USAGE;
-      case "add": {
-        const login = addAccountViaBrowser(deps.helpers, {
-          onAuthorizationUrl: async (url) => {
-            await deps.post(
-              input2.sessionID,
-              [
-                "Opening Google sign-in. Pick the account you want to ADD:",
-                "",
-                url,
-                "",
-                "The account is stored as soon as the browser redirects back."
-              ].join("\n")
-            );
-          }
-        });
-        void login.then(async (result) => {
-          if (result.ok) deps.invalidate();
-          await deps.post(input2.sessionID, result.message);
-        }).catch(async (error) => {
-          log13.warn("Account sign-in failed", { error: String(error) });
-          await deps.post(input2.sessionID, `Sign-in failed: ${error instanceof Error ? error.message : String(error)}`).catch(() => {
-          });
-        });
-        return "";
-      }
-      case "enable":
-      case "disable": {
-        const index = parseAccountNumber(argument);
-        if (index === null) {
-          return `Usage: /antigravity ${subcommand.toLowerCase()} <account number>
-
-${await renderAccounts()}`;
-        }
-        const enabled = subcommand.toLowerCase() === "enable";
-        const result = await setAccountEnabled(index, enabled);
-        if (result.ok && result.index !== void 0) {
-          deps.live.setEnabled(result.index, enabled);
-          deps.invalidate();
-        }
-        return `${result.message}
-
-${await renderAccounts()}`;
-      }
-      case "remove":
-      case "delete": {
-        const index = parseAccountNumber(argument);
-        if (index === null) {
-          return `Usage: /antigravity remove <account number>
-
-${await renderAccounts()}`;
-        }
-        const result = await deleteAccount(index);
-        if (result.ok && result.index !== void 0) {
-          deps.live.remove(result.index);
-          deps.invalidate();
-        }
-        return `${result.message}
-
-${await renderAccounts()}`;
-      }
-      case "quota":
-        return renderQuota(deps.client, ANTIGRAVITY_PROVIDER_ID);
-      case "verify": {
-        const indices = argument === void 0 || argument === "all" ? await allAccountIndices() : (() => {
-          const index = parseAccountNumber(argument);
-          return index === null ? null : [index];
-        })();
-        if (indices === null) {
-          return "Usage: /antigravity verify [<account number>|all]";
-        }
-        if (indices.length === 0) {
-          return renderAccounts();
-        }
-        return renderVerification(indices, deps.verify, deps.client, ANTIGRAVITY_PROVIDER_ID);
-      }
-      default:
-        return `Unknown subcommand \`${subcommand}\`.
-
-${USAGE}`;
-    }
-  }
-  return {
-    name: ACCOUNT_COMMAND_NAME,
-    description: "Manage the Google accounts the Antigravity plugin rotates between",
-    execute: async (input2) => {
-      let text;
-      try {
-        text = await run(input2);
-      } catch (error) {
-        log13.warn("Command failed", { error: String(error) });
-        text = `/antigravity failed: ${error instanceof Error ? error.message : String(error)}`;
-      }
-      if (text) {
-        await deps.post(input2.sessionID, text);
-      }
-    }
-  };
 }
 
 // src/v2/login-menu.ts
@@ -16213,7 +16021,7 @@ async function activeAccountCredential() {
 }
 
 // src/v2/oauth.ts
-var log14 = createLogger("v2-oauth");
+var log12 = createLogger("v2-oauth");
 var LOGIN_TIMEOUT_MS = 5 * 60 * 1e3;
 var FAILED_REFRESH_RETRY_MS = 60 * 1e3;
 function isHeadlessEnvironment() {
@@ -16225,7 +16033,7 @@ function isTruthyAnswer(value) {
 function createOAuthMethod(deps) {
   const { helpers, client, integrationID, management } = deps;
   const startListener = deps.startListener ?? startOAuthListener;
-  const createAuthorization2 = deps.createAuthorization ?? authorizeAntigravity;
+  const createAuthorization = deps.createAuthorization ?? authorizeAntigravity;
   const exchangeCode = deps.exchangeCode ?? exchangeAntigravity;
   const refreshToken = deps.refreshToken ?? refreshAccessToken;
   async function completeLogin(code, state) {
@@ -16236,7 +16044,7 @@ function createOAuthMethod(deps) {
     try {
       await helpers.persistAccountPool([result], false);
     } catch (error) {
-      log14.warn("Could not save the account to the Antigravity account pool", { error: String(error) });
+      log12.warn("Could not save the account to the Antigravity account pool", { error: String(error) });
     }
     return tokenResultToCredential(result);
   }
@@ -16275,14 +16083,14 @@ function createOAuthMethod(deps) {
       try {
         listener = await startListener();
       } catch (error) {
-        log14.debug("OAuth callback listener unavailable, falling back to manual code entry", {
+        log12.debug("OAuth callback listener unavailable, falling back to manual code entry", {
           error: String(error)
         });
       }
     }
     let authorization;
     try {
-      authorization = await createAuthorization2(projectId);
+      authorization = await createAuthorization(projectId);
     } catch (error) {
       await listener?.close().catch(() => {
       });
@@ -16351,7 +16159,7 @@ function createOAuthMethod(deps) {
         expires: refreshed.expires ?? credential.expires
       };
     } catch (error) {
-      log14.warn("Antigravity credential refresh failed", { error: String(error) });
+      log12.warn("Antigravity credential refresh failed", { error: String(error) });
       return { ...credential, expires: Date.now() + FAILED_REFRESH_RETRY_MS };
     }
   }
@@ -16374,7 +16182,7 @@ function createOAuthMethod(deps) {
 // src/v2/proxy.ts
 import { randomBytes as randomBytes3 } from "node:crypto";
 import { createServer as createServer2 } from "node:http";
-var log15 = createLogger("v2-proxy");
+var log13 = createLogger("v2-proxy");
 var GEMINI_UPSTREAM_ORIGIN = "https://generativelanguage.googleapis.com";
 var MAX_REQUEST_BODY_BYTES = 256 * 1024 * 1024;
 var CLOSE_GRACE_MS = 2e3;
@@ -16526,7 +16334,7 @@ async function handleRequest(req, res, routes) {
   } catch (error) {
     if (controller.signal.aborted) return;
     const message = error instanceof Error ? error.message : String(error);
-    log15.warn("Antigravity request failed", { error: message });
+    log13.warn("Antigravity request failed", { error: message });
     sendJsonError(res, 502, message, "UNAVAILABLE");
     return;
   }
@@ -16541,7 +16349,7 @@ async function handleRequest(req, res, routes) {
     await pipeBody(response, res);
   } catch (error) {
     if (!controller.signal.aborted) {
-      log15.warn("Antigravity response stream failed", { error: String(error) });
+      log13.warn("Antigravity response stream failed", { error: String(error) });
     }
     res.destroy();
   }
@@ -16550,7 +16358,7 @@ async function startSharedProxy() {
   const routes = /* @__PURE__ */ new Map();
   const server = createServer2((req, res) => {
     handleRequest(req, res, routes).catch((error) => {
-      log15.error("Unhandled proxy error", { error: String(error) });
+      log13.error("Unhandled proxy error", { error: String(error) });
       sendJsonError(res, 500, "Internal proxy error", "INTERNAL");
     });
   });
@@ -16563,7 +16371,7 @@ async function startSharedProxy() {
   });
   server.unref();
   const address = server.address();
-  log15.debug("Antigravity loopback proxy listening", { port: address.port });
+  log13.debug("Antigravity loopback proxy listening", { port: address.port });
   return { server, port: address.port, routes };
 }
 async function stopSharedProxy(proxy) {
@@ -16607,7 +16415,7 @@ async function registerProxyRoute(upstream) {
 }
 
 // src/v2/runtime.ts
-var log16 = createLogger("v2-runtime");
+var log14 = createLogger("v2-runtime");
 var PROVIDER_ID = ANTIGRAVITY_PROVIDER_ID;
 var GEMINI_HOST = "generativelanguage.googleapis.com";
 var AUTH_SNAPSHOT_TTL_MS = 250;
@@ -16624,7 +16432,7 @@ async function promoteAccountFromPool() {
   try {
     stored = await loadAccounts();
   } catch (error) {
-    log16.debug("Could not read the Antigravity account pool", { error: String(error) });
+    log14.debug("Could not read the Antigravity account pool", { error: String(error) });
     return void 0;
   }
   const accounts = stored?.accounts ?? [];
@@ -16716,7 +16524,7 @@ var V2Runtime = class _V2Runtime {
         }
         break;
       } catch (error) {
-        log16.debug("Could not read the active credential from this location", { error: String(error) });
+        log14.debug("Could not read the active credential from this location", { error: String(error) });
       }
     }
     return await promoteAccountFromPool() ?? { auth: { type: "none" }, signature: "none" };
@@ -16764,7 +16572,7 @@ var V2Runtime = class _V2Runtime {
     if (this.disposed || !isDefaultGeminiBaseURL(event.baseURL)) return;
     const loaded = await this.loaderResult();
     if (!loaded) {
-      log16.warn(
+      log14.warn(
         "No Antigravity credential for this request; leaving it on OpenCode's Google provider. Run `opencode auth login` if you expected the plugin to serve it."
       );
       return;
@@ -16813,7 +16621,7 @@ var V2Runtime = class _V2Runtime {
         for (const listener of this.catalogListeners) listener();
       }
     } catch (error) {
-      log16.debug("Model discovery failed; keeping the built-in model list", { error: String(error) });
+      log14.debug("Model discovery failed; keeping the built-in model list", { error: String(error) });
     }
   }
   /**
@@ -16825,7 +16633,7 @@ var V2Runtime = class _V2Runtime {
     try {
       this.loginAccounts = await accountOptions();
     } catch (error) {
-      log16.debug("Could not read the account pool for the login menu", { error: String(error) });
+      log14.debug("Could not read the account pool for the login menu", { error: String(error) });
       this.loginAccounts = [];
     }
   }
@@ -16839,7 +16647,7 @@ var V2Runtime = class _V2Runtime {
       try {
         await ctx.integration.reload();
       } catch (error) {
-        log16.debug("Could not reload the login menu for this location", { error: String(error) });
+        log14.debug("Could not reload the login menu for this location", { error: String(error) });
       }
     }
   }
@@ -16867,25 +16675,12 @@ var V2Runtime = class _V2Runtime {
   }
   /**
    * Drops the cached login so the next request resolves auth and rebuilds the
-   * account pool from disk. Used after the `/antigravity` command edits the
-   * pool, so the change applies without restarting OpenCode.
+   * account pool from disk. Used after the login menu edits the pool, so the
+   * change applies without restarting OpenCode.
    */
   invalidateAuth() {
     this.authSnapshot = void 0;
     this.interceptor = void 0;
-  }
-  /** The `/antigravity` account command for this location. */
-  accountCommand(ctx) {
-    return createAccountCommand({
-      post: async (sessionID, text) => {
-        await ctx.session.synthetic({ sessionID, text, resume: false });
-      },
-      helpers: oauthFlowHelpers,
-      client: createLegacyClient(),
-      live: liveAccountPool,
-      invalidate: () => this.onPoolChanged(),
-      verify: verifyAccountAccess
-    });
   }
   /** Registers the `google_search` tool. */
   addTools(editor) {
@@ -16960,14 +16755,14 @@ async function acquireRuntime(ctx) {
 }
 
 // src/v2/plugin.ts
-var log17 = createLogger("v2-plugin");
+var log15 = createLogger("v2-plugin");
 var PLUGIN_ID = "opencode-antigravity-auth";
 async function disposeAll(registrations) {
   for (const registration of registrations) {
     try {
       await registration.dispose();
     } catch (error) {
-      log17.debug("Failed to dispose a registration", { error: String(error) });
+      log15.debug("Failed to dispose a registration", { error: String(error) });
     }
   }
 }
@@ -16997,17 +16792,6 @@ async function setup(ctx) {
         runtime.addTools(editor);
       })
     );
-    if (typeof ctx.command?.transform === "function") {
-      const command = runtime.accountCommand(ctx);
-      registrations.push(
-        await ctx.command.transform((editor) => {
-          editor.add(command);
-        })
-      );
-      await ctx.command.reload().catch((error) => {
-        log17.debug("Command reload after registration failed", { error: String(error) });
-      });
-    }
   } catch (error) {
     await disposeAll(registrations);
     await handle.release();
@@ -17015,7 +16799,7 @@ async function setup(ctx) {
   }
   const stopListening = runtime.onCatalogChange(() => {
     ctx.provider.reload().catch((error) => {
-      log17.debug("Provider reload after model discovery failed", { error: String(error) });
+      log15.debug("Provider reload after model discovery failed", { error: String(error) });
     });
   });
   void runtime.refreshCatalog();

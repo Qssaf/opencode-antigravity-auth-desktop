@@ -1,11 +1,11 @@
 /**
  * Account-pool administration, rendered as plain text.
  *
- * One implementation serves both surfaces that manage accounts outside the
- * request path: the `/antigravity` command registered on OpenCode 2.x
- * (`src/v2/command.ts`) and the standalone CLI (`src/cli/accounts.ts`). Every
- * operation returns text the caller prints or posts, with no ANSI escapes, so
- * it reads the same in a terminal and in a chat message.
+ * One implementation serves both surfaces that manage accounts: the menu the
+ * OpenCode 2.x login form prompts (`src/v2/login-menu.ts`) and the standalone
+ * CLI (`src/cli/accounts.ts`). Every operation returns text the caller prints,
+ * with no ANSI escapes, so it reads the same in a terminal and in OpenCode's
+ * own login UI.
  */
 
 import { checkAccountsQuota } from "./quota";
@@ -62,7 +62,7 @@ export async function loadAccountPool(): Promise<AccountStorageV4 | null> {
 }
 
 export const NO_ACCOUNTS_MESSAGE =
-  "No Google accounts are stored. Run `opencode auth login` (or `/antigravity add`) to sign in.";
+  "No Google accounts are stored. Run `opencode auth login` to sign in.";
 
 export function renderAccountList(storage: AccountStorageV4 | null): string {
   if (!storage || storage.accounts.length === 0) {

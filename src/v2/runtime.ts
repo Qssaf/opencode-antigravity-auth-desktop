@@ -20,13 +20,11 @@ import type { AuthDetails, LoaderResult, PluginResult, Provider, ProviderModel }
 import { authSignature, credentialToAuth, poolAuthSignature } from "./credentials";
 import { createLegacyClient } from "./legacy-client";
 import { catalogFromDefinitions, mergeCatalog } from "./models";
-import { createAccountCommand } from "./command";
 import { accountOptions } from "./login-menu";
 import { createOAuthMethod } from "./oauth";
 import { registerProxyRoute } from "./proxy";
 import type { ProxyRoute } from "./proxy";
 import type {
-  CommandDefinition,
   Context,
   FormOption,
   ModelInfo,
@@ -396,26 +394,12 @@ export class V2Runtime {
 
   /**
    * Drops the cached login so the next request resolves auth and rebuilds the
-   * account pool from disk. Used after the `/antigravity` command edits the
-   * pool, so the change applies without restarting OpenCode.
+   * account pool from disk. Used after the login menu edits the pool, so the
+   * change applies without restarting OpenCode.
    */
   invalidateAuth(): void {
     this.authSnapshot = undefined;
     this.interceptor = undefined;
-  }
-
-  /** The `/antigravity` account command for this location. */
-  accountCommand(ctx: Context): CommandDefinition {
-    return createAccountCommand({
-      post: async (sessionID, text) => {
-        await ctx.session.synthetic({ sessionID, text, resume: false });
-      },
-      helpers: oauthFlowHelpers,
-      client: createLegacyClient(),
-      live: liveAccountPool,
-      invalidate: () => this.onPoolChanged(),
-      verify: verifyAccountAccess,
-    });
   }
 
   /** Registers the `google_search` tool. */

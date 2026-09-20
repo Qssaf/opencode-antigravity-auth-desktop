@@ -14,17 +14,7 @@ account again just refreshes the token of the account already in the pool.
 > Run `opencode auth login`, pick Google → "OAuth with Google (Antigravity)", and
 > choose what to do (add / list / enable / disable / remove / quota / verify) and
 > which account. It appears once an account is stored.
->
-> The same actions are also a command, for when you do not want to leave the
-> session:
->
-> ```
-> /antigravity                 list stored accounts
-> /antigravity add             sign in and add another Google account
-> /antigravity enable|disable|remove <n>
-> /antigravity quota
-> /antigravity verify [<n>|all]
-> ```
+
 
 ---
 
@@ -75,14 +65,12 @@ This shows remaining quota percentages and reset times for each model family:
 - **Gemini 3 Pro** - Gemini 3 Pro quota
 - **Gemini 3 Flash** - Gemini 3 Flash quota
 
-### Standalone Quota Script
+### From a shell
 
 For checking quotas outside of OpenCode (for debugging, CI, etc.):
 
 ```bash
-node scripts/check-quota.mjs                    # Check all accounts
-node scripts/check-quota.mjs --account 2        # Check specific account
-node scripts/check-quota.mjs --path /path/to/accounts.json  # Custom path
+antigravity-accounts quota      # or, from a clone: npm run accounts -- quota
 ```
 
 ---
@@ -100,8 +88,8 @@ opencode auth login
 
 Or select an account from the list and choose "Enable/Disable account".
 
-On OpenCode 2.x, use the `/antigravity` command (see above) — it updates the
-running pool as well as the file.
+On OpenCode 2.x, use the login menu (see above) — it updates the running pool as
+well as the file.
 
 Outside OpenCode, on any version, use the standalone CLI, which edits the same
 account file (quit OpenCode first, or a running instance may write its in-memory

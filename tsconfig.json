@@ -1,5 +1,5 @@
 {
-  "include": ["src/**/*", "scripts/**/*"],
+  "include": ["src/**/*", "script/**/*"],
   "exclude": ["node_modules", "dist", "temp_research", "script"],
   "compilerOptions": {
     // Environment setup & latest features

@@ -13240,8 +13240,8 @@ function createNoUsableCredentialsResponse(urlString, detail) {
     detail,
     "",
     "Run `opencode auth login` to sign in again or add another account, then retry.",
-    "On OpenCode 2.x, `/antigravity` lists and manages the stored accounts;",
-    "outside OpenCode, the `antigravity-accounts` CLI does the same."
+    "The login menu lists and manages the stored accounts; outside OpenCode,",
+    "the `antigravity-accounts` CLI does the same."
   ].join("\n");
   return createSyntheticErrorResponse(errorMessage, requestedModel, family);
 }
@@ -15553,7 +15553,7 @@ async function loadAccountPool() {
   const storage = await loadAccounts();
   return storage && storage.accounts.length > 0 ? storage : null;
 }
-var NO_ACCOUNTS_MESSAGE = "No Google accounts are stored. Run `opencode auth login` (or `/antigravity add`) to sign in.";
+var NO_ACCOUNTS_MESSAGE = "No Google accounts are stored. Run `opencode auth login` to sign in.";
 function renderAccountList(storage) {
   if (!storage || storage.accounts.length === 0) {
     return NO_ACCOUNTS_MESSAGE;
@@ -15799,8 +15799,8 @@ Commands:
   verify [<n>|--all]     Check whether accounts can reach Antigravity
   help                   Show this help
 
-Inside OpenCode, \`/antigravity\` (2.x) or \`opencode auth login\` (1.x) does the
-same thing without stopping the app.
+Inside OpenCode, \`opencode auth login\` shows the same menu without stopping
+the app.
 `;
 var client = createLegacyClient();
 async function readLine(question) {

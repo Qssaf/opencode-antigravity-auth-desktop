@@ -6,8 +6,7 @@
  * no runtime dependency on `@opencode/plugin`. Declaring the surface locally
  * keeps the build free of that package's large type graph. The shapes mirror
  * https://opencode.ai/v2/docs/build/plugins and were checked against
- * `@opencode/plugin` 2.0.10, with `command` and `session.synthetic` checked
- * against 2.0.11.
+ * `@opencode/plugin` 2.0.10, with the login form checked against 2.0.11.
  *
  * Interface members use method syntax on purpose: the host types carry branded
  * string IDs, and method parameters are bivariant, so the host context stays
@@ -192,32 +191,6 @@ export interface ToolEditor {
   add(tool: ToolDefinition): void;
 }
 
-/** A `/name` command the plugin registers on OpenCode 2.x. */
-export interface CommandInvocation {
-  readonly sessionID: string;
-  readonly prompt: { readonly text: string };
-  readonly delivery: "steer" | "queue";
-}
-
-export interface CommandDefinition {
-  readonly name: string;
-  readonly description?: string;
-  readonly execute: (input: CommandInvocation) => Promise<void>;
-}
-
-export interface CommandEditor {
-  add(definition: CommandDefinition): void;
-}
-
-/** Message written straight into the session, with no model turn. */
-export interface SyntheticMessage {
-  readonly sessionID: string;
-  readonly text: string;
-  readonly description?: string;
-  readonly delivery?: "steer" | "queue";
-  /** Left false so the message is shown without resuming the agent loop. */
-  readonly resume?: boolean;
-}
 
 export interface Context {
   readonly app: { readonly name: string; readonly version: string; readonly channel: string };
@@ -234,11 +207,6 @@ export interface Context {
       callback: (event: ModelRequestHook) => Promise<void> | void,
       options?: { readonly providerID?: string },
     ): Promise<Registration>;
-    synthetic(input: SyntheticMessage): Promise<unknown>;
-  };
-  readonly command: {
-    transform(callback: (editor: CommandEditor) => void): Promise<Registration>;
-    reload(): Promise<void>;
   };
   readonly tool: {
     transform(callback: (editor: ToolEditor) => void): Promise<Registration>;

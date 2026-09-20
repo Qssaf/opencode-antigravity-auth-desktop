@@ -89,7 +89,9 @@ up immediately.
 
 OpenCode 2.x owns the login UI and runs plugins in a server process, so the
 interactive multi-account menu that OpenCode 1.x showed inside
-`opencode auth login` is not reachable there. Use the standalone CLI instead:
+`opencode auth login` is not reachable there — the menu is prompted by OpenCode
+as the login method's form instead. Outside OpenCode, the standalone CLI does
+the same operations:
 
 ```bash
 antigravity-accounts          # menu
