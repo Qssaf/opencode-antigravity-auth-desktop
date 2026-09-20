@@ -50,13 +50,25 @@ Install the @pieliesdie/opencode-antigravity-auth plugin and add the Antigravity
 
 **Option B: Manual setup**
 
-1. **Add the plugin** to `~/.config/opencode/opencode.json`:
+1. **Add the plugin** to `~/.config/opencode/opencode.json`.
+
+   On OpenCode 2.x the key is `plugins` (plural):
+
+   ```json
+   {
+     "plugins": ["@pieliesdie/opencode-antigravity-auth@latest"]
+   }
+   ```
+
+   On OpenCode 1.x it is `plugin` (singular):
 
    ```json
    {
      "plugin": ["@pieliesdie/opencode-antigravity-auth@latest"]
    }
    ```
+
+   Check with `opencode --version`. One package supports both; only the config key differs. See [OpenCode 2.x](#opencode-2x) for what changes on 2.x.
 
    > Want bleeding-edge features? Use `@pieliesdie/opencode-antigravity-auth@beta` instead.
 
@@ -359,6 +371,32 @@ For details on load balancing, dual quota pools, and account storage, see [docs/
 
 ---
 
+## OpenCode 2.x
+
+One package supports both OpenCode generations. On 2.x the plugin registers its OAuth method, models and `google_search` tool through the 2.x plugin API, while requests still run through the same Antigravity pipeline (account rotation, quota handling, model routing, thinking-block handling).
+
+**Config key:** `plugins` (plural) on 2.x, `plugin` (singular) on 1.x.
+
+**Upgrading from 1.x:** your accounts carry over. `antigravity-accounts.json` is still the account pool, so signed-in accounts keep working without logging in again.
+
+### What differs on 2.x
+
+| | OpenCode 1.x | OpenCode 2.x |
+|---|---|---|
+| Account management | Interactive menu inside `opencode auth login` (add, check quota, enable/disable, verify) | `opencode auth login` / `logout` / `switch`. The quota/verify menu is not available; run `node scripts/check-quota.mjs` from a clone of this repo to inspect quotas |
+| Status toasts | Shown in the TUI | Not shown — 2.x server plugins cannot raise toasts. Enable `"debug": true` in `antigravity.json` to get the same detail in the log |
+| Session recovery | Plugin re-injects missing `tool_result` blocks | Handled by OpenCode itself |
+| Update checks | Plugin checks on startup | `opencode plugin update` |
+| Model config | Static model definitions may be needed | Registered automatically |
+
+### How requests are routed on 2.x
+
+OpenCode 1.x let a plugin supply a custom `fetch` for a provider. OpenCode 2.x has no such hook: its `http.request` / `http.response` hooks can only swap an actual HTTP exchange, so they cannot produce the synthetic responses (quota-blocked, model-unavailable) or the cross-account retries this plugin relies on.
+
+Instead the plugin starts a loopback listener on `127.0.0.1` (random port, random per-route path token, never reachable off-host) and points the provider's `baseURL` at it. Requests go through the unchanged Antigravity pipeline and responses stream straight back, so behavior matches 1.x. A `baseURL` you configured yourself is left alone.
+
+---
+
 ## Troubleshooting
 
 > **Quick Reset**: Most issues can be resolved by deleting `~/.config/opencode/antigravity-accounts.json` and running `opencode auth login` again.
@@ -613,9 +651,19 @@ ssh -L 51121:localhost:51121 user@remote
 
 ---
 
-### Configuration Key Typo: `plugin` not `plugins`
+### "Unrecognized key" for `plugin` / `plugins`
 
-The correct key is `plugin` (singular):
+The key depends on your OpenCode version — check with `opencode --version`.
+
+OpenCode 2.x uses `plugins` (plural):
+
+```json
+{
+  "plugins": ["@pieliesdie/opencode-antigravity-auth@beta"]
+}
+```
+
+OpenCode 1.x uses `plugin` (singular):
 
 ```json
 {
@@ -623,7 +671,7 @@ The correct key is `plugin` (singular):
 }
 ```
 
-**Not** `"plugins"` (will cause "Unrecognized key" error).
+Using the wrong one for your version causes an "Unrecognized key" error, and the plugin is not loaded.
 
 ---
 

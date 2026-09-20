@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **OpenCode 2.x support** - The package now works on both OpenCode generations from one entrypoint. On 2.x the plugin registers its OAuth login method, its models and the `google_search` tool through the 2.x plugin API (`Plugin.define`), while requests keep running through the unchanged Antigravity pipeline, so account rotation, quota handling, model/tier routing and Claude thinking-block handling behave as before. Existing accounts carry over: `antigravity-accounts.json` is still the account pool, so there is no need to sign in again. Note the config key differs by version - `plugins` (plural) on 2.x, `plugin` (singular) on 1.x.
+
+### Changed
+
+- **Request routing on OpenCode 2.x** - OpenCode 2.x removed the per-provider custom `fetch` that the 1.x plugin used, and its `http.request`/`http.response` hooks can only swap a real HTTP exchange, so they cannot serve the pipeline's synthetic responses (quota-blocked, model-unavailable) or its cross-account retries. On 2.x the plugin instead starts a loopback listener (127.0.0.1, ephemeral port, random per-route path token) and points the provider's `baseURL` at it, then streams the pipeline's response back. A user-configured `baseURL` is left untouched. OpenCode 1.x still uses the custom `fetch` path.
+- **Model definitions on OpenCode 2.x** - Plugin model definitions are translated to the 2.x `Model.Info` shape, and thinking variants are rewritten from the 1.x `thinkingLevel`/`thinkingBudget` keys into the `thinkingConfig` object that the native Gemini protocol reads. Models already present in the provider keep the user's configuration.
+
+### Not carried over on OpenCode 2.x
+
+- Status toasts (2.x server plugins cannot raise toasts; enable `"debug": true` for the same detail in the log), the interactive multi-account menu inside `opencode auth login` (use `opencode auth login`/`logout`/`switch`), session recovery (OpenCode 2.x supplies results for interrupted tool calls itself) and the startup update check (use `opencode plugin update`). All remain unchanged on OpenCode 1.x.
+
 ## [1.6.1] - 2026-08-16
 
 ### Added

@@ -82,9 +82,10 @@ No linter or formatter is configured. Style is enforced by convention (see below
 
 ```
 src/
-├── plugin.ts                # Main entry, fetch interceptor
+├── plugin.ts                # Shared runtime + OpenCode 1.x entry, fetch interceptor
 ├── constants.ts             # Endpoints, headers, API config, system prompts
 ├── antigravity/oauth.ts     # OAuth token exchange
+├── v2/                      # OpenCode 2.x adapter (see below)
 └── plugin/
     ├── auth.ts              # Token validation & refresh
     ├── request.ts           # Request transformation (core logic)
@@ -99,6 +100,28 @@ src/
     ├── project.ts           # Managed project context resolution
     └── debug.ts             # Debug logging utilities
 ```
+
+### OpenCode 2.x adapter (`src/v2/`)
+
+```
+src/v2/
+├── plugin.ts         # Plugin.define entry: registers OAuth, models, model.request hook, tools per location
+├── runtime.ts        # Process-wide shared runtime (ref-counted across locations)
+├── proxy.ts          # Loopback listener that runs the pipeline's fetch
+├── oauth.ts          # OAuth method for the `google` integration
+├── credentials.ts    # 2.x credential <-> 1.x auth conversions
+├── models.ts         # 1.x model definitions -> 2.x Model.Info, variant translation
+├── legacy-client.ts  # Stand-in for the 1.x plugin client
+└── types.ts          # Local structural subset of @opencode/plugin
+```
+
+Things to know before changing this:
+
+- `createAntigravityRuntime` in `plugin.ts` is shared by both generations and returns `{ hooks, dispose }`. `createAntigravityPlugin` is the 1.x wrapper that returns just `hooks`.
+- `@opencode/plugin` is **not** a dependency. `Plugin.define()` is an identity function, so `src/v2/types.ts` declares the structural subset instead. Keep it matching the installed `@opencode/plugin` when touching hook shapes.
+- OpenCode 2.x calls `setup` once per location in one process, but the pipeline keeps process-global state, so the runtime is created once and ref-counted (`acquireRuntime`).
+- The auth loader is re-run only when the login changes, keyed by `authSignature` (stable across access-token rotation).
+- 2.x server plugins have no toasts, and `src/v2/legacy-client.ts` makes unsupported `session.*` calls throw rather than silently no-op.
 
 ## Key Design Patterns
 

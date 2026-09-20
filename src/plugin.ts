@@ -1663,11 +1663,29 @@ function sleep(ms: number, signal?: AbortSignal | null): Promise<void> {
 }
 
 /**
- * Creates an Antigravity OAuth plugin for a specific provider ID.
+ * Legacy (OpenCode 1.x style) hooks plus a handle to release the resources
+ * they own (background refresh timers, unsaved account state).
  */
-export const createAntigravityPlugin = (providerId: string) => async (
+export interface AntigravityRuntime {
+  hooks: PluginResult;
+  dispose(): Promise<void>;
+}
+
+/**
+ * Creates the Antigravity runtime for a specific provider ID.
+ *
+ * The OpenCode 1.x plugin entrypoint only needs `hooks`. The OpenCode 2.x
+ * adapter (src/v2) also needs `dispose`, because a 2.x plugin can be unloaded
+ * and reloaded within one process.
+ */
+export const createAntigravityRuntime = (providerId: string) => async (
   { client, directory }: PluginContext,
-): Promise<PluginResult> => {
+): Promise<AntigravityRuntime> => {
+  // Resources owned by the auth loader. Tracked at runtime scope so `dispose`
+  // and a repeated loader run can release the previous generation.
+  let activeRefreshQueue: ProactiveRefreshQueue | null = null;
+  let activeLoaderAccountManager: AccountManager | null = null;
+
   // Load configuration from files and environment variables
   const config = loadConfig(directory);
   initRuntimeConfig(config);
@@ -1837,7 +1855,7 @@ export const createAntigravityPlugin = (providerId: string) => async (
     },
   });
 
-  return {
+  const hooks: PluginResult = {
     event: eventHandler,
     tool: {
       google_search: googleSearchTool,
@@ -1981,22 +1999,33 @@ export const createAntigravityPlugin = (providerId: string) => async (
       
       // Note: AccountManager now ensures the current auth is always included in accounts
 
+      // A repeated loader run (credentials changed) replaces the previous
+      // generation: stop its refresh timer and persist its pending state.
+      activeRefreshQueue?.stop();
+      activeRefreshQueue = null;
+      const previousAccountManager = activeLoaderAccountManager;
+      activeLoaderAccountManager = null;
+      if (previousAccountManager) {
+        await previousAccountManager.flushSaveToDisk().catch(() => {});
+      }
+
       const accountManager = await AccountManager.loadFromDisk(auth);
       activeAccountManager = accountManager;
+      activeLoaderAccountManager = accountManager;
       if (accountManager.getAccountCount() > 0) {
         accountManager.requestSaveToDisk();
       }
 
       // Initialize proactive token refresh queue (ported from LLM-API-Key-Proxy)
-      let refreshQueue: ProactiveRefreshQueue | null = null;
       if (config.proactive_token_refresh && accountManager.getAccountCount() > 0) {
-        refreshQueue = createProactiveRefreshQueue(client, providerId, {
+        const refreshQueue = createProactiveRefreshQueue(client, providerId, {
           enabled: config.proactive_token_refresh,
           bufferSeconds: config.proactive_refresh_buffer_seconds,
           checkIntervalSeconds: config.proactive_refresh_check_interval_seconds,
         });
         refreshQueue.setAccountManager(accountManager);
         refreshQueue.start();
+        activeRefreshQueue = refreshQueue;
       }
 
       if (isDebugEnabled()) {
@@ -4231,10 +4260,49 @@ export const createAntigravityPlugin = (providerId: string) => async (
     ],
   },
   };
+
+  const dispose = async (): Promise<void> => {
+    activeRefreshQueue?.stop();
+    activeRefreshQueue = null;
+    const manager = activeLoaderAccountManager;
+    activeLoaderAccountManager = null;
+    if (manager) {
+      if (activeAccountManager === manager) {
+        activeAccountManager = null;
+      }
+      await manager.flushSaveToDisk().catch(() => {});
+    }
+  };
+
+  return { hooks, dispose };
+};
+
+/**
+ * Creates an OpenCode 1.x Antigravity OAuth plugin for a specific provider ID.
+ */
+export const createAntigravityPlugin = (providerId: string) => async (
+  context: PluginContext,
+): Promise<PluginResult> => {
+  const runtime = await createAntigravityRuntime(providerId)(context);
+  return runtime.hooks;
 };
 
 export const AntigravityCLIOAuthPlugin = createAntigravityPlugin(ANTIGRAVITY_PROVIDER_ID);
 export const GoogleOAuthPlugin = AntigravityCLIOAuthPlugin;
+
+/**
+ * OAuth login helpers shared with the OpenCode 2.x adapter (src/v2). They were
+ * private to this module; the 2.x login flow cannot use the 1.x interactive
+ * prompts but needs the same browser, callback and account pool logic.
+ */
+export const oauthFlowHelpers = {
+  openBrowser,
+  shouldSkipLocalServer,
+  getStateFromAuthorizationUrl,
+  extractOAuthCallbackParams,
+  parseOAuthCallbackInput,
+  persistAccountPool,
+};
 
 function toUrlString(value: RequestInfo): string {
   if (typeof value === "string") {

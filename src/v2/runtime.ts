@@ -1,0 +1,396 @@
+/**
+ * Process-wide Antigravity runtime for OpenCode 2.x.
+ *
+ * OpenCode 2.x calls a plugin's `setup` once per location (project), all in one
+ * server process. The Antigravity pipeline keeps process-global state (account
+ * pool, health scores, rate limit tracking, refresh timers), and re-running its
+ * initializers resets that state. So every location shares one runtime, which
+ * is created by the first `setup` and disposed by the last cleanup.
+ */
+
+import { tool } from "@opencode-ai/plugin/tool";
+import { ANTIGRAVITY_PROVIDER_ID } from "../constants";
+import { createAntigravityRuntime, oauthFlowHelpers } from "../plugin";
+import { formatRefreshParts, isOAuthAuth } from "../plugin/auth";
+import type { AntigravityRuntime } from "../plugin";
+import { OPENCODE_MODEL_DEFINITIONS } from "../plugin/config/models";
+import { createLogger } from "../plugin/logger";
+import { loadAccounts } from "../plugin/storage";
+import type { AuthDetails, LoaderResult, PluginResult, Provider, ProviderModel } from "../plugin/types";
+import { authSignature, credentialToAuth, poolAuthSignature } from "./credentials";
+import { createLegacyClient } from "./legacy-client";
+import { catalogFromDefinitions, mergeCatalog } from "./models";
+import { createOAuthMethod } from "./oauth";
+import { registerProxyRoute } from "./proxy";
+import type { ProxyRoute } from "./proxy";
+import type {
+  Context,
+  ModelInfo,
+  ModelRequestHook,
+  OAuthMethodRegistration,
+  ProviderEditor,
+  ToolEditor,
+} from "./types";
+
+const log = createLogger("v2-runtime");
+
+const PROVIDER_ID = ANTIGRAVITY_PROVIDER_ID;
+const GEMINI_HOST = "generativelanguage.googleapis.com";
+
+/** How the shared runtime is torn down once the last location unloads. */
+export interface RuntimeHandle {
+  readonly runtime: V2Runtime;
+  release(): Promise<void>;
+}
+
+interface AuthSnapshot {
+  auth: AuthDetails;
+  signature: string;
+}
+
+interface LoadedInterceptor {
+  signature: string;
+  loaded: Promise<LoaderResult | Record<string, unknown>>;
+}
+
+/** The 1.x `google_search` tool as returned by the legacy hooks. */
+interface LegacySearchTool {
+  description: string;
+  args: Record<string, unknown>;
+  execute(args: unknown, context: { abort: AbortSignal }): Promise<string>;
+}
+
+function isLoaderResult(value: LoaderResult | Record<string, unknown>): value is LoaderResult {
+  return typeof (value as { fetch?: unknown }).fetch === "function";
+}
+
+function isLegacySearchTool(value: unknown): value is LegacySearchTool {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<LegacySearchTool>;
+  return (
+    typeof candidate.description === "string" &&
+    typeof candidate.args === "object" &&
+    candidate.args !== null &&
+    typeof candidate.execute === "function"
+  );
+}
+
+/**
+ * Builds an OAuth auth from the enabled account the pool currently points at,
+ * mirroring what the auth loader does when OpenCode has no OAuth credential.
+ * The access token is left empty so callers refresh it themselves.
+ */
+export async function promoteAccountFromPool(): Promise<AuthSnapshot | undefined> {
+  let stored: Awaited<ReturnType<typeof loadAccounts>>;
+  try {
+    stored = await loadAccounts();
+  } catch (error) {
+    log.debug("Could not read the Antigravity account pool", { error: String(error) });
+    return undefined;
+  }
+
+  const accounts = stored?.accounts ?? [];
+  if (accounts.length === 0) return undefined;
+
+  const activeIndex = stored?.activeIndex;
+  const active =
+    typeof activeIndex === "number" && activeIndex >= 0 && activeIndex < accounts.length
+      ? accounts[activeIndex]
+      : undefined;
+  const account =
+    active?.refreshToken && active.enabled !== false
+      ? active
+      : accounts.find((candidate) => candidate?.refreshToken && candidate.enabled !== false);
+  if (!account?.refreshToken) return undefined;
+
+  const refresh = formatRefreshParts({
+    refreshToken: account.refreshToken,
+    projectId: account.projectId,
+    managedProjectId: account.managedProjectId,
+  });
+  return {
+    auth: { type: "oauth", refresh, access: "", expires: 0 },
+    signature: poolAuthSignature(refresh),
+  };
+}
+
+/**
+ * Only requests that would have gone to the public Gemini API are rerouted. A
+ * user-configured custom base URL is left alone, as it was on OpenCode 1.x.
+ */
+export function isDefaultGeminiBaseURL(baseURL: string | undefined): boolean {
+  if (!baseURL) return true;
+  try {
+    return new URL(baseURL).hostname === GEMINI_HOST;
+  } catch {
+    return false;
+  }
+}
+
+export class V2Runtime {
+  private readonly attached = new Set<Context>();
+  private readonly catalogListeners = new Set<() => void>();
+  private catalog: Map<string, ModelInfo>;
+  private interceptor: LoadedInterceptor | undefined;
+  private route: Promise<ProxyRoute> | undefined;
+  private catalogRefresh: Promise<void> | undefined;
+  private disposed = false;
+
+  private constructor(private readonly legacy: AntigravityRuntime) {
+    this.catalog = catalogFromDefinitions(PROVIDER_ID, OPENCODE_MODEL_DEFINITIONS);
+  }
+
+  static async create(ctx: Context): Promise<V2Runtime> {
+    const legacy = await createAntigravityRuntime(PROVIDER_ID)({
+      client: createLegacyClient(),
+      directory: ctx.location.directory,
+    });
+    return new V2Runtime(legacy);
+  }
+
+  attach(ctx: Context): void {
+    this.attached.add(ctx);
+  }
+
+  detach(ctx: Context): void {
+    this.attached.delete(ctx);
+  }
+
+  /**
+   * Resolves the auth the pipeline should use: the active `google` connection
+   * if OpenCode has one, otherwise an account promoted from the on-disk pool.
+   *
+   * The promotion matters for users upgrading from OpenCode 1.x, who have
+   * accounts in `antigravity-accounts.json` but no 2.x credential. The auth
+   * loader promotes them too, but callers that read `getAuth()` directly (the
+   * `google_search` tool, model discovery) would otherwise see no account.
+   */
+  private async readAuth(): Promise<AuthSnapshot> {
+    for (const ctx of this.attached) {
+      try {
+        const connection = await ctx.integration.connection.active(PROVIDER_ID);
+        const credential = connection ? await ctx.integration.connection.resolve(connection) : undefined;
+        const auth = credentialToAuth(credential);
+        if (isOAuthAuth(auth)) {
+          return { auth, signature: authSignature(connection, credential) };
+        }
+        const promoted = await promoteAccountFromPool();
+        if (promoted) return promoted;
+        // An API key is still usable; only fall back to it when the pool is empty.
+        if (credential) {
+          return { auth, signature: authSignature(connection, credential) };
+        }
+        break;
+      } catch (error) {
+        log.debug("Could not read the active credential from this location", { error: String(error) });
+      }
+    }
+
+    return (await promoteAccountFromPool()) ?? { auth: { type: "none" }, signature: "none" };
+  }
+
+  /**
+   * Runs the legacy auth loader for the current login. The loader builds the
+   * account manager and the request pipeline, so it only runs again when the
+   * login changes (a different account or key), not on every request.
+   */
+  private async loaderResult(): Promise<LoaderResult | undefined> {
+    const { signature } = await this.readAuth();
+
+    if (!this.interceptor || this.interceptor.signature !== signature) {
+      const loader = this.legacy.hooks.auth.loader;
+      const stub: Provider = { id: PROVIDER_ID, models: {} };
+      const loaded = loader(async () => (await this.readAuth()).auth, stub);
+      const entry: LoadedInterceptor = { signature, loaded };
+      this.interceptor = entry;
+      // A failed load must not stick: the next request tries again.
+      loaded.catch(() => {
+        if (this.interceptor === entry) this.interceptor = undefined;
+      });
+    }
+
+    const result = await this.interceptor.loaded;
+    return isLoaderResult(result) ? result : undefined;
+  }
+
+  /** Runs one Gemini request through the Antigravity pipeline. */
+  private async dispatch(url: string, init: RequestInit): Promise<Response> {
+    const loaded = await this.loaderResult();
+    if (!loaded) {
+      // The login changed to something the pipeline does not handle while the
+      // request was on its way. Behave as OpenCode 1.x did without a loader.
+      return fetch(url, init);
+    }
+    return loaded.fetch(url, init);
+  }
+
+  private ensureRoute(): Promise<ProxyRoute> {
+    this.route ??= registerProxyRoute((url, init) => this.dispatch(url, init)).catch((error) => {
+      this.route = undefined;
+      throw error;
+    });
+    return this.route;
+  }
+
+  /**
+   * `model.request` hook: sends this request through the Antigravity pipeline
+   * by pointing the provider at the loopback proxy.
+   */
+  async routeModelRequest(event: ModelRequestHook): Promise<void> {
+    if (this.disposed || !isDefaultGeminiBaseURL(event.baseURL)) return;
+
+    // Throws (and so fails the request) if the pipeline cannot be set up. That
+    // is deliberate: the alternative is sending the prompt to the public Gemini
+    // API with a placeholder key.
+    const loaded = await this.loaderResult();
+    if (!loaded) return;
+
+    const route = await this.ensureRoute();
+    event.baseURL = route.baseURL;
+  }
+
+  /** Adds the plugin's models to the `google` provider. */
+  applyModels(editor: ProviderEditor): void {
+    const record = editor.get(PROVIDER_ID);
+    if (!record) return;
+    const merged = mergeCatalog(record.models, this.catalog);
+    if (merged) editor.models.set(PROVIDER_ID, merged);
+  }
+
+  onCatalogChange(listener: () => void): () => void {
+    this.catalogListeners.add(listener);
+    return () => this.catalogListeners.delete(listener);
+  }
+
+  /**
+   * Discovers models available to the signed-in accounts (Antigravity and
+   * Gemini API listings) and folds them into the catalog. Runs in the
+   * background; locations re-read the catalog when it changes.
+   */
+  refreshCatalog(): Promise<void> {
+    this.catalogRefresh ??= this.discoverModels().finally(() => {
+      this.catalogRefresh = undefined;
+    });
+    return this.catalogRefresh;
+  }
+
+  private async discoverModels(): Promise<void> {
+    const models = this.legacy.hooks.provider?.models;
+    if (!models) return;
+    try {
+      // Discovery reads the account pool the loader builds.
+      await this.loaderResult();
+      const { auth } = await this.readAuth();
+      const stub: Provider = { id: PROVIDER_ID, models: {} };
+      const discovered: Record<string, ProviderModel> = await models(stub, { auth });
+      if (this.disposed) return;
+
+      const next = catalogFromDefinitions(PROVIDER_ID, discovered);
+      for (const [id, model] of this.catalog) {
+        if (!next.has(id)) next.set(id, model);
+      }
+      const changed = next.size !== this.catalog.size || [...next.keys()].some((id) => !this.catalog.has(id));
+      this.catalog = next;
+      if (changed) {
+        for (const listener of this.catalogListeners) listener();
+      }
+    } catch (error) {
+      log.debug("Model discovery failed; keeping the built-in model list", { error: String(error) });
+    }
+  }
+
+  /** The OAuth method registered on the `google` integration. */
+  oauthMethod(): OAuthMethodRegistration {
+    return createOAuthMethod({
+      integrationID: PROVIDER_ID,
+      client: createLegacyClient(),
+      helpers: oauthFlowHelpers,
+    });
+  }
+
+  /** Registers the `google_search` tool. */
+  addTools(editor: ToolEditor): void {
+    const legacyTool = this.legacy.hooks.tool?.google_search;
+    if (!isLegacySearchTool(legacyTool)) return;
+
+    const schema = tool.schema;
+    const shape = schema.object(legacyTool.args as unknown as Parameters<typeof schema.object>[0]);
+    const { $schema: _dialect, ...input } = schema.toJSONSchema(shape, { io: "input" }) as Record<string, unknown>;
+
+    editor.add({
+      name: "google_search",
+      description: legacyTool.description,
+      input,
+      execute: async (rawInput) => {
+        const parsed = shape.safeParse(rawInput);
+        if (!parsed.success) {
+          return { content: `Error: invalid google_search arguments: ${parsed.error.message}` };
+        }
+        // The pipeline reads the account pool the loader builds.
+        await this.loaderResult().catch(() => undefined);
+        // 2.x tool calls carry no abort signal, so the search runs to its own timeout.
+        const content = await legacyTool.execute(parsed.data, { abort: new AbortController().signal });
+        return { content };
+      },
+    });
+  }
+
+  async dispose(): Promise<void> {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.catalogListeners.clear();
+    this.interceptor = undefined;
+    const route = this.route;
+    this.route = undefined;
+    if (route) {
+      await route.then((r) => r.dispose()).catch(() => {});
+    }
+    await this.legacy.dispose();
+  }
+}
+
+// -- shared instance ---------------------------------------------------------
+
+let shared: { runtime: Promise<V2Runtime>; refs: number } | undefined;
+let disposing: Promise<void> | undefined;
+
+/**
+ * Attaches a location to the shared runtime, creating it if this is the first.
+ * `release` detaches the location and disposes the runtime with the last one.
+ */
+export async function acquireRuntime(ctx: Context): Promise<RuntimeHandle> {
+  // A previous generation may still be shutting down.
+  await disposing;
+
+  const entry = (shared ??= { runtime: V2Runtime.create(ctx), refs: 0 });
+  entry.refs += 1;
+
+  let runtime: V2Runtime;
+  try {
+    runtime = await entry.runtime;
+  } catch (error) {
+    entry.refs -= 1;
+    if (shared === entry && entry.refs === 0) shared = undefined;
+    throw error;
+  }
+  runtime.attach(ctx);
+
+  let released = false;
+  return {
+    runtime,
+    async release() {
+      if (released) return;
+      released = true;
+      runtime.detach(ctx);
+      entry.refs -= 1;
+      if (entry.refs === 0 && shared === entry) {
+        shared = undefined;
+        const shutdown = runtime.dispose().finally(() => {
+          if (disposing === shutdown) disposing = undefined;
+        });
+        disposing = shutdown;
+        await shutdown;
+      }
+    },
+  };
+}
