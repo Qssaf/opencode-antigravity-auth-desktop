@@ -23,6 +23,13 @@ npm run test:e2e:regression          # E2E: regression suite
 
 No linter or formatter is configured. Style is enforced by convention (see below).
 
+`dist/` is committed (source maps are not). This fork is installed straight from
+GitHub, and OpenCode resolves an installed plugin through package.json `main`,
+so a source-only repo cannot be installed. Run `npm run build` and commit the
+bundles with any change that should reach installed users. A plugin loaded from
+a local directory path uses `index.ts` instead, so local development does not
+need the rebuild.
+
 ## TypeScript Configuration
 
 - `strict: true` with extra strictness: `noUncheckedIndexedAccess`, `noImplicitOverride`, `noFallthroughCasesInSwitch`

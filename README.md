@@ -73,7 +73,7 @@ This fork is not published to npm; it is installed from this repository.
 
    Check with `opencode --version`. One package supports both; only the config key differs. See [OpenCode 2.x](#opencode-2x) for what changes on 2.x.
 
-   The bundle is built on install (`prepare`), so no dist files are committed.
+   Verify it loaded with `opencode plugin list`, which prints the resolved path.
 
    **From a local clone** (what to use while changing the plugin, and the fallback
    if your OpenCode build does not resolve `github:` specifiers):
