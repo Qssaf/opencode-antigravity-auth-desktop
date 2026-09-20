@@ -37,6 +37,17 @@ const log = createLogger("v2-runtime");
 const PROVIDER_ID = ANTIGRAVITY_PROVIDER_ID;
 const GEMINI_HOST = "generativelanguage.googleapis.com";
 
+/**
+ * How long a resolved auth snapshot is reused.
+ *
+ * Reading it costs two round-trips to the OpenCode server plus, when the
+ * credential store has no OAuth entry, a read and parse of the account pool.
+ * A single model request resolves auth twice (routing the request, then
+ * dispatching it), milliseconds apart, so a short window collapses that into
+ * one lookup while still picking up an account switch almost immediately.
+ */
+const AUTH_SNAPSHOT_TTL_MS = 250;
+
 /** How the shared runtime is torn down once the last location unloads. */
 export interface RuntimeHandle {
   readonly runtime: V2Runtime;
@@ -132,6 +143,7 @@ export class V2Runtime {
   private readonly catalogListeners = new Set<() => void>();
   private catalog: Map<string, ModelInfo>;
   private interceptor: LoadedInterceptor | undefined;
+  private authSnapshot: { value: Promise<AuthSnapshot>; at: number } | undefined;
   private route: Promise<ProxyRoute> | undefined;
   private catalogRefresh: Promise<void> | undefined;
   private disposed = false;
@@ -165,7 +177,22 @@ export class V2Runtime {
    * loader promotes them too, but callers that read `getAuth()` directly (the
    * `google_search` tool, model discovery) would otherwise see no account.
    */
-  private async readAuth(): Promise<AuthSnapshot> {
+  private readAuth(): Promise<AuthSnapshot> {
+    const now = Date.now();
+    const cached = this.authSnapshot;
+    if (cached && now - cached.at < AUTH_SNAPSHOT_TTL_MS) return cached.value;
+
+    const value = this.resolveAuth();
+    const entry = { value, at: now };
+    this.authSnapshot = entry;
+    // A failed lookup must not be cached: the next request retries.
+    value.catch(() => {
+      if (this.authSnapshot === entry) this.authSnapshot = undefined;
+    });
+    return value;
+  }
+
+  private async resolveAuth(): Promise<AuthSnapshot> {
     for (const ctx of this.attached) {
       try {
         const connection = await ctx.integration.connection.active(PROVIDER_ID);
@@ -340,6 +367,7 @@ export class V2Runtime {
     this.disposed = true;
     this.catalogListeners.clear();
     this.interceptor = undefined;
+    this.authSnapshot = undefined;
     const route = this.route;
     this.route = undefined;
     if (route) {
