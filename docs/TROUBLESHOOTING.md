@@ -60,6 +60,31 @@ other account in the chooser. Verify with:
 antigravity-accounts list
 ```
 
+### A plugin change does not take effect (OpenCode 2.x)
+
+OpenCode 2.x runs plugins inside a **background server** that outlives the CLI.
+Installing a new version, editing `opencode.json` or changing an environment
+variable does nothing for a server that is already running — it keeps serving
+the code it loaded at boot. Restart it:
+
+```bash
+opencode service stop     # the next command starts a fresh one
+# or
+opencode service restart
+```
+
+This is the usual reason a just-installed fix, a new command or a changed
+account file appears to be ignored. Verified against OpenCode 2.0.11.
+
+Check what is actually loaded with:
+
+```bash
+opencode plugin list
+```
+
+It prints the plugin's resolved source path, so a stale or unexpected copy shows
+up immediately.
+
 ### Managing accounts on OpenCode 2.x / the desktop app
 
 OpenCode 2.x owns the login UI and runs plugins in a server process, so the

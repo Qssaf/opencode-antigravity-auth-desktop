@@ -409,6 +409,18 @@ Only **Add** continues into a Google sign-in; the others run immediately and sho
 the result. The menu appears once you have an account stored — a first login (and
 any scripted one) is still a plain sign-in.
 
+Everything is scriptable too, which is also how to check it quickly:
+
+```bash
+opencode auth login google --method antigravity --answer action=list
+opencode auth login google --method antigravity --answer action=disable --answer account=2
+```
+
+> **After installing or updating the plugin, restart the background server** —
+> OpenCode 2.x keeps plugins loaded in a server that outlives the CLI, so a new
+> version is not picked up until you run `opencode service stop` (or
+> `opencode service restart`). `opencode plugin list` shows which copy is loaded.
+
 **Also on 2.x — the `/antigravity` command,** if you would rather not leave the
 session. It answers in place without spending a model call:
 
