@@ -76,7 +76,7 @@ describe("runAccountsCli", () => {
 
   it("says so when nothing is stored yet", async () => {
     expect(await runAccountsCli(["list"])).toBe(0);
-    expect(logged.join("\n")).toContain("No accounts stored");
+    expect(logged.join("\n")).toContain("No Google accounts are stored");
   });
 
   it("disables and re-enables an account by its listed number", async () => {

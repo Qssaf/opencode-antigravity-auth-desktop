@@ -1396,8 +1396,8 @@ function createNoUsableCredentialsResponse(urlString: string, detail: string): R
     detail,
     "",
     "Run `opencode auth login` to sign in again or add another account, then retry.",
-    "`npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts` lists and",
-    "manages the accounts the plugin has stored.",
+    "On OpenCode 2.x, `/antigravity` lists and manages the stored accounts;",
+    "outside OpenCode, the `antigravity-accounts` CLI does the same.",
   ].join("\n");
   return createSyntheticErrorResponse(errorMessage, requestedModel, family);
 }
@@ -4377,6 +4377,25 @@ export const GoogleOAuthPlugin = AntigravityCLIOAuthPlugin;
  * private to this module; the 2.x login flow cannot use the 1.x interactive
  * prompts but needs the same browser, callback and account pool logic.
  */
+/**
+ * Applies a pool change made outside the request path — the OpenCode 2.x
+ * `/antigravity` command, which edits the stored pool directly — to the
+ * AccountManager the running requests are holding. Without it the change would
+ * only be seen after the auth loader runs again, and a later flush of the live
+ * manager could write the old value back over it.
+ */
+export const liveAccountPool = {
+  setEnabled(index: number, enabled: boolean): void {
+    activeAccountManager?.setAccountEnabled(index, enabled);
+  },
+  remove(index: number): void {
+    if (activeAccountManager?.removeAccountByIndex(index)) {
+      // Renumbering shifted the accounts after it; keep index-keyed state attached.
+      remapAccountStateAfterRemoval(index);
+    }
+  },
+};
+
 export const oauthFlowHelpers = {
   openBrowser,
   shouldSkipLocalServer,

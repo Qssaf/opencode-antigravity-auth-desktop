@@ -14,6 +14,8 @@
 
 ### Added
 
+- **`/antigravity` command on OpenCode 2.x** - Account management is back inside OpenCode. OpenCode 2.x owns the login prompt and runs plugins in a server process, so the 1.x arrow-key menu cannot run there; the plugin now registers a command (`ctx.command.transform`) that answers in the session without a model call (`ctx.session.synthetic`): `/antigravity` (list), `add`, `enable <n>`, `disable <n>`, `remove <n>`, `quota`, `verify [<n>|all]`. `add` opens Google's account chooser and stores the account as soon as the browser redirects back. Changes apply immediately: the in-memory pool is updated and the cached auth loader is dropped, so the next request re-reads the account file without a restart.
+
 - **`antigravity-accounts` CLI** - A standalone account manager shipped as a binary (`npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts`). OpenCode 2.x and the desktop app own the login UI and run plugins in a server process, so the interactive multi-account menu that 1.x showed inside `opencode auth login` is unreachable there — this restores listing, adding, enabling/disabling, removing, quota checks and verification, on both generations, by working directly on `antigravity-accounts.json`. Subcommands: `list`, `add [--no-browser]`, `enable <n>`, `disable <n>`, `remove <n>|--all`, `quota`, `verify [<n>|--all]`; with no arguments it opens the menu (or prints the list when there is no TTY). From a clone, `npm run accounts` runs the same thing without installing the package.
 
 - **OpenCode 2.x support** - The package now works on both OpenCode generations from one entrypoint. On 2.x the plugin registers its OAuth login method, its models and the `google_search` tool through the 2.x plugin API (`Plugin.define`), while requests keep running through the unchanged Antigravity pipeline, so account rotation, quota handling, model/tier routing and Claude thinking-block handling behave as before. Existing accounts carry over: `antigravity-accounts.json` is still the account pool, so there is no need to sign in again. Note the config key differs by version - `plugins` (plural) on 2.x, `plugin` (singular) on 1.x.
@@ -25,7 +27,7 @@
 
 ### Not carried over on OpenCode 2.x
 
-- Status toasts (2.x server plugins cannot raise toasts; enable `"debug": true` for the same detail in the log), the interactive multi-account menu inside `opencode auth login` (use `opencode auth login`/`logout`/`switch`, and the `antigravity-accounts` CLI for the rest of the menu), session recovery (OpenCode 2.x supplies results for interrupted tool calls itself) and the startup update check (use `opencode plugin update`). All remain unchanged on OpenCode 1.x.
+- Status toasts (2.x server plugins cannot raise toasts; enable `"debug": true` for the same detail in the log), the interactive multi-account menu inside `opencode auth login` (use `opencode auth login`/`logout`/`switch`, and `/antigravity` or the `antigravity-accounts` CLI for the account pool), session recovery (OpenCode 2.x supplies results for interrupted tool calls itself) and the startup update check (use `opencode plugin update`). All remain unchanged on OpenCode 1.x.
 
 ## [1.6.1] - 2026-08-16
 

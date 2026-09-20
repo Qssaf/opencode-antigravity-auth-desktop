@@ -12,10 +12,15 @@ account again just refreshes the token of the account already in the pool.
 
 > **OpenCode 2.x and the desktop app:** OpenCode owns the login UI there and runs
 > plugins in a server process, so the interactive menu below (part of
-> `opencode auth login` on 1.x) is not reachable. Use the standalone account CLI:
+> `opencode auth login` on 1.x) is not reachable. The plugin registers the
+> `/antigravity` command instead — type it in any session:
 >
-> ```bash
-> npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts
+> ```
+> /antigravity                 list stored accounts
+> /antigravity add             sign in and add another Google account
+> /antigravity enable|disable|remove <n>
+> /antigravity quota
+> /antigravity verify [<n>|all]
 > ```
 
 ---
@@ -92,18 +97,22 @@ opencode auth login
 
 Or select an account from the list and choose "Enable/Disable account".
 
-On any version (and the only way on OpenCode 2.x / the desktop app), use the
-standalone CLI, which edits the same account file:
+On OpenCode 2.x, use the `/antigravity` command (see above) — it updates the
+running pool as well as the file.
+
+Outside OpenCode, on any version, use the standalone CLI, which edits the same
+account file (quit OpenCode first, or a running instance may write its in-memory
+copy back over the change):
 
 ```bash
-npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts          # interactive menu
-npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts list
-npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts add [--no-browser]
-npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts enable 2
-npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts disable 2
-npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts remove 2   # or --all
-npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts quota
-npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts verify --all
+antigravity-accounts          # interactive menu
+antigravity-accounts list
+antigravity-accounts add [--no-browser]
+antigravity-accounts enable 2
+antigravity-accounts disable 2
+antigravity-accounts remove 2   # or --all
+antigravity-accounts quota
+antigravity-accounts verify --all
 ```
 
 From a clone of this repo (before the package is published with the CLI):

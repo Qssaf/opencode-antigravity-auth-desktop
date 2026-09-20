@@ -8,15 +8,15 @@
  * - the Antigravity models on the `google` provider,
  * - a `model.request` hook that routes Gemini requests through the Antigravity
  *   pipeline (see proxy.ts),
- * - the `google_search` tool.
+ * - the `google_search` tool,
+ * - the `/antigravity` account command (see command.ts).
  *
  * Not carried over from OpenCode 1.x: toasts (2.x server plugins cannot show
- * them), the interactive multi-account menu (use `opencode auth login`,
- * `logout` and `switch` for credentials, and the standalone
- * `antigravity-accounts` CLI in `src/cli/accounts.ts` to list, add, enable,
- * disable, verify or remove the accounts the pipeline rotates through),
- * session recovery (OpenCode 2.x supplies a result for tool calls that never
- * completed) and the auto-update checker (use `opencode plugin update`).
+ * them), the arrow-key account menu inside `opencode auth login` — 2.x owns
+ * that prompt, so account management moved to the `/antigravity` command and
+ * the standalone `antigravity-accounts` CLI — session recovery (OpenCode 2.x
+ * supplies a result for tool calls that never completed) and the auto-update
+ * checker (use `opencode plugin update`).
  */
 
 import { ANTIGRAVITY_PROVIDER_ID } from "../constants";
@@ -65,6 +65,19 @@ export async function setup(ctx: Context): Promise<Cleanup> {
         runtime.addTools(editor);
       }),
     );
+    // The account command replaces the 1.x in-login menu. An OpenCode build
+    // without the command domain simply does not get it.
+    if (typeof ctx.command?.transform === "function") {
+      const command = runtime.accountCommand(ctx);
+      registrations.push(
+        await ctx.command.transform((editor) => {
+          editor.add(command);
+        }),
+      );
+      await ctx.command.reload().catch((error) => {
+        log.debug("Command reload after registration failed", { error: String(error) });
+      });
+    }
   } catch (error) {
     await disposeAll(registrations);
     await handle.release();

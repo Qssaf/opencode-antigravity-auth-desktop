@@ -96,6 +96,8 @@ src/
     ├── quota.ts             # Quota checking (API usage stats)
     ├── cache.ts             # Auth & signature caching
     ├── accounts.ts          # Multi-account management & storage
+    ├── account-admin.ts     # Pool administration + text rendering (CLI and /antigravity)
+    ├── account-login.ts     # Adding an account outside `opencode auth login`
     ├── storage.ts           # Persistent storage schemas (Zod)
     ├── fingerprint.ts       # Device fingerprint generation & headers
     ├── project.ts           # Managed project context resolution
@@ -106,7 +108,8 @@ src/
 
 ```
 src/v2/
-├── plugin.ts         # Plugin.define entry: registers OAuth, models, model.request hook, tools per location
+├── plugin.ts         # Plugin.define entry: registers OAuth, models, model.request hook, tools, /antigravity per location
+├── command.ts        # `/antigravity` account command (session.synthetic output)
 ├── runtime.ts        # Process-wide shared runtime (ref-counted across locations)
 ├── proxy.ts          # Loopback listener that runs the pipeline's fetch
 ├── oauth.ts          # OAuth method for the `google` integration
@@ -123,6 +126,7 @@ Things to know before changing this:
 - OpenCode 2.x calls `setup` once per location in one process, but the pipeline keeps process-global state, so the runtime is created once and ref-counted (`acquireRuntime`).
 - The auth loader is re-run only when the login changes, keyed by `authSignature` (stable across access-token rotation).
 - 2.x server plugins have no toasts, and `src/v2/legacy-client.ts` makes unsupported `session.*` calls throw rather than silently no-op.
+- The 1.x account menu cannot run on 2.x (no stdin in the server process). `/antigravity` replaces it: `ctx.command.transform` registers it, `ctx.session.synthetic({ resume: false })` prints the answer without a model turn, and a change mirrors into the live pool (`liveAccountPool`) before `V2Runtime.invalidateAuth()` forces the next request to re-read the account file.
 
 ## Key Design Patterns
 

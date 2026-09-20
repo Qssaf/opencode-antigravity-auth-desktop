@@ -10,7 +10,7 @@
 
 import { tool } from "@opencode-ai/plugin/tool";
 import { ANTIGRAVITY_PROVIDER_ID } from "../constants";
-import { createAntigravityRuntime, oauthFlowHelpers } from "../plugin";
+import { createAntigravityRuntime, liveAccountPool, oauthFlowHelpers, verifyAccountAccess } from "../plugin";
 import { formatRefreshParts, isOAuthAuth } from "../plugin/auth";
 import type { AntigravityRuntime } from "../plugin";
 import { OPENCODE_MODEL_DEFINITIONS } from "../plugin/config/models";
@@ -20,10 +20,12 @@ import type { AuthDetails, LoaderResult, PluginResult, Provider, ProviderModel }
 import { authSignature, credentialToAuth, poolAuthSignature } from "./credentials";
 import { createLegacyClient } from "./legacy-client";
 import { catalogFromDefinitions, mergeCatalog } from "./models";
+import { createAccountCommand } from "./command";
 import { createOAuthMethod } from "./oauth";
 import { registerProxyRoute } from "./proxy";
 import type { ProxyRoute } from "./proxy";
 import type {
+  CommandDefinition,
   Context,
   ModelInfo,
   ModelRequestHook,
@@ -342,6 +344,30 @@ export class V2Runtime {
       integrationID: PROVIDER_ID,
       client: createLegacyClient(),
       helpers: oauthFlowHelpers,
+    });
+  }
+
+  /**
+   * Drops the cached login so the next request resolves auth and rebuilds the
+   * account pool from disk. Used after the `/antigravity` command edits the
+   * pool, so the change applies without restarting OpenCode.
+   */
+  invalidateAuth(): void {
+    this.authSnapshot = undefined;
+    this.interceptor = undefined;
+  }
+
+  /** The `/antigravity` account command for this location. */
+  accountCommand(ctx: Context): CommandDefinition {
+    return createAccountCommand({
+      post: async (sessionID, text) => {
+        await ctx.session.synthetic({ sessionID, text, resume: false });
+      },
+      helpers: oauthFlowHelpers,
+      client: createLegacyClient(),
+      live: liveAccountPool,
+      invalidate: () => this.invalidateAuth(),
+      verify: verifyAccountAccess,
     });
   }
 

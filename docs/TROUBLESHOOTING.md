@@ -41,7 +41,7 @@ The plugin now answers that case with an explicit "No usable Google credential
 for this request" message instead of forwarding the request. If you see it:
 
 ```bash
-npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts list
+antigravity-accounts list
 ```
 
 If the list is empty (or the account you expect is missing), sign in again with
@@ -57,7 +57,7 @@ still holds one account. Update the plugin, then sign in again and pick the
 other account in the chooser. Verify with:
 
 ```bash
-npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts list
+antigravity-accounts list
 ```
 
 ### Managing accounts on OpenCode 2.x / the desktop app
@@ -67,11 +67,11 @@ interactive multi-account menu that OpenCode 1.x showed inside
 `opencode auth login` is not reachable there. Use the standalone CLI instead:
 
 ```bash
-npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts          # menu
-npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts list
-npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts add
-npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts disable 2
-npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts quota
+antigravity-accounts          # menu
+antigravity-accounts list
+antigravity-accounts add
+antigravity-accounts disable 2
+antigravity-accounts quota
 ```
 
 From a clone of this repo (before the package is published with the CLI):

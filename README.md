@@ -1,10 +1,21 @@
 # Antigravity + Gemini CLI OAuth Plugin for Opencode
 
-[![npm version](https://img.shields.io/npm/v/@pieliesdie/opencode-antigravity-auth.svg)](https://www.npmjs.com/package/@pieliesdie/opencode-antigravity-auth)
-[![npm downloads](https://img.shields.io/npm/dw/@pieliesdie/opencode-antigravity-auth.svg)](https://www.npmjs.com/package/@pieliesdie/opencode-antigravity-auth)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Fork of pieliesdie/opencode-antigravity-auth](https://img.shields.io/badge/fork%20of-pieliesdie%2Fopencode--antigravity--auth-blue)](https://github.com/pieliesdie/opencode-antigravity-auth)
 
 Enable Opencode to authenticate against **Antigravity** (Google's IDE) via OAuth so you can use Antigravity rate limits and access models like `gemini-3.1-pro` and `claude-opus-4-6-thinking` with your Google credentials.
+
+> **This is [Qssaf](https://github.com/Qssaf)'s fork** of
+> [pieliesdie/opencode-antigravity-auth](https://github.com/pieliesdie/opencode-antigravity-auth),
+> focused on making multi-account work on the OpenCode desktop app / OpenCode 2.x.
+> It is installed from this repository, not from npm — see [Installation](#installation).
+>
+> On top of upstream it adds:
+> - Google's **account chooser on every login**, so a second account can actually be added
+> - **`/antigravity`** — manage accounts from inside OpenCode 2.x, where the 1.x menu cannot run
+> - the **`antigravity-accounts` CLI** for the same operations outside OpenCode
+> - fixes for accounts being dropped on a transient `invalid_grant`, and for requests
+>   falling through to Google's misleading `API key not valid` error
 
 ## What You Get
 
@@ -40,15 +51,7 @@ Enable Opencode to authenticate against **Antigravity** (Google's IDE) via OAuth
 <details open>
 <summary><b>For Humans</b></summary>
 
-**Option A: Let an LLM do it**
-
-Paste this into any LLM agent (Claude Code, OpenCode, Cursor, etc.):
-
-```
-Install the @pieliesdie/opencode-antigravity-auth plugin and add the Antigravity model definitions to ~/.config/opencode/opencode.json by following: https://raw.githubusercontent.com/pieliesdie/opencode-antigravity-auth/dev/README.md
-```
-
-**Option B: Manual setup**
+This fork is not published to npm; it is installed from this repository.
 
 1. **Add the plugin** to `~/.config/opencode/opencode.json`.
 
@@ -56,7 +59,7 @@ Install the @pieliesdie/opencode-antigravity-auth plugin and add the Antigravity
 
    ```json
    {
-     "plugins": ["@pieliesdie/opencode-antigravity-auth@latest"]
+     "plugins": ["github:Qssaf/opencode-antigravity-auth-desktop"]
    }
    ```
 
@@ -64,13 +67,28 @@ Install the @pieliesdie/opencode-antigravity-auth plugin and add the Antigravity
 
    ```json
    {
-     "plugin": ["@pieliesdie/opencode-antigravity-auth@latest"]
+     "plugin": ["github:Qssaf/opencode-antigravity-auth-desktop"]
    }
    ```
 
    Check with `opencode --version`. One package supports both; only the config key differs. See [OpenCode 2.x](#opencode-2x) for what changes on 2.x.
 
-   > Want bleeding-edge features? Use `@pieliesdie/opencode-antigravity-auth@beta` instead.
+   The bundle is built on install (`prepare`), so no dist files are committed.
+
+   **From a local clone** (what to use while changing the plugin, and the fallback
+   if your OpenCode build does not resolve `github:` specifiers):
+
+   ```bash
+   git clone https://github.com/Qssaf/opencode-antigravity-auth-desktop.git
+   cd opencode-antigravity-auth-desktop
+   npm install && npm run build
+   ```
+
+   ```json
+   {
+     "plugins": ["/absolute/path/to/opencode-antigravity-auth-desktop"]
+   }
+   ```
 
 2. **Login** with your Google account:
 
@@ -99,7 +117,7 @@ Install the @pieliesdie/opencode-antigravity-auth plugin and add the Antigravity
    
    > **Note**: This path works on all platforms. On Windows, `~` resolves to your user home directory (e.g., `C:\Users\YourName`).
 
-2. Add the plugin to the `plugin` array
+2. Add `"github:Qssaf/opencode-antigravity-auth-desktop"` to the `plugins` array (OpenCode 2.x) or the `plugin` array (OpenCode 1.x)
 
 3. Add the model definitions from the [Full models configuration](#models) section
 
@@ -177,7 +195,7 @@ Add this to your `~/.config/opencode/opencode.json`:
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@pieliesdie/opencode-antigravity-auth@latest"],
+  "plugin": ["github:Qssaf/opencode-antigravity-auth-desktop"],
   "provider": {
     "google": {
       "models": {
@@ -365,25 +383,44 @@ opencode auth login  # Run again to add more accounts
 Google shows its account chooser on every login, so pick the *other* account when
 adding one — choosing the account that is already stored just refreshes its token.
 
-**Account management options (via `opencode auth login`, OpenCode 1.x):**
+### Managing accounts
+
+**OpenCode 2.x and the desktop app — the `/antigravity` command.** OpenCode 2.x
+owns the login prompt, so the plugin cannot show the 1.x menu there. It registers
+a command instead, which answers in the session without spending a model call:
+
+```
+/antigravity                 list stored accounts
+/antigravity add             sign in and add another Google account
+/antigravity enable 2        put account 2 back into rotation
+/antigravity disable 2       take account 2 out of rotation
+/antigravity remove 2        delete account 2
+/antigravity quota           remaining quota per account
+/antigravity verify all      check accounts against Antigravity
+```
+
+Changes apply to the requests already running — the in-memory pool is updated and
+the next request re-reads the account file. No restart.
+
+**OpenCode 1.x — the menu inside `opencode auth login`:**
 - **Configure models** — Auto-configure all plugin models in opencode.json
 - **Check quotas** — View remaining API quota for each account
 - **Manage accounts** — Enable/disable specific accounts for rotation
 
-**Account management on any version** (and the only way on OpenCode 2.x and the
-desktop app, where OpenCode owns the login UI and the plugin cannot prompt):
+**Outside OpenCode — the `antigravity-accounts` CLI.** Same operations for when
+OpenCode is not running (recovering a broken pool, scripting, CI):
 
 ```bash
-npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts          # interactive menu
-npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts list
-npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts add
-npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts disable 2
-npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts remove 2   # or --all
-npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts quota
-npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts verify --all
+antigravity-accounts          # interactive menu
+antigravity-accounts list
+antigravity-accounts add
+antigravity-accounts disable 2
+antigravity-accounts remove 2   # or --all
+antigravity-accounts quota
+antigravity-accounts verify --all
 ```
 
-From a clone of this repo (before the package is published with the CLI):
+From a clone, without installing the package:
 
 ```bash
 npm install
@@ -391,7 +428,9 @@ npm run accounts            # interactive menu
 npm run accounts -- list    # any subcommand, after `--`
 ```
 
-It edits the same `antigravity-accounts.json` the plugin rotates through.
+The CLI edits `antigravity-accounts.json` directly, so quit OpenCode first: a
+running instance holds the pool in memory and can write its own copy back over a
+change made behind its back. `/antigravity` has no such caveat.
 
 For details on load balancing, dual quota pools, and account storage, see [docs/MULTI-ACCOUNT.md](docs/MULTI-ACCOUNT.md).
 
@@ -399,7 +438,7 @@ For details on load balancing, dual quota pools, and account storage, see [docs/
 
 ## OpenCode 2.x
 
-One package supports both OpenCode generations. On 2.x the plugin registers its OAuth method, models and `google_search` tool through the 2.x plugin API, while requests still run through the same Antigravity pipeline (account rotation, quota handling, model routing, thinking-block handling).
+One package supports both OpenCode generations. On 2.x the plugin registers its OAuth method, models, `google_search` tool and the `/antigravity` account command through the 2.x plugin API, while requests still run through the same Antigravity pipeline (account rotation, quota handling, model routing, thinking-block handling).
 
 **Config key:** `plugins` (plural) on 2.x, `plugin` (singular) on 1.x.
 
@@ -409,7 +448,7 @@ One package supports both OpenCode generations. On 2.x the plugin registers its 
 
 | | OpenCode 1.x | OpenCode 2.x |
 |---|---|---|
-| Account management | Interactive menu inside `opencode auth login` (add, check quota, enable/disable, verify) | `opencode auth login` / `logout` / `switch`, plus the `antigravity-accounts` CLI (`npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts`) for the add/quota/enable/disable/verify menu the in-login prompt cannot show |
+| Account management | Interactive menu inside `opencode auth login` (add, check quota, enable/disable, verify) | `opencode auth login` / `logout` / `switch` for credentials, and the `/antigravity` command for the pool (list, add, enable/disable, remove, quota, verify). The `antigravity-accounts` CLI does the same from a shell |
 | Status toasts | Shown in the TUI | Not shown — 2.x server plugins cannot raise toasts. Enable `"debug": true` in `antigravity.json` to get the same detail in the log |
 | Session recovery | Plugin re-injects missing `tool_result` blocks | Handled by OpenCode itself |
 | Update checks | Plugin checks on startup | `opencode plugin update` |
@@ -522,9 +561,9 @@ Invalid JSON payload received. Unknown name "parameters" at 'request.tools[0]'
 - Plugin version regression
 
 **Solutions:**
-1. **Update to latest beta:**
+1. **Reinstall the plugin from this fork** (picks up the latest commit):
    ```json
-   { "plugin": ["@pieliesdie/opencode-antigravity-auth@beta"] }
+   { "plugin": ["github:Qssaf/opencode-antigravity-auth-desktop"] }
    ```
 
 2. **Disable MCP servers** one-by-one to find the problematic one
@@ -555,7 +594,7 @@ This usually means an MCP tool name starts with a number (for example, a 1mcp ke
 **Diagnosis:**
 1. Disable all MCP servers in your config
 2. Enable one-by-one until error reappears
-3. Report the specific MCP in a [GitHub issue](https://github.com/pieliesdie/opencode-antigravity-auth/issues)
+3. Report the specific MCP in a [GitHub issue](https://github.com/Qssaf/opencode-antigravity-auth-desktop/issues)
 
 ---
 
@@ -685,7 +724,7 @@ OpenCode 2.x uses `plugins` (plural):
 
 ```json
 {
-  "plugins": ["@pieliesdie/opencode-antigravity-auth@beta"]
+  "plugins": ["github:Qssaf/opencode-antigravity-auth-desktop"]
 }
 ```
 
@@ -693,7 +732,7 @@ OpenCode 1.x uses `plugin` (singular):
 
 ```json
 {
-  "plugin": ["@pieliesdie/opencode-antigravity-auth@beta"]
+  "plugin": ["github:Qssaf/opencode-antigravity-auth-desktop"]
 }
 ```
 
@@ -704,7 +743,7 @@ Using the wrong one for your version causes an "Unrecognized key" error, and the
 ### Migrating Accounts Between Machines
 
 When copying `antigravity-accounts.json` to a new machine:
-1. Ensure the plugin is installed: `"plugin": ["@pieliesdie/opencode-antigravity-auth@beta"]`
+1. Ensure the plugin is installed: `"plugins": ["github:Qssaf/opencode-antigravity-auth-desktop"]` (`plugin`, singular, on OpenCode 1.x)
 2. Copy `~/.config/opencode/antigravity-accounts.json`
 3. If you get "API key missing" error, the refresh token may be invalid — re-authenticate
 
@@ -722,7 +761,7 @@ DCP creates synthetic assistant messages that lack thinking blocks. **List this 
 ```json
 {
   "plugin": [
-    "@pieliesdie/opencode-antigravity-auth@latest",
+    "github:Qssaf/opencode-antigravity-auth-desktop",
     "@tarquinen/opencode-dcp@latest"
   ]
 }
@@ -757,7 +796,7 @@ Create `~/.config/opencode/antigravity.json` for optional settings:
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/pieliesdie/opencode-antigravity-auth/main/assets/antigravity.schema.json"
+  "$schema": "https://raw.githubusercontent.com/Qssaf/opencode-antigravity-auth-desktop/main/assets/antigravity.schema.json"
 }
 ```
 
