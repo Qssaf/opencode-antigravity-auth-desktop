@@ -383,6 +383,14 @@ npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts quota
 npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts verify --all
 ```
 
+From a clone of this repo (before the package is published with the CLI):
+
+```bash
+npm install
+npm run accounts            # interactive menu
+npm run accounts -- list    # any subcommand, after `--`
+```
+
 It edits the same `antigravity-accounts.json` the plugin rotates through.
 
 For details on load balancing, dual quota pools, and account storage, see [docs/MULTI-ACCOUNT.md](docs/MULTI-ACCOUNT.md).

@@ -106,6 +106,14 @@ npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts quota
 npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts verify --all
 ```
 
+From a clone of this repo (before the package is published with the CLI):
+
+```bash
+npm install
+npm run accounts            # interactive menu
+npm run accounts -- list    # any subcommand, after `--`
+```
+
 **Disabled accounts:**
 - Are excluded from automatic rotation
 - Still appear in quota checks (marked `[disabled]`)

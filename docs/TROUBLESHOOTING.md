@@ -74,8 +74,18 @@ npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts disable 2
 npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts quota
 ```
 
-It edits the same `antigravity-accounts.json` the plugin rotates through, so
-changes apply to the next request (restart OpenCode if a request is in flight).
+From a clone of this repo (before the package is published with the CLI):
+
+```bash
+npm install
+npm run accounts            # interactive menu
+npm run accounts -- list    # any subcommand, after `--`
+```
+
+It edits the same `antigravity-accounts.json` the plugin rotates through. Quit
+OpenCode before enabling, disabling or removing an account: a running instance
+holds the pool in memory and can write its own copy back over your change. A
+newly added account is picked up when OpenCode restarts.
 
 ### "This version of Antigravity is no longer supported"
 This almost always means an outdated Antigravity `User-Agent` is still being used.
