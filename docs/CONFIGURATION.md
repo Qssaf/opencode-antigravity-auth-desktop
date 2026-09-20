@@ -39,6 +39,26 @@ Settings that affect how the model thinks and responds.
 | `auto_resume` | `false` | Auto-send resume prompt after recovery |
 | `resume_text` | `"continue"` | Text to send when auto-resuming |
 
+## Tools
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `google_search_tool` | `true` | Register the plugin's `google_search` tool |
+
+The tool answers through Google Search grounding on your Antigravity quota. If
+its results are poor for your use, turn it off:
+
+```json
+{
+  "google_search_tool": false
+}
+```
+
+Nothing is registered then, so the agent falls back to whatever other search or
+fetch tools your OpenCode setup provides. It applies on the next plugin load —
+on OpenCode 2.x run `opencode service stop` first, since plugins stay loaded in
+the background server.
+
 > **Note:** The `web_search` config options are deprecated. Google Search is now implemented as a dedicated `google_search` tool that the model can call explicitly.
 
 ### About `keep_thinking`
@@ -161,6 +181,7 @@ These settings are already `true` by default — you don't need to set them:
 |---------|---------|--------------|
 | `session_recovery` | `true` | Auto-recover from errors |
 | `auto_update` | `true` | Keep plugin updated |
+| `google_search_tool` | `true` | Register the `google_search` tool |
 | `switch_on_first_rate_limit` | `true` | Fast account switching |
 
 These settings are `false` by default:

@@ -3107,6 +3107,19 @@ var AntigravityConfigSchema = z2.object({
   keep_thinking: z2.boolean().default(false),
   enable_thinking_warmup: z2.boolean().default(false),
   // =========================================================================
+  // Tools
+  // =========================================================================
+  /**
+   * Register the plugin's `google_search` tool.
+   *
+   * The tool answers through Google Search grounding on your Antigravity
+   * quota. Turn it off to let the agent fall back to whatever other search or
+   * fetch tools your OpenCode setup provides.
+   *
+   * @default true
+   */
+  google_search_tool: z2.boolean().default(true),
+  // =========================================================================
   // Session Recovery
   // =========================================================================
   /**
@@ -3448,6 +3461,7 @@ var DEFAULT_CONFIG = {
   quota_refresh_interval_minutes: 15,
   soft_quota_cache_ttl_minutes: "auto",
   auto_update: true,
+  google_search_tool: true,
   signature_cache: {
     enabled: true,
     memory_ttl_seconds: 3600,
@@ -13509,9 +13523,10 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
   });
   const hooks = {
     event: eventHandler,
-    tool: {
-      google_search: googleSearchTool
-    },
+    // `google_search_tool: false` leaves the tool unregistered, so the agent
+    // uses whatever other search or fetch tools the setup provides. The 2.x
+    // adapter reads this same map, so it follows automatically.
+    tool: config.google_search_tool ? { google_search: googleSearchTool } : {},
     provider: {
       id: providerId,
       async models(provider, context) {

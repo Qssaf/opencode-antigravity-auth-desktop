@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync, promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -50,6 +50,35 @@ const client = {
 // into another test's agy-sdk routing assertions.
 afterEach(() => {
   resetPublicGeminiApiModelCatalogForTests();
+});
+
+describe("google_search tool registration", () => {
+  async function pluginWithConfig(config: Record<string, unknown>) {
+    const directory = await fs.mkdtemp(join(tmpdir(), "antigravity-config-"));
+    await fs.mkdir(join(directory, ".opencode"), { recursive: true });
+    await fs.writeFile(
+      join(directory, ".opencode", "antigravity.json"),
+      JSON.stringify(config),
+      "utf-8",
+    );
+    try {
+      return await createAntigravityPlugin("google")({ client, directory });
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  }
+
+  it("registers the tool by default", async () => {
+    const plugin = await pluginWithConfig({});
+    expect(plugin.tool?.google_search).toBeDefined();
+  });
+
+  it("leaves the tool unregistered when google_search_tool is false", async () => {
+    // Nothing is registered, so the agent falls back to whatever other search
+    // or fetch tools the setup provides.
+    const plugin = await pluginWithConfig({ google_search_tool: false });
+    expect(plugin.tool?.google_search).toBeUndefined();
+  });
 });
 
 describe("Gemini Flash-Lite routing", () => {

@@ -37,6 +37,14 @@
       "type": "boolean",
       "description": "Preserve thinking blocks for Claude models using signature caching. May cause signature errors."
     },
+    "enable_thinking_warmup": {
+      "default": false,
+      "type": "boolean"
+    },
+    "google_search_tool": {
+      "default": true,
+      "type": "boolean"
+    },
     "session_recovery": {
       "default": true,
       "type": "boolean",

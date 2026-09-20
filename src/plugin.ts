@@ -1896,9 +1896,10 @@ export const createAntigravityRuntime = (providerId: string) => async (
 
   const hooks: PluginResult = {
     event: eventHandler,
-    tool: {
-      google_search: googleSearchTool,
-    },
+    // `google_search_tool: false` leaves the tool unregistered, so the agent
+    // uses whatever other search or fetch tools the setup provides. The 2.x
+    // adapter reads this same map, so it follows automatically.
+    tool: config.google_search_tool ? { google_search: googleSearchTool } : {},
     provider: {
       id: providerId,
       async models(provider: Provider, context): Promise<Record<string, ProviderModel>> {

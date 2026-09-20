@@ -24,7 +24,7 @@ Enable Opencode to authenticate against **Antigravity** (Google's IDE) via OAuth
 - **Modern Gemini API support** — use Antigravity SDK-style API keys / Cloud Projects as Gemini backups or opt-in primary routing
 - **Legacy Gemini CLI quota support** — still available for compatibility and quota fallback
 - **Thinking models** — extended thinking for Claude and Gemini 3 with configurable budgets
-- **Google Search grounding** — enable web search for Gemini models (auto or always-on)
+- **Google Search grounding** — enable web search for Gemini models (auto or always-on), or set `"google_search_tool": false` to leave web search to your other tools
 - **Auto-recovery** — handles session errors and tool failures automatically
 - **Plugin compatible** — works alongside other OpenCode plugins (oh-my-opencode, dcp, etc.)
 

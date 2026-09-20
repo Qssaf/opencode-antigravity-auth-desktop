@@ -164,6 +164,21 @@ export const AntigravityConfigSchema = z.object({
   enable_thinking_warmup: z.boolean().default(false),
   
   // =========================================================================
+  // Tools
+  // =========================================================================
+
+  /**
+   * Register the plugin's `google_search` tool.
+   *
+   * The tool answers through Google Search grounding on your Antigravity
+   * quota. Turn it off to let the agent fall back to whatever other search or
+   * fetch tools your OpenCode setup provides.
+   *
+   * @default true
+   */
+  google_search_tool: z.boolean().default(true),
+
+  // =========================================================================
   // Session Recovery
   // =========================================================================
   
@@ -554,6 +569,7 @@ export const DEFAULT_CONFIG: AntigravityConfig = {
   quota_refresh_interval_minutes: 15,
   soft_quota_cache_ttl_minutes: "auto",
   auto_update: true,
+  google_search_tool: true,
   signature_cache: {
     enabled: true,
     memory_ttl_seconds: 3600,
