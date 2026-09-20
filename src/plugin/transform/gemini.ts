@@ -139,6 +139,65 @@ function singleOptionUnionSchema(
 
 const geminiSchemaCache = new WeakMap<object, unknown>();
 
+/**
+ * Converted tool schemas, keyed by their serialized input.
+ *
+ * `geminiSchemaCache` above memoizes by object identity, which cannot hit
+ * across requests: every request parses a fresh body, so an unchanged tool
+ * schema is a new object each turn. An agent's tool definitions are stable for
+ * a whole session, so keying by content converts them once instead of once per
+ * request. The full serialization is the key, so distinct schemas can never
+ * collide onto each other's result.
+ *
+ * Values are stored serialized and re-parsed on read, so each caller gets its
+ * own object and cannot mutate another caller's cached schema.
+ */
+const geminiSchemaContentCache = new Map<string, string>();
+const MAX_SCHEMA_CONTENT_ENTRIES = 128;
+/** Beyond this the serialize/parse round-trip stops paying for itself. */
+const MAX_SCHEMA_CONTENT_BYTES = 64 * 1024;
+
+/**
+ * Converts a tool schema to Gemini's dialect, reusing the result for a schema
+ * whose content was converted before. Use this at the outer, per-tool call
+ * sites; `toGeminiSchema` itself recurses and must stay uncached.
+ */
+export function toGeminiSchemaMemoized(schema: unknown): unknown {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+    return toGeminiSchema(schema);
+  }
+
+  let key: string;
+  try {
+    key = JSON.stringify(schema);
+  } catch {
+    // Circular or otherwise unserializable: fall back to the direct transform.
+    return toGeminiSchema(schema);
+  }
+  if (key.length > MAX_SCHEMA_CONTENT_BYTES) {
+    return toGeminiSchema(schema);
+  }
+
+  const hit = geminiSchemaContentCache.get(key);
+  if (hit !== undefined) {
+    return JSON.parse(hit);
+  }
+
+  const converted = toGeminiSchema(schema);
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(converted);
+  } catch {
+    return converted;
+  }
+  if (geminiSchemaContentCache.size >= MAX_SCHEMA_CONTENT_ENTRIES) {
+    const oldest = geminiSchemaContentCache.keys().next().value;
+    if (oldest !== undefined) geminiSchemaContentCache.delete(oldest);
+  }
+  geminiSchemaContentCache.set(key, serialized);
+  return converted;
+}
+
 export function toGeminiSchema(schema: unknown): unknown {
   // Return primitives and arrays as-is
   if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
@@ -453,7 +512,7 @@ export function normalizeGeminiTools(payload: RequestPayload): {
         toolDebugMissing += 1;
       } else {
         // Transform existing schema to Gemini-compatible format
-        schema = toGeminiSchema(schema) as Record<string, unknown>;
+        schema = toGeminiSchemaMemoized(schema) as Record<string, unknown>;
       }
 
       const nameCandidate =
@@ -706,7 +765,7 @@ export function wrapToolsAsFunctionDeclarations(
             decl.parameters &&
             typeof decl.parameters === "object" &&
             !Array.isArray(decl.parameters)
-              ? (toGeminiSchema(decl.parameters) as Record<string, unknown>)
+              ? (toGeminiSchemaMemoized(decl.parameters) as Record<string, unknown>)
               : { type: "OBJECT", properties: {} };
           functionDeclarations.push({
             name: String(decl.name || `tool-${functionDeclarations.length}`),
