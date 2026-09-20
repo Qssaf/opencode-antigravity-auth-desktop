@@ -362,10 +362,28 @@ Add multiple Google accounts for a higher combined quota. The plugin automatical
 opencode auth login  # Run again to add more accounts
 ```
 
-**Account management options (via `opencode auth login`):**
+Google shows its account chooser on every login, so pick the *other* account when
+adding one — choosing the account that is already stored just refreshes its token.
+
+**Account management options (via `opencode auth login`, OpenCode 1.x):**
 - **Configure models** — Auto-configure all plugin models in opencode.json
 - **Check quotas** — View remaining API quota for each account
 - **Manage accounts** — Enable/disable specific accounts for rotation
+
+**Account management on any version** (and the only way on OpenCode 2.x and the
+desktop app, where OpenCode owns the login UI and the plugin cannot prompt):
+
+```bash
+npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts          # interactive menu
+npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts list
+npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts add
+npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts disable 2
+npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts remove 2   # or --all
+npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts quota
+npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts verify --all
+```
+
+It edits the same `antigravity-accounts.json` the plugin rotates through.
 
 For details on load balancing, dual quota pools, and account storage, see [docs/MULTI-ACCOUNT.md](docs/MULTI-ACCOUNT.md).
 
@@ -383,7 +401,7 @@ One package supports both OpenCode generations. On 2.x the plugin registers its 
 
 | | OpenCode 1.x | OpenCode 2.x |
 |---|---|---|
-| Account management | Interactive menu inside `opencode auth login` (add, check quota, enable/disable, verify) | `opencode auth login` / `logout` / `switch`. The quota/verify menu is not available; run `node scripts/check-quota.mjs` from a clone of this repo to inspect quotas |
+| Account management | Interactive menu inside `opencode auth login` (add, check quota, enable/disable, verify) | `opencode auth login` / `logout` / `switch`, plus the `antigravity-accounts` CLI (`npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts`) for the add/quota/enable/disable/verify menu the in-login prompt cannot show |
 | Status toasts | Shown in the TUI | Not shown — 2.x server plugins cannot raise toasts. Enable `"debug": true` in `antigravity.json` to get the same detail in the log |
 | Session recovery | Plugin re-injects missing `tool_result` blocks | Handled by OpenCode itself |
 | Update checks | Plugin checks on startup | `opencode plugin update` |

@@ -104,7 +104,11 @@ export async function authorizeAntigravity(projectId = ""): Promise<AntigravityA
     encodeState({ verifier: pkce.verifier, projectId: projectId || "" }),
   );
   url.searchParams.set("access_type", "offline");
-  url.searchParams.set("prompt", "consent");
+  // `select_account` is what makes multi-account logins work: with `consent`
+  // alone Google silently reuses the browser's current session, so a second
+  // `auth login` returns the account that is already in the pool and looks
+  // like it did nothing. `consent` is kept so a refresh token is always issued.
+  url.searchParams.set("prompt", "select_account consent");
 
   return {
     url: url.toString(),

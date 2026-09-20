@@ -85,6 +85,7 @@ src/
 ├── plugin.ts                # Shared runtime + OpenCode 1.x entry, fetch interceptor
 ├── constants.ts             # Endpoints, headers, API config, system prompts
 ├── antigravity/oauth.ts     # OAuth token exchange
+├── cli/accounts.ts          # `antigravity-accounts` binary (account pool management)
 ├── v2/                      # OpenCode 2.x adapter (see below)
 └── plugin/
     ├── auth.ts              # Token validation & refresh

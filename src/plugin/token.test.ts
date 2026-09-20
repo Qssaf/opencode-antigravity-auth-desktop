@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ANTIGRAVITY_PROVIDER_ID } from "../constants";
-import { AntigravityTokenRefreshError, refreshAccessToken } from "./token";
+import {
+  getInvalidGrantStrikes,
+  isRevokedRefreshToken,
+  refreshAccessToken,
+  resetTokenRefreshStateForTests,
+} from "./token";
 import type { OAuthAuthDetails, PluginClient } from "./types";
 
 const baseAuth: OAuthAuthDetails = {
@@ -24,6 +29,7 @@ function createClient() {
 describe("refreshAccessToken", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    resetTokenRefreshStateForTests();
   });
 
   it("updates the caller when refresh token is unchanged", async () => {
@@ -83,5 +89,101 @@ describe("refreshAccessToken", () => {
       name: "AntigravityTokenRefreshError",
       code: "invalid_grant",
     });
+  });
+
+  it("coalesces concurrent refreshes of the same token into one request", async () => {
+    const client = createClient();
+    let resolveResponse: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      resolveResponse = resolve;
+    });
+    const fetchMock = vi.fn(async () => {
+      await gate;
+      return new Response(
+        JSON.stringify({ access_token: "shared-access", expires_in: 3600 }),
+        { status: 200 },
+      );
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const calls = [
+      refreshAccessToken(baseAuth, client, ANTIGRAVITY_PROVIDER_ID),
+      refreshAccessToken(baseAuth, client, ANTIGRAVITY_PROVIDER_ID),
+      refreshAccessToken({ ...baseAuth, access: "other" }, client, ANTIGRAVITY_PROVIDER_ID),
+    ];
+    resolveResponse?.();
+    const results = await Promise.all(calls);
+
+    // Google rejects concurrent refreshes of one token with invalid_grant, so
+    // every caller has to share a single request.
+    expect(fetchMock.mock.calls.length).toBe(1);
+    for (const result of results) {
+      expect(result?.access).toBe("shared-access");
+    }
+  });
+
+  it("keeps the caller's project ids when it adopts a shared refresh", async () => {
+    const client = createClient();
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({ access_token: "shared-access", expires_in: 3600 }),
+        { status: 200 },
+      );
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const [plain, managed] = await Promise.all([
+      refreshAccessToken(baseAuth, client, ANTIGRAVITY_PROVIDER_ID),
+      refreshAccessToken(
+        { ...baseAuth, refresh: "refresh-token|project-123|managed-456" },
+        client,
+        ANTIGRAVITY_PROVIDER_ID,
+      ),
+    ]);
+
+    expect(fetchMock.mock.calls.length).toBe(1);
+    expect(plain?.refresh).toBe("refresh-token|project-123");
+    expect(managed?.refresh).toBe("refresh-token|project-123|managed-456");
+  });
+
+  it("treats a single invalid_grant as unconfirmed and a repeat as revoked", async () => {
+    const client = createClient();
+    const fetchMock = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({ error: "invalid_grant", error_description: "Bad Request" }),
+        { status: 400, statusText: "Bad Request" },
+      );
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(refreshAccessToken(baseAuth, client, ANTIGRAVITY_PROVIDER_ID)).rejects.toThrow();
+    expect(getInvalidGrantStrikes("refresh-token")).toBe(1);
+    expect(isRevokedRefreshToken("refresh-token")).toBe(false);
+
+    await expect(refreshAccessToken(baseAuth, client, ANTIGRAVITY_PROVIDER_ID)).rejects.toThrow();
+    expect(isRevokedRefreshToken("refresh-token")).toBe(true);
+  });
+
+  it("forgets invalid_grant strikes once a refresh succeeds", async () => {
+    const client = createClient();
+    global.fetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({ error: "invalid_grant" }),
+        { status: 400, statusText: "Bad Request" },
+      );
+    }) as unknown as typeof fetch;
+    await expect(refreshAccessToken(baseAuth, client, ANTIGRAVITY_PROVIDER_ID)).rejects.toThrow();
+    expect(getInvalidGrantStrikes("refresh-token")).toBe(1);
+
+    global.fetch = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({ access_token: "fresh", expires_in: 3600 }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+    await refreshAccessToken(baseAuth, client, ANTIGRAVITY_PROVIDER_ID);
+
+    expect(getInvalidGrantStrikes("refresh-token")).toBe(0);
+    expect(isRevokedRefreshToken("refresh-token")).toBe(false);
   });
 });

@@ -80,7 +80,53 @@ export class AntigravityTokenRefreshError extends Error {
 }
 
 /**
+ * Refreshes in flight, keyed by refresh token.
+ *
+ * Long agent runs refresh the same account from several places at once (the
+ * request path, the proactive refresh queue, project context resolution, quota
+ * checks and, on OpenCode 2.x, OpenCode's own credential refresh). Google
+ * answers concurrent refreshes of one token with `invalid_grant`, which the
+ * caller reads as "revoked" and acts on by dropping the account. Coalescing
+ * them means one network refresh per token, shared by every caller.
+ */
+const inFlightRefreshes = new Map<string, Promise<OAuthAuthDetails | undefined>>();
+
+/**
+ * Consecutive `invalid_grant` responses per refresh token. A genuinely revoked
+ * token fails every time; a transient failure does not, so callers use this to
+ * avoid deleting an account on a single bad response.
+ */
+const invalidGrantStrikes = new Map<string, number>();
+
+/** How many consecutive `invalid_grant` responses mean the token is really gone. */
+export const INVALID_GRANT_STRIKES_BEFORE_REMOVAL = 2;
+
+/** Consecutive `invalid_grant` responses seen for this refresh token. */
+export function getInvalidGrantStrikes(refreshToken: string): number {
+  return invalidGrantStrikes.get(refreshToken) ?? 0;
+}
+
+/**
+ * Whether `invalid_grant` for this token has been confirmed often enough to
+ * treat the account as revoked rather than transiently unhappy.
+ */
+export function isRevokedRefreshToken(refreshToken: string): boolean {
+  return getInvalidGrantStrikes(refreshToken) >= INVALID_GRANT_STRIKES_BEFORE_REMOVAL;
+}
+
+export function clearInvalidGrantStrikes(refreshToken: string): void {
+  invalidGrantStrikes.delete(refreshToken);
+}
+
+export function resetTokenRefreshStateForTests(): void {
+  inFlightRefreshes.clear();
+  invalidGrantStrikes.clear();
+}
+
+/**
  * Refreshes an Antigravity OAuth access token, updates persisted credentials, and handles revocation.
+ *
+ * Concurrent calls for the same refresh token share a single network refresh.
  */
 export async function refreshAccessToken(
   auth: OAuthAuthDetails,
@@ -91,6 +137,61 @@ export async function refreshAccessToken(
   if (!parts.refreshToken) {
     return undefined;
   }
+
+  let shared = inFlightRefreshes.get(parts.refreshToken);
+  if (!shared) {
+    shared = performRefresh(auth, parts.refreshToken).finally(() => {
+      inFlightRefreshes.delete(parts.refreshToken);
+    });
+    inFlightRefreshes.set(parts.refreshToken, shared);
+  }
+
+  return adoptRefreshResult(auth, parts, await shared);
+}
+
+/**
+ * Rebuilds a shared refresh result for this caller.
+ *
+ * The in-flight map is keyed by refresh token alone, so a caller may receive a
+ * result produced from a differently packed `refresh` string (same account,
+ * different project ids). The tokens are shared; the caller's own project ids
+ * are not, so they are carried over.
+ */
+function adoptRefreshResult(
+  auth: OAuthAuthDetails,
+  parts: RefreshParts,
+  result: OAuthAuthDetails | undefined,
+): OAuthAuthDetails | undefined {
+  if (!result) {
+    return undefined;
+  }
+
+  const resultParts = parseRefreshParts(result.refresh);
+  const refresh = formatRefreshParts({
+    refreshToken: resultParts.refreshToken || parts.refreshToken,
+    projectId: parts.projectId ?? resultParts.projectId,
+    managedProjectId: parts.managedProjectId ?? resultParts.managedProjectId,
+  });
+
+  if (refresh === result.refresh) {
+    return result;
+  }
+
+  const adopted: OAuthAuthDetails = {
+    ...auth,
+    access: result.access,
+    expires: result.expires,
+    refresh,
+  };
+  storeCachedAuth(adopted);
+  return adopted;
+}
+
+async function performRefresh(
+  auth: OAuthAuthDetails,
+  refreshTokenValue: string,
+): Promise<OAuthAuthDetails | undefined> {
+  const parts = parseRefreshParts(auth.refresh);
 
   try {
     const startTime = Date.now();
@@ -122,7 +223,12 @@ export async function refreshAccessToken(
       log.warn("Token refresh failed", { status: response.status, code, details });
 
       if (code === "invalid_grant") {
-        log.warn("Google revoked the stored refresh token - reauthentication required");
+        const strikes = (invalidGrantStrikes.get(refreshTokenValue) ?? 0) + 1;
+        invalidGrantStrikes.set(refreshTokenValue, strikes);
+        log.warn("Google rejected the stored refresh token with invalid_grant", {
+          strikes,
+          revoked: strikes >= INVALID_GRANT_STRIKES_BEFORE_REMOVAL,
+        });
         invalidateProjectContextCache(auth.refresh);
         clearCachedAuth(auth.refresh);
       }
@@ -157,6 +263,7 @@ export async function refreshAccessToken(
 
     storeCachedAuth(updatedAuth);
     invalidateProjectContextCache(auth.refresh);
+    invalidGrantStrikes.delete(refreshTokenValue);
 
     return updatedAuth;
   } catch (error) {

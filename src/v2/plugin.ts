@@ -12,9 +12,11 @@
  *
  * Not carried over from OpenCode 1.x: toasts (2.x server plugins cannot show
  * them), the interactive multi-account menu (use `opencode auth login`,
- * `logout` and `switch`), session recovery (OpenCode 2.x supplies a result for
- * tool calls that never completed) and the auto-update checker (use
- * `opencode plugin update`).
+ * `logout` and `switch` for credentials, and the standalone
+ * `antigravity-accounts` CLI in `src/cli/accounts.ts` to list, add, enable,
+ * disable, verify or remove the accounts the pipeline rotates through),
+ * session recovery (OpenCode 2.x supplies a result for tool calls that never
+ * completed) and the auto-update checker (use `opencode plugin update`).
  */
 
 import { ANTIGRAVITY_PROVIDER_ID } from "../constants";

@@ -2,7 +2,19 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Adding a second Google account did nothing** - The authorization URL asked Google for `prompt=consent` only, so the browser silently reused whichever account was already signed in. A second `opencode auth login` therefore came back with the account already in the pool, which deduplicates by email — the pool still held one account and the login looked like a no-op. The URL now asks for `prompt=select_account consent`, so Google shows its account chooser every time.
+
+- **Accounts disappearing mid-session, followed by "API key not valid"** - A single `invalid_grant` from Google's token endpoint was treated as proof of revocation and the account was deleted (and tombstoned) on the spot. Google also returns `invalid_grant` transiently — most easily when the same refresh token is refreshed from several places at once, which is what long agent runs do. Two changes: concurrent refreshes of one token are now coalesced into a single request shared by every caller, and an account is dropped only when a later, serialized refresh also returns `invalid_grant` (the first one puts it on a short cooldown instead).
+
+- **"API key not valid. Please pass a valid API key." while signed in with OAuth** - When the account pool ended up empty, model requests were forwarded to the public Gemini API even though the provider is registered with an empty api key, so Google answered with a message about an API key the user never configured. Such requests now return an explicit "No usable Google credential for this request" message naming what happened and how to fix it. Non-model requests (listings, token counts) still pass through.
+
+- **The account pool is no longer deleted when it cannot be read** - The auth loader called `clearAccounts()` whenever it could not resolve an OAuth credential, which also fires when the accounts file is briefly unreadable. Losing the stored refresh tokens over a failed read is unrecoverable, so the loader now leaves the file alone and logs instead.
+
 ### Added
+
+- **`antigravity-accounts` CLI** - A standalone account manager shipped as a binary (`npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts`). OpenCode 2.x and the desktop app own the login UI and run plugins in a server process, so the interactive multi-account menu that 1.x showed inside `opencode auth login` is unreachable there — this restores listing, adding, enabling/disabling, removing, quota checks and verification, on both generations, by working directly on `antigravity-accounts.json`. Subcommands: `list`, `add [--no-browser]`, `enable <n>`, `disable <n>`, `remove <n>|--all`, `quota`, `verify [<n>|--all]`; with no arguments it opens the menu (or prints the list when there is no TTY).
 
 - **OpenCode 2.x support** - The package now works on both OpenCode generations from one entrypoint. On 2.x the plugin registers its OAuth login method, its models and the `google_search` tool through the 2.x plugin API (`Plugin.define`), while requests keep running through the unchanged Antigravity pipeline, so account rotation, quota handling, model/tier routing and Claude thinking-block handling behave as before. Existing accounts carry over: `antigravity-accounts.json` is still the account pool, so there is no need to sign in again. Note the config key differs by version - `plugins` (plural) on 2.x, `plugin` (singular) on 1.x.
 
@@ -13,7 +25,7 @@
 
 ### Not carried over on OpenCode 2.x
 
-- Status toasts (2.x server plugins cannot raise toasts; enable `"debug": true` for the same detail in the log), the interactive multi-account menu inside `opencode auth login` (use `opencode auth login`/`logout`/`switch`), session recovery (OpenCode 2.x supplies results for interrupted tool calls itself) and the startup update check (use `opencode plugin update`). All remain unchanged on OpenCode 1.x.
+- Status toasts (2.x server plugins cannot raise toasts; enable `"debug": true` for the same detail in the log), the interactive multi-account menu inside `opencode auth login` (use `opencode auth login`/`logout`/`switch`, and the `antigravity-accounts` CLI for the rest of the menu), session recovery (OpenCode 2.x supplies results for interrupted tool calls itself) and the startup update check (use `opencode plugin update`). All remain unchanged on OpenCode 1.x.
 
 ## [1.6.1] - 2026-08-16
 

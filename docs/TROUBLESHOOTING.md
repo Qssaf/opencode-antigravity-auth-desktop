@@ -30,6 +30,53 @@ rm ~/.config/opencode/antigravity-accounts.json
 opencode auth login
 ```
 
+### "API key not valid. Please pass a valid API key." (while signed in with OAuth)
+
+That message comes from Google, not from the plugin: it means the request
+reached the public Gemini API without a credential the plugin could attach. The
+usual cause is that the account pool emptied mid-session — for example after a
+token refresh was rejected — so there was nothing left to sign the request with.
+
+The plugin now answers that case with an explicit "No usable Google credential
+for this request" message instead of forwarding the request. If you see it:
+
+```bash
+npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts list
+```
+
+If the list is empty (or the account you expect is missing), sign in again with
+`opencode auth login`. Adding a second account also keeps long runs going when
+one account is rate-limited.
+
+### A second `opencode auth login` keeps returning the same Google account
+
+Google only shows its account chooser when the authorization URL asks for it. If
+you are on a version that did not, the browser silently reuses whichever account
+is already signed in, the plugin stores the same account again, and the pool
+still holds one account. Update the plugin, then sign in again and pick the
+other account in the chooser. Verify with:
+
+```bash
+npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts list
+```
+
+### Managing accounts on OpenCode 2.x / the desktop app
+
+OpenCode 2.x owns the login UI and runs plugins in a server process, so the
+interactive multi-account menu that OpenCode 1.x showed inside
+`opencode auth login` is not reachable there. Use the standalone CLI instead:
+
+```bash
+npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts          # menu
+npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts list
+npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts add
+npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts disable 2
+npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts quota
+```
+
+It edits the same `antigravity-accounts.json` the plugin rotates through, so
+changes apply to the next request (restart OpenCode if a request is in flight).
+
 ### "This version of Antigravity is no longer supported"
 This almost always means an outdated Antigravity `User-Agent` is still being used.
 

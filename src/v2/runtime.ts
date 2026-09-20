@@ -270,7 +270,17 @@ export class V2Runtime {
     // is deliberate: the alternative is sending the prompt to the public Gemini
     // API with a placeholder key.
     const loaded = await this.loaderResult();
-    if (!loaded) return;
+    if (!loaded) {
+      // No OAuth account and no API key the pipeline can use. The request is
+      // left on OpenCode's own Google provider, which is what serves a plain
+      // `GEMINI_API_KEY` setup; with no key at all Google answers "API key not
+      // valid", so say here what actually happened.
+      log.warn(
+        "No Antigravity credential for this request; leaving it on OpenCode's Google provider. " +
+          "Run `opencode auth login` if you expected the plugin to serve it.",
+      );
+      return;
+    }
 
     const route = await this.ensureRoute();
     event.baseURL = route.baseURL;

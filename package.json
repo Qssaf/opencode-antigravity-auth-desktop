@@ -34,7 +34,9 @@
         "LICENSE"
     ],
     "scripts": {
-        "build": "esbuild index.ts --bundle --format=esm --platform=node --outfile=dist/index.js --external:node: --external:proper-lockfile --external:xdg-basedir --external:zod --external:@openauthjs/openauth --sourcemap",
+        "build": "npm run build:plugin && npm run build:cli",
+        "build:plugin": "esbuild index.ts --bundle --format=esm --platform=node --external:node: --external:proper-lockfile --external:xdg-basedir --external:zod --external:@openauthjs/openauth --sourcemap --outfile=dist/index.js",
+        "build:cli": "esbuild cli.ts --bundle --format=esm --platform=node --external:node: --external:proper-lockfile --external:xdg-basedir --external:zod --external:@openauthjs/openauth --sourcemap --outfile=dist/accounts.js",
         "build:schema": "npx tsx script/build-schema.ts",
         "typecheck": "tsc --noEmit",
         "test": "vitest run",
@@ -68,5 +70,8 @@
     "allowScripts": {
         "esbuild@0.28.1": true,
         "esbuild@0.25.12": true
+    },
+    "bin": {
+        "antigravity-accounts": "./dist/accounts.js"
     }
 }

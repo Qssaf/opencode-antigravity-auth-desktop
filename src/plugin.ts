@@ -42,7 +42,7 @@ import {
   createSyntheticErrorResponse,
 } from "./plugin/request-helpers";
 import { EmptyResponseError } from "./plugin/errors";
-import { AntigravityTokenRefreshError, refreshAccessToken } from "./plugin/token";
+import { AntigravityTokenRefreshError, isRevokedRefreshToken, refreshAccessToken } from "./plugin/token";
 import { startOAuthListener, type OAuthListener } from "./plugin/server";
 import { clearAccounts, loadAccounts, removeAccountFromStorage, saveAccounts } from "./plugin/storage";
 import { AccountManager, type ModelFamily, parseRateLimitReason, calculateBackoffMs, computeSoftQuotaCacheTtlMs } from "./plugin/accounts";
@@ -748,7 +748,12 @@ function isModelPermissionDeniedOnProjectError(bodyText: string): boolean {
   return decoded.includes("permission denied on resource project");
 }
 
-async function verifyAccountAccess(
+/**
+ * Probes whether an account can still reach Antigravity, distinguishing a
+ * credential problem from Google's "verification required" gate. Exported for
+ * the standalone account CLI (`src/cli/accounts.ts`).
+ */
+export async function verifyAccountAccess(
   account: {
     refreshToken: string;
     email?: string;
@@ -1366,6 +1371,37 @@ function formatWaitTime(ms: number): string {
   return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
 }
 
+/**
+ * Whether this URL asks a model to generate — the only requests a synthetic
+ * chat-shaped error makes sense for. Listings, token counts and the like are
+ * left to pass through untouched.
+ */
+function isModelGenerationRequest(urlString: string): boolean {
+  return urlString.includes(":generateContent") || urlString.includes(":streamGenerateContent");
+}
+
+/**
+ * Explains that no credential could serve the request.
+ *
+ * The provider is registered with an empty `apiKey`, so forwarding a request
+ * the plugin cannot authenticate lands on Google's misleading "API key not
+ * valid. Please pass a valid API key." — even though the user never configured
+ * one. This says what actually happened, and what to do about it.
+ */
+function createNoUsableCredentialsResponse(urlString: string, detail: string): Response {
+  const requestedModel = extractRequestedGeminiModel(urlString) ?? extractModelFromUrl(urlString) ?? undefined;
+  const family: ModelFamily = requestedModel?.toLowerCase().includes("claude") ? "claude" : "gemini";
+  const errorMessage = [
+    "[Antigravity Error] No usable Google credential for this request.",
+    detail,
+    "",
+    "Run `opencode auth login` to sign in again or add another account, then retry.",
+    "`npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts` lists and",
+    "manages the accounts the plugin has stored.",
+  ].join("\n");
+  return createSyntheticErrorResponse(errorMessage, requestedModel, family);
+}
+
 function createSoftQuotaBlockedResponse(input: {
   accountCount: number;
   family: ModelFamily;
@@ -1386,6 +1422,9 @@ function createSoftQuotaBlockedResponse(input: {
 
 // Progressive rate limit retry delays
 const FIRST_RETRY_DELAY_MS = 1000;      // 1s - first 429 quick retry on same account
+// How long an account sits out after an unconfirmed `invalid_grant` before the
+// next request re-checks it (and, if Google says invalid_grant again, drops it).
+const INVALID_GRANT_RECHECK_COOLDOWN_MS = 15_000;
 const SWITCH_ACCOUNT_DELAY_MS = 5000;   // 5s - delay before switching to another account
 
 /**
@@ -1950,14 +1989,16 @@ export const createAntigravityRuntime = (providerId: string) => async (
         }
       }
        
-      // If OpenCode has no valid OAuth auth, clear any stale account storage
+      // No OAuth account for this login: serve what an API key can, if any.
       if (!isOAuthAuth(auth)) {
         if (initialAgySdkCredentials.length === 0) {
-          try {
-            await clearAccounts();
-          } catch {
-            // ignore
-          }
+          // The account pool is NOT cleared here. Reaching this point only means
+          // this process could not read a usable account (OpenCode has no OAuth
+          // credential and the promotion above found none on disk, which also
+          // happens when the file is briefly unreadable). Deleting the user's
+          // refresh tokens over a failed read is unrecoverable; leaving them
+          // alone costs nothing.
+          log.warn("No usable Antigravity credential for this login; leaving the stored account pool untouched");
           return {};
         }
 
@@ -1987,6 +2028,12 @@ export const createAntigravityRuntime = (providerId: string) => async (
               (config.default_retry_after_seconds ?? 60) * 1000,
             );
             if (response) return response;
+            if (isModelGenerationRequest(urlString)) {
+              return createNoUsableCredentialsResponse(
+                urlString,
+                "No Google account is signed in, and the configured Gemini API key(s) could not serve this model.",
+              );
+            }
             return fetch(input, init);
           },
         };
@@ -2082,6 +2129,12 @@ export const createAntigravityRuntime = (providerId: string) => async (
                 (config.default_retry_after_seconds ?? 60) * 1000,
               );
               if (response) return response;
+            }
+            if (isModelGenerationRequest(urlString)) {
+              return createNoUsableCredentialsResponse(
+                urlString,
+                "The Antigravity account pool is empty: every signed-in account was removed or revoked.",
+              );
             }
             return fetch(input, init);
           }
@@ -2452,6 +2505,35 @@ export const createAntigravityRuntime = (providerId: string) => async (
                 }
               } catch (error) {
                 if (error instanceof AntigravityTokenRefreshError && error.code === "invalid_grant") {
+                  // `invalid_grant` is not proof of revocation: Google also
+                  // returns it for transient rejections (concurrent refreshes of
+                  // the same token, clock skew, token-endpoint throttling during
+                  // long runs). Removing the account on the first one silently
+                  // empties the pool mid-session. Cool the account down and only
+                  // treat it as revoked once a later, serialized refresh agrees.
+                  if (!isRevokedRefreshToken(account.parts.refreshToken)) {
+                    accountManager.markAccountCoolingDown(
+                      account,
+                      INVALID_GRANT_RECHECK_COOLDOWN_MS,
+                      "auth-failure",
+                    );
+                    accountManager.markRateLimited(
+                      account,
+                      INVALID_GRANT_RECHECK_COOLDOWN_MS,
+                      family,
+                      "antigravity",
+                      model,
+                    );
+                    pushDebug(
+                      `invalid_grant (unconfirmed) idx=${account.index}: cooldown ${INVALID_GRANT_RECHECK_COOLDOWN_MS}ms before re-checking`,
+                    );
+                    log.warn("Token refresh returned invalid_grant; re-checking before dropping the account", {
+                      account: account.email ?? `index ${account.index}`,
+                    });
+                    lastError = error;
+                    continue;
+                  }
+
                   // Capture the index BEFORE removal — removeAccount renumbers all
                   // subsequent accounts, so index-keyed state must be remapped to match.
                   const removedIndex = account.index;

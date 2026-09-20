@@ -6,6 +6,18 @@ Add multiple Google accounts to increase your combined quota and improve availab
 opencode auth login  # Run again to add more accounts
 ```
 
+Google shows its account chooser on every login (the authorization URL asks for
+`select_account`), so pick the *other* account when adding one — picking the same
+account again just refreshes the token of the account already in the pool.
+
+> **OpenCode 2.x and the desktop app:** OpenCode owns the login UI there and runs
+> plugins in a server process, so the interactive menu below (part of
+> `opencode auth login` on 1.x) is not reachable. Use the standalone account CLI:
+>
+> ```bash
+> npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts
+> ```
+
 ---
 
 ## Load Balancing Behavior
@@ -69,7 +81,9 @@ node scripts/check-quota.mjs --path /path/to/accounts.json  # Custom path
 
 ## Managing Accounts
 
-Enable or disable specific accounts to control which ones are used for requests:
+Enable or disable specific accounts to control which ones are used for requests.
+
+On OpenCode 1.x:
 
 ```bash
 opencode auth login
@@ -77,6 +91,20 @@ opencode auth login
 ```
 
 Or select an account from the list and choose "Enable/Disable account".
+
+On any version (and the only way on OpenCode 2.x / the desktop app), use the
+standalone CLI, which edits the same account file:
+
+```bash
+npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts          # interactive menu
+npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts list
+npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts add [--no-browser]
+npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts enable 2
+npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts disable 2
+npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts remove 2   # or --all
+npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts quota
+npx -p @pieliesdie/opencode-antigravity-auth antigravity-accounts verify --all
+```
 
 **Disabled accounts:**
 - Are excluded from automatic rotation
@@ -151,7 +179,7 @@ Accounts are stored in `~/.config/opencode/antigravity-accounts.json`:
 
 ## Token Revocation
 
-If Google revokes a token (e.g., password change, security event), you'll see `invalid_grant` errors. The plugin automatically removes invalid accounts.
+If Google revokes a token (e.g., password change, security event), you'll see `invalid_grant` errors. The plugin removes an account only after a *second* refresh also comes back `invalid_grant`: Google returns it for transient reasons too (notably several refreshes of the same token at once), and a single one used to empty the pool during long runs. The first one only puts the account on a short cooldown.
 
 To manually reset:
 
