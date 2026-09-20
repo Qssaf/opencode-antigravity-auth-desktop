@@ -56,16 +56,54 @@ describe("createOAuthMethod", () => {
     expect(registration.method).toMatchObject({ id: OAUTH_METHOD_ID, type: "oauth" });
   });
 
-  it("marks every form field hidden so a non-interactive login is not blocked", () => {
-    // OpenCode refuses to prompt for form input without a TTY, so any visible
-    // field would break `opencode auth login` in scripts and remote shells.
+  it("hides every field of a first login, so a non-interactive sign-in is not blocked", () => {
+    // With nothing stored there is nothing to manage, and a visible field could
+    // break `opencode auth login` in scripts and remote shells.
     for (const field of createOAuthMethod(deps()).method.form ?? []) {
       expect(field).toHaveProperty("hidden", true);
     }
   });
+
+  it("shows the account menu once accounts are stored", () => {
+    const registration = createOAuthMethod(
+      deps({ accounts: [{ value: "1", label: "1. a@example.com" }, { value: "all", label: "All accounts" }] }),
+    );
+    const action = registration.method.form?.find((field) => field.key === "action");
+
+    expect(action).toBeDefined();
+    expect(action).not.toHaveProperty("hidden", true);
+    // Defaulted, never required: a login that cannot prompt still signs in.
+    expect(action).toHaveProperty("default", "add");
+    expect(action).not.toHaveProperty("required", true);
+  });
 });
 
 describe("authorize", () => {
+  it("still signs in when the menu is answered with add", async () => {
+    const authorization = await createOAuthMethod(deps()).authorize({ action: "add" });
+    expect(authorization.mode).toBe("auto");
+    expect(authorization.url).toBe(AUTH_URL);
+  });
+
+  it("runs a management action instead of signing in, and reports its result", async () => {
+    const createAuthorization = vi.fn(async () => ({ url: AUTH_URL, verifier: "v", projectId: "" }));
+    const authorization = await createOAuthMethod(
+      deps({
+        createAuthorization,
+        management: {
+          verify: async () => ({ status: "ok", message: "ok" }),
+          live: { setEnabled: () => {}, remove: () => {} },
+          invalidate: () => {},
+        },
+      }),
+    ).authorize({ action: "list" });
+
+    // No OAuth round-trip is started for a management action.
+    expect(createAuthorization).not.toHaveBeenCalled();
+    expect(authorization.url).toBe("");
+    expect(authorization.instructions.length).toBeGreaterThan(0);
+  });
+
   it("uses auto mode and the local listener by default", async () => {
     const authorization = await createOAuthMethod(deps()).authorize({});
     expect(authorization.mode).toBe("auto");

@@ -21,12 +21,14 @@ import { authSignature, credentialToAuth, poolAuthSignature } from "./credential
 import { createLegacyClient } from "./legacy-client";
 import { catalogFromDefinitions, mergeCatalog } from "./models";
 import { createAccountCommand } from "./command";
+import { accountOptions } from "./login-menu";
 import { createOAuthMethod } from "./oauth";
 import { registerProxyRoute } from "./proxy";
 import type { ProxyRoute } from "./proxy";
 import type {
   CommandDefinition,
   Context,
+  FormOption,
   ModelInfo,
   ModelRequestHook,
   OAuthMethodRegistration,
@@ -148,6 +150,7 @@ export class V2Runtime {
   private authSnapshot: { value: Promise<AuthSnapshot>; at: number } | undefined;
   private route: Promise<ProxyRoute> | undefined;
   private catalogRefresh: Promise<void> | undefined;
+  private loginAccounts: readonly FormOption[] = [];
   private disposed = false;
 
   private constructor(private readonly legacy: AntigravityRuntime) {
@@ -338,13 +341,57 @@ export class V2Runtime {
     }
   }
 
+  /**
+   * Re-reads the accounts the login menu offers. The form is fixed once the
+   * method is registered, so this runs before registering and again after the
+   * pool changes (followed by `reloadLoginMenu`).
+   */
+  async refreshLoginAccounts(): Promise<void> {
+    try {
+      this.loginAccounts = await accountOptions();
+    } catch (error) {
+      log.debug("Could not read the account pool for the login menu", { error: String(error) });
+      this.loginAccounts = [];
+    }
+  }
+
+  /**
+   * Rebuilds the login menu in every attached location, so the account list it
+   * offers matches the pool after a change.
+   */
+  async reloadLoginMenu(): Promise<void> {
+    await this.refreshLoginAccounts();
+    for (const ctx of this.attached) {
+      try {
+        await ctx.integration.reload();
+      } catch (error) {
+        log.debug("Could not reload the login menu for this location", { error: String(error) });
+      }
+    }
+  }
+
   /** The OAuth method registered on the `google` integration. */
   oauthMethod(): OAuthMethodRegistration {
     return createOAuthMethod({
       integrationID: PROVIDER_ID,
       client: createLegacyClient(),
       helpers: oauthFlowHelpers,
+      accounts: this.loginAccounts,
+      management: {
+        verify: verifyAccountAccess,
+        live: liveAccountPool,
+        invalidate: () => this.onPoolChanged(),
+      },
     });
+  }
+
+  /**
+   * A pool change made outside the request path: drop the cached login so the
+   * next request rebuilds the pool from disk, and refresh the login menu.
+   */
+  private onPoolChanged(): void {
+    this.invalidateAuth();
+    void this.reloadLoginMenu();
   }
 
   /**
@@ -366,7 +413,7 @@ export class V2Runtime {
       helpers: oauthFlowHelpers,
       client: createLegacyClient(),
       live: liveAccountPool,
-      invalidate: () => this.invalidateAuth(),
+      invalidate: () => this.onPoolChanged(),
       verify: verifyAccountAccess,
     });
   }

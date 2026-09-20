@@ -10,10 +10,13 @@ Google shows its account chooser on every login (the authorization URL asks for
 `select_account`), so pick the *other* account when adding one — picking the same
 account again just refreshes the token of the account already in the pool.
 
-> **OpenCode 2.x and the desktop app:** OpenCode owns the login UI there and runs
-> plugins in a server process, so the interactive menu below (part of
-> `opencode auth login` on 1.x) is not reachable. The plugin registers the
-> `/antigravity` command instead — type it in any session:
+> **OpenCode 2.x and the desktop app:** the menu is prompted by OpenCode itself.
+> Run `opencode auth login`, pick Google → "OAuth with Google (Antigravity)", and
+> choose what to do (add / list / enable / disable / remove / quota / verify) and
+> which account. It appears once an account is stored.
+>
+> The same actions are also a command, for when you do not want to leave the
+> session:
 >
 > ```
 > /antigravity                 list stored accounts

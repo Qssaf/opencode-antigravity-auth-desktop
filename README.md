@@ -385,9 +385,32 @@ adding one — choosing the account that is already stored just refreshes its to
 
 ### Managing accounts
 
-**OpenCode 2.x and the desktop app — the `/antigravity` command.** OpenCode 2.x
-owns the login prompt, so the plugin cannot show the 1.x menu there. It registers
-a command instead, which answers in the session without spending a model call:
+**OpenCode 2.x and the desktop app — the login menu.** Run `opencode auth login`,
+pick Google → **OAuth with Google (Antigravity)**, and the plugin's own menu is
+prompted by OpenCode:
+
+```
+? Antigravity accounts
+  > Add a Google account      Sign in and add it to the rotation pool
+    List accounts             Show every stored account and its state
+    Enable an account         Put an account back into rotation
+    Disable an account        Keep an account stored but out of rotation
+    Remove an account         Delete an account from the pool
+    Check quotas              Remaining Antigravity and Gemini CLI quota
+    Verify access             Check accounts against the Antigravity backend
+
+? Which account?
+  > 1. you@gmail.com          current
+    2. other@gmail.com        disabled
+    All accounts
+```
+
+Only **Add** continues into a Google sign-in; the others run immediately and show
+the result. The menu appears once you have an account stored — a first login (and
+any scripted one) is still a plain sign-in.
+
+**Also on 2.x — the `/antigravity` command,** if you would rather not leave the
+session. It answers in place without spending a model call:
 
 ```
 /antigravity                 list stored accounts

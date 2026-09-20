@@ -110,6 +110,7 @@ src/
 src/v2/
 ├── plugin.ts         # Plugin.define entry: registers OAuth, models, model.request hook, tools, /antigravity per location
 ├── command.ts        # `/antigravity` account command (session.synthetic output)
+├── login-menu.ts     # Account menu carried by the OAuth method's form
 ├── runtime.ts        # Process-wide shared runtime (ref-counted across locations)
 ├── proxy.ts          # Loopback listener that runs the pipeline's fetch
 ├── oauth.ts          # OAuth method for the `google` integration
@@ -126,7 +127,8 @@ Things to know before changing this:
 - OpenCode 2.x calls `setup` once per location in one process, but the pipeline keeps process-global state, so the runtime is created once and ref-counted (`acquireRuntime`).
 - The auth loader is re-run only when the login changes, keyed by `authSignature` (stable across access-token rotation).
 - 2.x server plugins have no toasts, and `src/v2/legacy-client.ts` makes unsupported `session.*` calls throw rather than silently no-op.
-- The 1.x account menu cannot run on 2.x (no stdin in the server process). `/antigravity` replaces it: `ctx.command.transform` registers it, `ctx.session.synthetic({ resume: false })` prints the answer without a model turn, and a change mirrors into the live pool (`liveAccountPool`) before `V2Runtime.invalidateAuth()` forces the next request to re-read the account file.
+- The 1.x account menu cannot prompt on stdin on 2.x. Two surfaces replace it. The login method's `form` (`login-menu.ts`) is prompted by OpenCode during `opencode auth login` — a `string` field with `options` renders as a select, `when` (AND-only) gates the account picker, and a non-`add` action returns an authorization carrying the result text plus the already-active account's credential. The account options are fixed at registration, so a change calls `ctx.integration.reload()` to rebuild the form.
+- The second surface is the `/antigravity` command: `ctx.command.transform` registers it, `ctx.session.synthetic({ resume: false })` prints the answer without a model turn, and a change mirrors into the live pool (`liveAccountPool`) before `V2Runtime.invalidateAuth()` forces the next request to re-read the account file.
 
 ## Key Design Patterns
 

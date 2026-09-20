@@ -52,24 +52,46 @@ export type OAuthAuthorization = {
   | { readonly mode: "code"; readonly callback: (code: string) => Promise<OAuthCredential> }
 );
 
-export interface BooleanFormField {
-  readonly key: string;
-  readonly type: "boolean";
-  readonly title?: string;
+/** One choice in a select-style field. */
+export interface FormOption {
+  readonly value: string;
+  readonly label: string;
   readonly description?: string;
-  readonly default?: boolean;
-  /** Skips the interactive prompt and uses `default` unless an answer is supplied. */
-  readonly hidden?: boolean;
 }
 
-export interface StringFormField {
+/**
+ * Condition on an earlier field's answer. A field's `when` list must hold in
+ * full (AND) for the field to be asked; an unanswered reference is false.
+ */
+export interface FormWhen {
   readonly key: string;
-  readonly type: "string";
+  readonly op: "eq" | "neq";
+  readonly value: string | number | boolean;
+}
+
+interface FormFieldBase {
+  readonly key: string;
   readonly title?: string;
   readonly description?: string;
+  readonly required?: boolean;
+  /** Skips the interactive prompt and uses `default` unless an answer is supplied. */
+  readonly hidden?: boolean;
+  readonly when?: readonly FormWhen[];
+}
+
+export interface BooleanFormField extends FormFieldBase {
+  readonly type: "boolean";
+  readonly default?: boolean;
+}
+
+export interface StringFormField extends FormFieldBase {
+  readonly type: "string";
   readonly placeholder?: string;
   readonly default?: string;
-  readonly hidden?: boolean;
+  /** Present: OpenCode prompts with a select instead of a text input. */
+  readonly options?: readonly FormOption[];
+  /** Allows a value outside `options`. */
+  readonly custom?: boolean;
 }
 
 export type FormField = BooleanFormField | StringFormField;
@@ -92,6 +114,16 @@ export interface OAuthMethodRegistration {
 export interface IntegrationEditor {
   readonly method: {
     update(registration: OAuthMethodRegistration): void;
+  };
+}
+
+export interface IntegrationDomain {
+  transform(callback: (editor: IntegrationEditor) => void): Promise<Registration>;
+  /** Re-runs the registered transforms, which rebuilds the login form. */
+  reload(): Promise<void>;
+  readonly connection: {
+    active(integrationID: string): Promise<ConnectionInfo | undefined>;
+    resolve(connection: ConnectionInfo): Promise<Credential | undefined>;
   };
 }
 
@@ -191,13 +223,7 @@ export interface Context {
   readonly app: { readonly name: string; readonly version: string; readonly channel: string };
   readonly location: { readonly directory: string };
   readonly options: Readonly<Record<string, unknown>>;
-  readonly integration: {
-    transform(callback: (editor: IntegrationEditor) => void): Promise<Registration>;
-    readonly connection: {
-      active(integrationID: string): Promise<ConnectionInfo | undefined>;
-      resolve(connection: ConnectionInfo): Promise<Credential | undefined>;
-    };
-  };
+  readonly integration: IntegrationDomain;
   readonly provider: {
     transform(callback: (editor: ProviderEditor) => void): Promise<Registration>;
     reload(): Promise<void>;

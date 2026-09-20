@@ -4,7 +4,8 @@
  * `setup` runs once per location. It attaches the location to the shared
  * runtime and registers, for that location:
  *
- * - an OAuth login method on the `google` integration,
+ * - an OAuth login method on the `google` integration, whose form carries the
+ *   account menu (see login-menu.ts),
  * - the Antigravity models on the `google` provider,
  * - a `model.request` hook that routes Gemini requests through the Antigravity
  *   pipeline (see proxy.ts),
@@ -45,6 +46,9 @@ export async function setup(ctx: Context): Promise<Cleanup> {
   const registrations: Registration[] = [];
 
   try {
+    // The login menu lists the stored accounts, so they are read before the
+    // method is registered with its form.
+    await runtime.refreshLoginAccounts();
     registrations.push(
       await ctx.integration.transform((editor) => {
         editor.method.update(runtime.oauthMethod());

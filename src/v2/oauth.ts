@@ -6,7 +6,11 @@
  * URL and open the browser themselves, and ask for a pasted code in `code`
  * mode. The OpenCode 1.x flow prompted on stdin and opened the browser from
  * the plugin, neither of which works inside the OpenCode 2.x server process,
- * so this module only produces the authorization and completes the exchange.
+ * so this module produces the authorization and completes the exchange.
+ *
+ * What OpenCode 2.x does prompt is the method's own `form`, which is how the
+ * 1.x account menu comes back: see `login-menu.ts`. Picking anything other than
+ * "Add a Google account" runs that action and ends the flow with its result.
  */
 
 import { authorizeAntigravity, exchangeAntigravity } from "../antigravity/oauth";
@@ -17,7 +21,15 @@ import type { OAuthListener } from "../plugin/server";
 import { refreshAccessToken } from "../plugin/token";
 import type { PluginClient } from "../plugin/types";
 import { credentialLabel, OAUTH_METHOD_ID, tokenResultToCredential } from "./credentials";
-import type { FormAnswer, OAuthAuthorization, OAuthCredential, OAuthMethodRegistration } from "./types";
+import {
+  activeAccountCredential,
+  answeredAccount,
+  answeredAction,
+  buildLoginForm,
+  runManagementAction,
+} from "./login-menu";
+import type { ManagementDeps } from "./login-menu";
+import type { FormAnswer, FormOption, OAuthAuthorization, OAuthCredential, OAuthMethodRegistration } from "./types";
 
 const log = createLogger("v2-oauth");
 
@@ -44,6 +56,13 @@ export interface OAuthMethodDeps {
   integrationID: string;
   client: PluginClient;
   helpers: OAuthFlowHelpers;
+  /**
+   * Accounts offered by the login menu, read from the pool when the method is
+   * registered. Empty (or one account) collapses the menu to a plain sign-in.
+   */
+  accounts?: readonly FormOption[];
+  /** Everything the management actions need; without it the menu is sign-in only. */
+  management?: Omit<ManagementDeps, "client" | "integrationID">;
   startListener?: () => Promise<OAuthListener>;
   createAuthorization?: typeof authorizeAntigravity;
   exchangeCode?: typeof exchangeAntigravity;
@@ -64,7 +83,7 @@ function isTruthyAnswer(value: FormAnswer[string] | undefined): boolean {
 }
 
 export function createOAuthMethod(deps: OAuthMethodDeps): OAuthMethodRegistration {
-  const { helpers, client, integrationID } = deps;
+  const { helpers, client, integrationID, management } = deps;
   const startListener = deps.startListener ?? startOAuthListener;
   const createAuthorization = deps.createAuthorization ?? authorizeAntigravity;
   const exchangeCode = deps.exchangeCode ?? exchangeAntigravity;
@@ -84,7 +103,43 @@ export function createOAuthMethod(deps: OAuthMethodDeps): OAuthMethodRegistratio
     return tokenResultToCredential(result);
   }
 
+  /**
+   * Ends the login flow on a management action: OpenCode expects a credential,
+   * so it gets the account that is already active, and the result of the action
+   * is carried in `instructions`.
+   */
+  async function completeManagement(text: string): Promise<OAuthAuthorization> {
+    const credential = await activeAccountCredential();
+    if (!credential) {
+      // Nothing left to hand back (the last account was just removed), so the
+      // flow ends on the message rather than on a credential that does not exist.
+      throw new Error(text);
+    }
+    return {
+      mode: "auto",
+      url: "",
+      instructions: text,
+      expiresAt: Date.now() + LOGIN_TIMEOUT_MS,
+      callback: Promise.resolve(credential),
+    };
+  }
+
   async function authorize(answer: FormAnswer): Promise<OAuthAuthorization> {
+    const action = answeredAction(answer);
+    if (action !== "add") {
+      if (!management) {
+        return completeManagement(
+          "Account management is not available on this OpenCode build. Use the `antigravity-accounts` CLI.",
+        );
+      }
+      const outcome = await runManagementAction(action, answeredAccount(answer), {
+        ...management,
+        client,
+        integrationID,
+      });
+      return completeManagement(outcome.text);
+    }
+
     const projectId = typeof answer.projectId === "string" ? answer.projectId.trim() : "";
     const manual =
       isTruthyAnswer(answer.noBrowser) || isHeadlessEnvironment() || helpers.shouldSkipLocalServer();
@@ -194,25 +249,9 @@ export function createOAuthMethod(deps: OAuthMethodDeps): OAuthMethodRegistratio
       id: OAUTH_METHOD_ID,
       type: "oauth",
       label: "OAuth with Google (Antigravity)",
-      // Hidden fields are never prompted; pass them with `--answer key=value`.
-      form: [
-        {
-          key: "noBrowser",
-          type: "boolean",
-          title: "Enter the authorization code manually",
-          description: "Skip the local callback listener (for SSH, containers and WSL).",
-          default: false,
-          hidden: true,
-        },
-        {
-          key: "projectId",
-          type: "string",
-          title: "Google Cloud project ID",
-          description: "Optional. Leave empty to use the managed Antigravity project.",
-          default: "",
-          hidden: true,
-        },
-      ],
+      // The menu OpenCode prompts before calling `authorize`. Hidden fields are
+      // never prompted; pass them with `--answer key=value`.
+      form: buildLoginForm(deps.accounts ?? []),
     },
     authorize,
     refresh,
