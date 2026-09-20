@@ -38,7 +38,6 @@
         "build:plugin": "esbuild index.ts --bundle --format=esm --platform=node --external:node: --external:proper-lockfile --external:xdg-basedir --external:zod --external:@openauthjs/openauth --sourcemap --outfile=dist/index.js",
         "build:cli": "esbuild cli.ts --bundle --format=esm --platform=node --external:node: --external:proper-lockfile --external:xdg-basedir --external:zod --external:@openauthjs/openauth --sourcemap --outfile=dist/accounts.js",
         "accounts": "npm run build:cli --silent && node dist/accounts.js",
-        "prepare": "npm run build",
         "build:schema": "npx tsx script/build-schema.ts",
         "typecheck": "tsc --noEmit",
         "test": "vitest run",

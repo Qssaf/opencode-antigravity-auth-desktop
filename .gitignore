@@ -3,8 +3,13 @@ node_modules
 
 # output
 out
-dist
 *.tgz
+
+# Built bundles are committed: this fork is installed straight from GitHub, and
+# OpenCode loads an installed plugin through package.json `main`, so dist/ has
+# to exist in the repo. Source maps stay out (they are large and rebuildable).
+dist/*.map
+dist/**/*.map
 
 # code coverage
 coverage
