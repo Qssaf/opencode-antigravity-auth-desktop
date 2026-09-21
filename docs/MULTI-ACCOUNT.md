@@ -60,10 +60,22 @@ opencode auth login
 # Select "Check quotas" from the menu
 ```
 
-This shows remaining quota percentages and reset times for each model family:
-- **Claude** - Claude Opus/Sonnet quota
-- **Gemini 3 Pro** - Gemini 3 Pro quota
-- **Gemini 3 Flash** - Gemini 3 Flash quota
+This shows the rate-limit buckets Google reports for each account — the weekly
+pool that follows your plan tier, and the rolling 5-hour pool that smooths
+global demand. Whichever empties first is what blocks a request:
+
+```
+┌─────────────────────────────┬────────┬───────────────────┬───────────────┬───────────────────┬───────────────────┐
+│ Account                     │ Status │ Gemini weekly     │ Gemini 5-hour │ Claude/GPT weekly │ Claude/GPT 5-hour │
+├─────────────────────────────┼────────┼───────────────────┼───────────────┼───────────────────┼───────────────────┤
+│ you@gmail.com               │ ACTIVE │  57% (2d 13h 40m) │ 100% (4h 58m) │  99% (6d 5h 6m)   │ 100% (4h 58m)     │
+│ other@gmail.com             │ OK     │  63% (2d 13h 35m) │ 100% (4h 58m) │ 100% (6d 23h 58m) │ 100% (4h 58m)     │
+└─────────────────────────────┴────────┴───────────────────┴───────────────┴───────────────────┴───────────────────┘
+```
+
+From a shell, `antigravity-accounts quota --detailed` adds every bucket and the
+per-model 5-hour pools (Claude, Gemini 3 Pro/Flash, Gemini CLI), and
+`--json` prints the raw data.
 
 ### From a shell
 

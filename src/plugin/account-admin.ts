@@ -8,7 +8,8 @@
  * own login UI.
  */
 
-import { checkAccountsQuota } from "./quota";
+import { checkAccountsQuota, findRateLimitBucket, isGeminiRateLimitGroup } from "./quota";
+import type { AccountQuotaResult, RateLimitSummary } from "./quota";
 import { loadAccounts, removeAccountFromStorage, saveAccounts } from "./storage";
 import type { AccountMetadataV3, AccountStorageV4 } from "./storage";
 import type { PluginClient } from "./types";
@@ -116,63 +117,191 @@ export async function deleteAccount(index: number): Promise<AccountAdminResult> 
 
 // -- quota -------------------------------------------------------------------
 
-function formatResetTime(resetTime?: string): string {
+/** `2d 13h 40m` — the coarse countdown the quota table shows. */
+function formatCountdown(resetTime?: string): string {
   if (!resetTime) return "";
   const ms = Date.parse(resetTime) - Date.now();
   if (!Number.isFinite(ms)) return "";
-  if (ms <= 0) return " (resetting)";
-  const minutes = Math.round(ms / 60000);
-  if (minutes < 60) return ` (resets in ${minutes}m)`;
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-  return days > 0 ? ` (resets in ${days}d ${hours % 24}h)` : ` (resets in ${hours}h)`;
+  if (ms <= 0) return "resetting";
+
+  const totalMinutes = Math.floor(ms / 60000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (parts.length === 0) parts.push(`${Math.max(1, Math.floor(ms / 1000))}s`);
+  return parts.join(" ");
 }
 
-function formatRemaining(remaining?: number): string {
-  return typeof remaining === "number" ? `${Math.round(remaining * 100)}%` : "unknown";
+function formatPercent(remaining?: number): string {
+  return typeof remaining === "number" ? `${Math.round(remaining * 100)}%`.padStart(4) : " N/A";
 }
 
-export async function renderQuota(client: PluginClient, providerId: string): Promise<string> {
+/** One table cell: `100% (4h 59m)`. */
+function formatBucketCell(summary: RateLimitSummary | undefined, gemini: boolean, window: string): string {
+  const bucket = findRateLimitBucket(
+    summary,
+    (group) => (gemini ? isGeminiRateLimitGroup(group) : !isGeminiRateLimitGroup(group)),
+    window,
+  );
+  if (!bucket) return "N/A";
+  const countdown = formatCountdown(bucket.resetTime);
+  const exhausted = bucket.disabled ? " [exhausted]" : "";
+  return `${formatPercent(bucket.remainingFraction)}${countdown ? ` (${countdown})` : ""}${exhausted}`;
+}
+
+function accountStatusLabel(result: AccountQuotaResult, activeIndex: number): string {
+  if (result.status === "error") return "ERROR";
+  if (result.disabled) return "DISABLED";
+  return result.index === activeIndex ? "ACTIVE" : "OK";
+}
+
+/** Renders rows as a box-drawn table, sized to the widest cell in each column. */
+function renderTable(headers: readonly string[], rows: readonly (readonly string[])[]): string {
+  const widths = headers.map((header, column) =>
+    Math.max(header.length, ...rows.map((row) => (row[column] ?? "").length)),
+  );
+  const line = (left: string, middle: string, right: string) =>
+    left + widths.map((width) => "─".repeat(width + 2)).join(middle) + right;
+  const row = (cells: readonly string[]) =>
+    `│ ${widths.map((width, column) => (cells[column] ?? "").padEnd(width)).join(" │ ")} │`;
+
+  return [
+    line("┌", "┬", "┐"),
+    row(headers),
+    line("├", "┼", "┤"),
+    ...rows.map(row),
+    line("└", "┴", "┘"),
+  ].join("\n");
+}
+
+const RATE_LIMIT_HEADERS = [
+  "Account",
+  "Status",
+  "Gemini weekly",
+  "Gemini 5-hour",
+  "Claude/GPT weekly",
+  "Claude/GPT 5-hour",
+] as const;
+
+/** The per-group buckets behind the table, as `renderQuota({ detailed: true })` prints them. */
+function renderRateLimitDetail(result: AccountQuotaResult): string[] {
+  const lines: string[] = [];
+  const summary = result.rateLimits;
+
+  if (summary?.error) {
+    lines.push(`  rate limits: ${summary.error}`);
+    return lines;
+  }
+  if (!summary || summary.groups.length === 0) {
+    lines.push("  rate limits: none reported");
+    return lines;
+  }
+
+  for (const group of summary.groups) {
+    lines.push(`  ${group.displayName}${group.description ? ` — ${group.description}` : ""}`);
+    for (const bucket of group.buckets) {
+      const countdown = formatCountdown(bucket.resetTime);
+      lines.push(
+        `    ${bucket.displayName.padEnd(18)} ${formatPercent(bucket.remainingFraction)}` +
+          `${countdown ? ` (resets in ${countdown})` : ""}${bucket.disabled ? " [exhausted]" : ""}`,
+      );
+    }
+  }
+  return lines;
+}
+
+/** The per-model Antigravity and Gemini CLI pools, under the rate-limit table. */
+function renderModelQuotaDetail(result: AccountQuotaResult): string[] {
+  const lines: string[] = [];
+  const groups = result.quota?.groups ?? {};
+  const rows: Array<[string, { remainingFraction?: number; resetTime?: string } | undefined]> = [
+    ["Claude", groups.claude],
+    ["Gemini 3 Pro", groups["gemini-pro"]],
+    ["Gemini 3 Flash", groups["gemini-flash"]],
+  ];
+  const known = rows.filter(([, data]) => data);
+
+  if (known.length === 0) {
+    lines.push(`  Antigravity: ${result.quota?.error ?? "no quota information"}`);
+  } else {
+    for (const [name, data] of known) {
+      const countdown = formatCountdown(data?.resetTime);
+      lines.push(
+        `    ${name.padEnd(18)} ${formatPercent(data?.remainingFraction)}${countdown ? ` (resets in ${countdown})` : ""}`,
+      );
+    }
+  }
+
+  for (const model of result.geminiCliQuota?.models ?? []) {
+    const countdown = formatCountdown(model.resetTime);
+    lines.push(
+      `    ${`CLI ${model.modelId}`.padEnd(18)} ${formatPercent(model.remainingFraction)}` +
+        `${countdown ? ` (resets in ${countdown})` : ""}`,
+    );
+  }
+  return lines;
+}
+
+export interface QuotaRenderOptions {
+  /** Also print every rate-limit bucket and model pool per account. */
+  detailed?: boolean;
+}
+
+export async function renderQuota(
+  client: PluginClient,
+  providerId: string,
+  options: QuotaRenderOptions = {},
+): Promise<string> {
   const storage = await loadAccountPool();
   if (!storage) {
     return NO_ACCOUNTS_MESSAGE;
   }
 
   const results = await checkAccountsQuota(storage.accounts, client, providerId);
-  const blocks: string[] = [];
+  const activeIndex = storage.activeIndex ?? 0;
 
-  for (const result of results) {
+  const rows = results.map((result) => {
     const label = result.email || `Account ${result.index + 1}`;
-    const lines = [`${label}${result.disabled ? " [disabled]" : ""}`];
-
+    const status = accountStatusLabel(result, activeIndex);
     if (result.status === "error") {
-      lines.push(`  error: ${result.error}`);
-      blocks.push(lines.join("\n"));
-      continue;
+      // Kept short: one long message would widen the column past the table.
+      const reason = result.error ?? "unknown error";
+      return [label, status, reason.length > 38 ? `${reason.slice(0, 37)}…` : reason, "", "", ""];
     }
-
-    const groups = result.quota?.groups ?? {};
-    const rows: Array<[string, { remainingFraction?: number; resetTime?: string } | undefined]> = [
-      ["Claude", groups.claude],
-      ["Gemini 3 Pro", groups["gemini-pro"]],
-      ["Gemini 3 Flash", groups["gemini-flash"]],
+    return [
+      label,
+      status,
+      formatBucketCell(result.rateLimits, true, "weekly"),
+      formatBucketCell(result.rateLimits, true, "5h"),
+      formatBucketCell(result.rateLimits, false, "weekly"),
+      formatBucketCell(result.rateLimits, false, "5h"),
     ];
-    const known = rows.filter(([, data]) => data);
-    if (known.length === 0) {
-      lines.push(`  Antigravity: ${result.quota?.error ?? "no quota information"}`);
-    } else {
-      for (const [name, data] of known) {
-        lines.push(`  ${name.padEnd(16)} ${formatRemaining(data?.remainingFraction)}${formatResetTime(data?.resetTime)}`);
+  });
+
+  const blocks = [
+    "Antigravity rate limits (weekly + 5-hour, per model group)",
+    renderTable(RATE_LIMIT_HEADERS, rows),
+    "Weekly follows your plan tier; the 5-hour pool smooths global demand. Whichever empties first blocks you.",
+  ];
+
+  if (options.detailed) {
+    for (const result of results) {
+      const label = result.email || `Account ${result.index + 1}`;
+      const detail = [`${label}${result.disabled ? " [disabled]" : ""}`];
+      if (result.status === "error") {
+        detail.push(`  error: ${result.error}`);
+      } else {
+        detail.push(...renderRateLimitDetail(result));
+        detail.push("  Model pools (5-hour)");
+        detail.push(...renderModelQuotaDetail(result));
       }
+      blocks.push(detail.join("\n"));
     }
-
-    for (const model of result.geminiCliQuota?.models ?? []) {
-      lines.push(
-        `  ${`CLI ${model.modelId}`.padEnd(16)} ${formatRemaining(model.remainingFraction)}${formatResetTime(model.resetTime)}`,
-      );
-    }
-
-    blocks.push(lines.join("\n"));
   }
 
   return blocks.join("\n\n");

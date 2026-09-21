@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { __testExports } from "./quota.ts";
+import { __testExports, fetchRateLimitSummary, findRateLimitBucket, isGeminiRateLimitGroup } from "./quota.ts";
 
 describe("Antigravity quota aggregation", () => {
   it("uses the best available Gemini variant instead of the most exhausted rollout variant", () => {
@@ -140,5 +140,75 @@ describe("mapWithConcurrency", () => {
   it("returns an empty array for empty input", async () => {
     const results = await __testExports.mapWithConcurrency([], 3, async (item) => item);
     expect(results).toEqual([]);
+  });
+});
+
+describe("fetchRateLimitSummary", () => {
+  const summaryPayload = {
+    description: "Your plan's limits",
+    groups: [
+      {
+        displayName: "Gemini models",
+        buckets: [
+          { bucketId: "g-w", displayName: "Weekly", window: "weekly", remainingFraction: 0.57, resetTime: "2026-09-24T00:00:00Z" },
+          { bucketId: "g-5", displayName: "5 hour", window: "5h", remainingFraction: 1 },
+        ],
+      },
+      {
+        displayName: "Claude and GPT models",
+        buckets: [
+          { bucketId: "c-w", displayName: "Weekly", window: "weekly", remainingFraction: 0.99, disabled: false },
+        ],
+      },
+    ],
+  };
+
+  it("reads the weekly and 5-hour buckets Google reports", async () => {
+    const calls: Array<{ url: string; headers: Record<string, string> }> = [];
+    global.fetch = (async (url: string, init: RequestInit) => {
+      calls.push({ url, headers: init.headers as Record<string, string> });
+      return new Response(JSON.stringify(summaryPayload), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const summary = await fetchRateLimitSummary("token", "project-1");
+
+    expect(calls[0]?.url).toContain("/v1internal:retrieveUserQuotaSummary");
+    // The roster the backend serves depends on the client it thinks is calling.
+    expect(calls[0]?.headers["User-Agent"]).toContain("antigravity/");
+    expect(summary.error).toBeUndefined();
+    expect(summary.groups).toHaveLength(2);
+
+    const geminiWeekly = findRateLimitBucket(summary, isGeminiRateLimitGroup, "weekly");
+    expect(geminiWeekly?.remainingFraction).toBe(0.57);
+    expect(geminiWeekly?.resetTime).toBe("2026-09-24T00:00:00Z");
+
+    const thirdPartyWeekly = findRateLimitBucket(summary, (group) => !isGeminiRateLimitGroup(group), "weekly");
+    expect(thirdPartyWeekly?.remainingFraction).toBe(0.99);
+  });
+
+  it("falls through to the next host on 403/404/5xx", async () => {
+    const seen: string[] = [];
+    global.fetch = (async (url: string) => {
+      seen.push(new URL(url).host);
+      return seen.length === 1
+        ? new Response("nope", { status: 404 })
+        : new Response(JSON.stringify(summaryPayload), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const summary = await fetchRateLimitSummary("token");
+
+    expect(seen.length).toBeGreaterThan(1);
+    expect(summary.groups).toHaveLength(2);
+  });
+
+  it("reports a failure instead of throwing", async () => {
+    global.fetch = (async () => {
+      throw new Error("offline");
+    }) as unknown as typeof fetch;
+
+    const summary = await fetchRateLimitSummary("token");
+
+    expect(summary.groups).toEqual([]);
+    expect(summary.error).toContain("offline");
   });
 });

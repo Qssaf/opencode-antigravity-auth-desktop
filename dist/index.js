@@ -72,6 +72,31 @@ var GEMINI_CLI_HEADERS = {
   "X-Goog-Api-Client": "gl-node/22.17.0",
   "Client-Metadata": "ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI"
 };
+var ANTIGRAVITY_PLATFORMS = ["windows/amd64", "darwin/arm64", "darwin/amd64"];
+var ANTIGRAVITY_API_CLIENTS = [
+  "google-cloud-sdk vscode_cloudshelleditor/0.1",
+  "google-cloud-sdk vscode/1.96.0",
+  "google-cloud-sdk vscode/1.95.0"
+];
+function randomFrom(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+function getRandomizedHeaders(style, model) {
+  if (style === "gemini-cli") {
+    return {
+      "User-Agent": GEMINI_CLI_HEADERS["User-Agent"],
+      "X-Goog-Api-Client": GEMINI_CLI_HEADERS["X-Goog-Api-Client"],
+      "Client-Metadata": GEMINI_CLI_HEADERS["Client-Metadata"]
+    };
+  }
+  const platform = randomFrom(ANTIGRAVITY_PLATFORMS);
+  const metadataPlatform = platform.startsWith("windows") ? "WINDOWS" : "MACOS";
+  return {
+    "User-Agent": `antigravity/${getAntigravityVersion()} ${platform}`,
+    "X-Goog-Api-Client": randomFrom(ANTIGRAVITY_API_CLIENTS),
+    "Client-Metadata": `{"ideType":"ANTIGRAVITY","platform":"${metadataPlatform}","pluginType":"GEMINI"}`
+  };
+}
 var ANTIGRAVITY_PROVIDER_ID = "google";
 var CLAUDE_TOOL_SYSTEM_INSTRUCTION = `CRITICAL TOOL USAGE INSTRUCTIONS:
 You are operating in a custom environment where tool definitions differ from your training data.
@@ -7190,7 +7215,7 @@ var SDK_CLIENTS = [
 ];
 var MAX_FINGERPRINT_HISTORY = 5;
 var PLATFORM_CHOICES = ["darwin", "win32"];
-function randomFrom(arr) {
+function randomFrom2(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 function platformToDisplayName(platform) {
@@ -7203,16 +7228,16 @@ function generateSessionToken() {
   return crypto.randomBytes(16).toString("hex");
 }
 function generateFingerprint() {
-  const platform = randomFrom(PLATFORM_CHOICES);
-  const arch = randomFrom(ARCHITECTURES);
-  const osVersion = randomFrom(OS_VERSIONS[platform] ?? OS_VERSIONS.darwin);
+  const platform = randomFrom2(PLATFORM_CHOICES);
+  const arch = randomFrom2(ARCHITECTURES);
+  const osVersion = randomFrom2(OS_VERSIONS[platform] ?? OS_VERSIONS.darwin);
   return {
     deviceId: generateDeviceId(),
     sessionToken: generateSessionToken(),
     userAgent: `antigravity/${getAntigravityVersion()} ${platform}/${arch}`,
-    apiClient: randomFrom(SDK_CLIENTS),
+    apiClient: randomFrom2(SDK_CLIENTS),
     clientMetadata: {
-      ideType: randomFrom(IDE_TYPES),
+      ideType: randomFrom2(IDE_TYPES),
       platform: platformToDisplayName(platform),
       pluginType: "GEMINI"
     },
@@ -11279,6 +11304,74 @@ async function mapWithConcurrency(items, concurrency, fn) {
   await Promise.all(Array.from({ length: workerCount }, () => worker()));
   return results;
 }
+async function fetchWithEndpointFallback(requestPath, options, timeoutMs = FETCH_TIMEOUT_MS2) {
+  let lastError;
+  for (const endpoint of ANTIGRAVITY_ENDPOINT_FALLBACKS) {
+    try {
+      const response = await fetchWithTimeout2(`${endpoint}${requestPath}`, options, timeoutMs);
+      if (response.ok) {
+        return response;
+      }
+      if (response.status === 403 || response.status === 404 || response.status >= 500) {
+        lastError = new Error(`HTTP ${response.status} at ${endpoint}`);
+        continue;
+      }
+      return response;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("All Antigravity endpoints failed");
+}
+async function fetchRateLimitSummary(accessToken, projectId) {
+  const body = projectId ? { project: projectId } : {};
+  try {
+    const response = await fetchWithEndpointFallback("/v1internal:retrieveUserQuotaSummary", {
+      method: "POST",
+      headers: {
+        // The CLI-style `antigravity/<version> <platform>` agent, not the
+        // Electron one: the backend keys what it reports off the client it
+        // thinks is calling.
+        ...getRandomizedHeaders("antigravity"),
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      return { groups: [], error: `HTTP ${response.status}${text ? `: ${text.slice(0, 100)}` : ""}` };
+    }
+    const data = await response.json();
+    return normalizeRateLimitSummary(data);
+  } catch (error) {
+    return { groups: [], error: error instanceof Error ? error.message : String(error) };
+  }
+}
+function normalizeRateLimitSummary(payload) {
+  const groups = (payload.groups ?? []).map((group) => ({
+    displayName: group.displayName || "Unknown group",
+    description: group.description || void 0,
+    buckets: (group.buckets ?? []).map((bucket) => ({
+      bucketId: bucket.bucketId || "",
+      displayName: bucket.displayName || bucket.bucketId || "",
+      window: bucket.window || "",
+      remainingFraction: normalizeRemainingFraction(bucket.remainingFraction) ?? 0,
+      remainingAmount: bucket.remainingAmount,
+      disabled: bucket.disabled === true,
+      resetTime: bucket.resetTime,
+      description: bucket.description || void 0
+    }))
+  }));
+  return { description: payload.description || void 0, groups };
+}
+function isGeminiRateLimitGroup(group) {
+  return /gemini/i.test(group.displayName);
+}
+function findRateLimitBucket(summary, matches, window) {
+  const group = summary?.groups.find(matches);
+  return group?.buckets.find((bucket) => bucket.window === window);
+}
 async function checkSingleAccountQuota(account, index, client, providerId) {
   const disabled = account.enabled === false;
   let auth = buildAuthFromAccount(account);
@@ -11295,9 +11388,10 @@ async function checkSingleAccountQuota(account, index, client, providerId) {
     const updatedAccount = applyAccountUpdates(account, auth);
     let quotaResult;
     let geminiCliQuotaResult;
-    const [antigravityResponse, geminiCliResponse] = await Promise.all([
+    const [antigravityResponse, geminiCliResponse, rateLimitSummary] = await Promise.all([
       fetchAvailableModels(auth.access ?? "", projectContext.effectiveProjectId).catch(() => ({ models: void 0 })),
-      fetchGeminiCliQuota(auth.access ?? "", projectContext.effectiveProjectId)
+      fetchGeminiCliQuota(auth.access ?? "", projectContext.effectiveProjectId),
+      fetchRateLimitSummary(auth.access ?? "", projectContext.effectiveProjectId)
     ]);
     if (antigravityResponse.models === void 0) {
       quotaResult = {
@@ -11324,6 +11418,7 @@ async function checkSingleAccountQuota(account, index, client, providerId) {
       disabled,
       quota: quotaResult,
       geminiCliQuota: geminiCliQuotaResult,
+      rateLimits: rateLimitSummary,
       updatedAccount
     };
   } catch (error) {
@@ -15786,55 +15881,153 @@ async function deleteAccount(index) {
   await removeAccountFromStorage(account.refreshToken);
   return { ok: true, index, message: `Deleted ${accountLabel(account, index)}.` };
 }
-function formatResetTime(resetTime) {
+function formatCountdown(resetTime) {
   if (!resetTime) return "";
   const ms = Date.parse(resetTime) - Date.now();
   if (!Number.isFinite(ms)) return "";
-  if (ms <= 0) return " (resetting)";
-  const minutes = Math.round(ms / 6e4);
-  if (minutes < 60) return ` (resets in ${minutes}m)`;
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-  return days > 0 ? ` (resets in ${days}d ${hours % 24}h)` : ` (resets in ${hours}h)`;
+  if (ms <= 0) return "resetting";
+  const totalMinutes = Math.floor(ms / 6e4);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor(totalMinutes % 1440 / 60);
+  const minutes = totalMinutes % 60;
+  const parts = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (parts.length === 0) parts.push(`${Math.max(1, Math.floor(ms / 1e3))}s`);
+  return parts.join(" ");
 }
-function formatRemaining(remaining) {
-  return typeof remaining === "number" ? `${Math.round(remaining * 100)}%` : "unknown";
+function formatPercent(remaining) {
+  return typeof remaining === "number" ? `${Math.round(remaining * 100)}%`.padStart(4) : " N/A";
 }
-async function renderQuota(client, providerId) {
+function formatBucketCell(summary, gemini, window) {
+  const bucket = findRateLimitBucket(
+    summary,
+    (group) => gemini ? isGeminiRateLimitGroup(group) : !isGeminiRateLimitGroup(group),
+    window
+  );
+  if (!bucket) return "N/A";
+  const countdown = formatCountdown(bucket.resetTime);
+  const exhausted = bucket.disabled ? " [exhausted]" : "";
+  return `${formatPercent(bucket.remainingFraction)}${countdown ? ` (${countdown})` : ""}${exhausted}`;
+}
+function accountStatusLabel(result, activeIndex) {
+  if (result.status === "error") return "ERROR";
+  if (result.disabled) return "DISABLED";
+  return result.index === activeIndex ? "ACTIVE" : "OK";
+}
+function renderTable(headers, rows) {
+  const widths = headers.map(
+    (header, column) => Math.max(header.length, ...rows.map((row2) => (row2[column] ?? "").length))
+  );
+  const line = (left, middle, right) => left + widths.map((width) => "\u2500".repeat(width + 2)).join(middle) + right;
+  const row = (cells) => `\u2502 ${widths.map((width, column) => (cells[column] ?? "").padEnd(width)).join(" \u2502 ")} \u2502`;
+  return [
+    line("\u250C", "\u252C", "\u2510"),
+    row(headers),
+    line("\u251C", "\u253C", "\u2524"),
+    ...rows.map(row),
+    line("\u2514", "\u2534", "\u2518")
+  ].join("\n");
+}
+var RATE_LIMIT_HEADERS = [
+  "Account",
+  "Status",
+  "Gemini weekly",
+  "Gemini 5-hour",
+  "Claude/GPT weekly",
+  "Claude/GPT 5-hour"
+];
+function renderRateLimitDetail(result) {
+  const lines = [];
+  const summary = result.rateLimits;
+  if (summary?.error) {
+    lines.push(`  rate limits: ${summary.error}`);
+    return lines;
+  }
+  if (!summary || summary.groups.length === 0) {
+    lines.push("  rate limits: none reported");
+    return lines;
+  }
+  for (const group of summary.groups) {
+    lines.push(`  ${group.displayName}${group.description ? ` \u2014 ${group.description}` : ""}`);
+    for (const bucket of group.buckets) {
+      const countdown = formatCountdown(bucket.resetTime);
+      lines.push(
+        `    ${bucket.displayName.padEnd(18)} ${formatPercent(bucket.remainingFraction)}${countdown ? ` (resets in ${countdown})` : ""}${bucket.disabled ? " [exhausted]" : ""}`
+      );
+    }
+  }
+  return lines;
+}
+function renderModelQuotaDetail(result) {
+  const lines = [];
+  const groups = result.quota?.groups ?? {};
+  const rows = [
+    ["Claude", groups.claude],
+    ["Gemini 3 Pro", groups["gemini-pro"]],
+    ["Gemini 3 Flash", groups["gemini-flash"]]
+  ];
+  const known = rows.filter(([, data]) => data);
+  if (known.length === 0) {
+    lines.push(`  Antigravity: ${result.quota?.error ?? "no quota information"}`);
+  } else {
+    for (const [name, data] of known) {
+      const countdown = formatCountdown(data?.resetTime);
+      lines.push(
+        `    ${name.padEnd(18)} ${formatPercent(data?.remainingFraction)}${countdown ? ` (resets in ${countdown})` : ""}`
+      );
+    }
+  }
+  for (const model of result.geminiCliQuota?.models ?? []) {
+    const countdown = formatCountdown(model.resetTime);
+    lines.push(
+      `    ${`CLI ${model.modelId}`.padEnd(18)} ${formatPercent(model.remainingFraction)}${countdown ? ` (resets in ${countdown})` : ""}`
+    );
+  }
+  return lines;
+}
+async function renderQuota(client, providerId, options = {}) {
   const storage = await loadAccountPool();
   if (!storage) {
     return NO_ACCOUNTS_MESSAGE;
   }
   const results = await checkAccountsQuota(storage.accounts, client, providerId);
-  const blocks = [];
-  for (const result of results) {
+  const activeIndex = storage.activeIndex ?? 0;
+  const rows = results.map((result) => {
     const label = result.email || `Account ${result.index + 1}`;
-    const lines = [`${label}${result.disabled ? " [disabled]" : ""}`];
+    const status = accountStatusLabel(result, activeIndex);
     if (result.status === "error") {
-      lines.push(`  error: ${result.error}`);
-      blocks.push(lines.join("\n"));
-      continue;
+      const reason = result.error ?? "unknown error";
+      return [label, status, reason.length > 38 ? `${reason.slice(0, 37)}\u2026` : reason, "", "", ""];
     }
-    const groups = result.quota?.groups ?? {};
-    const rows = [
-      ["Claude", groups.claude],
-      ["Gemini 3 Pro", groups["gemini-pro"]],
-      ["Gemini 3 Flash", groups["gemini-flash"]]
+    return [
+      label,
+      status,
+      formatBucketCell(result.rateLimits, true, "weekly"),
+      formatBucketCell(result.rateLimits, true, "5h"),
+      formatBucketCell(result.rateLimits, false, "weekly"),
+      formatBucketCell(result.rateLimits, false, "5h")
     ];
-    const known = rows.filter(([, data]) => data);
-    if (known.length === 0) {
-      lines.push(`  Antigravity: ${result.quota?.error ?? "no quota information"}`);
-    } else {
-      for (const [name, data] of known) {
-        lines.push(`  ${name.padEnd(16)} ${formatRemaining(data?.remainingFraction)}${formatResetTime(data?.resetTime)}`);
+  });
+  const blocks = [
+    "Antigravity rate limits (weekly + 5-hour, per model group)",
+    renderTable(RATE_LIMIT_HEADERS, rows),
+    "Weekly follows your plan tier; the 5-hour pool smooths global demand. Whichever empties first blocks you."
+  ];
+  if (options.detailed) {
+    for (const result of results) {
+      const label = result.email || `Account ${result.index + 1}`;
+      const detail = [`${label}${result.disabled ? " [disabled]" : ""}`];
+      if (result.status === "error") {
+        detail.push(`  error: ${result.error}`);
+      } else {
+        detail.push(...renderRateLimitDetail(result));
+        detail.push("  Model pools (5-hour)");
+        detail.push(...renderModelQuotaDetail(result));
       }
+      blocks.push(detail.join("\n"));
     }
-    for (const model of result.geminiCliQuota?.models ?? []) {
-      lines.push(
-        `  ${`CLI ${model.modelId}`.padEnd(16)} ${formatRemaining(model.remainingFraction)}${formatResetTime(model.resetTime)}`
-      );
-    }
-    blocks.push(lines.join("\n"));
   }
   return blocks.join("\n\n");
 }

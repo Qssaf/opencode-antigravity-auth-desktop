@@ -1,6 +1,8 @@
 import {
+  ANTIGRAVITY_ENDPOINT_FALLBACKS,
   ANTIGRAVITY_ENDPOINT_PROD,
   getAntigravityHeaders,
+  getRandomizedHeaders,
   ANTIGRAVITY_PROVIDER_ID,
 } from "../constants";
 import { accessTokenExpired, formatRefreshParts, parseRefreshParts } from "./auth";
@@ -50,6 +52,53 @@ interface RetrieveUserQuotaResponse {
   }[];
 }
 
+/**
+ * A rate-limit bucket as `retrieveUserQuotaSummary` reports it. Google serves
+ * one per window per model group, and whichever empties first is what blocks a
+ * request — so the weekly bucket matters as much as the 5-hour one.
+ */
+export interface RateLimitBucket {
+  bucketId: string;
+  displayName: string;
+  /** Usually `weekly` or `5h`. */
+  window: string;
+  remainingFraction: number;
+  remainingAmount?: string;
+  disabled: boolean;
+  resetTime?: string;
+  description?: string;
+}
+
+export interface RateLimitGroup {
+  displayName: string;
+  description?: string;
+  buckets: RateLimitBucket[];
+}
+
+export interface RateLimitSummary {
+  description?: string;
+  groups: RateLimitGroup[];
+  error?: string;
+}
+
+interface RetrieveUserQuotaSummaryResponse {
+  description?: string;
+  groups?: {
+    displayName?: string;
+    description?: string;
+    buckets?: {
+      bucketId?: string;
+      displayName?: string;
+      window?: string;
+      remainingFraction?: number;
+      remainingAmount?: string;
+      disabled?: boolean;
+      resetTime?: string;
+      description?: string;
+    }[];
+  }[];
+}
+
 export type AccountQuotaStatus = "ok" | "disabled" | "error";
 
 export interface AccountQuotaResult {
@@ -60,6 +109,8 @@ export interface AccountQuotaResult {
   disabled?: boolean;
   quota?: QuotaSummary;
   geminiCliQuota?: GeminiCliQuotaSummary;
+  /** Weekly and 5-hour rate-limit buckets per model group. */
+  rateLimits?: RateLimitSummary;
   updatedAccount?: AccountMetadataV3;
 }
 
@@ -373,6 +424,107 @@ async function mapWithConcurrency<T, R>(
  * Fetch and aggregate quota for a single account.
  * Never throws — failures are captured in the returned result's status/error.
  */
+/**
+ * Tries each Antigravity host in turn, as the quota endpoints are not served
+ * from all of them at all times: a 403/404/5xx means "ask the next host", any
+ * other response is the answer.
+ */
+async function fetchWithEndpointFallback(
+  requestPath: string,
+  options: RequestInit,
+  timeoutMs = FETCH_TIMEOUT_MS,
+): Promise<Response> {
+  let lastError: unknown;
+  for (const endpoint of ANTIGRAVITY_ENDPOINT_FALLBACKS) {
+    try {
+      const response = await fetchWithTimeout(`${endpoint}${requestPath}`, options, timeoutMs);
+      if (response.ok) {
+        return response;
+      }
+      if (response.status === 403 || response.status === 404 || response.status >= 500) {
+        lastError = new Error(`HTTP ${response.status} at ${endpoint}`);
+        continue;
+      }
+      return response;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("All Antigravity endpoints failed");
+}
+
+/**
+ * Reads the account's rate-limit buckets (`retrieveUserQuotaSummary`).
+ *
+ * This is the call that reports the weekly pool, which the per-model
+ * `fetchAvailableModels` quota does not cover.
+ */
+export async function fetchRateLimitSummary(
+  accessToken: string,
+  projectId?: string,
+): Promise<RateLimitSummary> {
+  const body = projectId ? { project: projectId } : {};
+
+  try {
+    const response = await fetchWithEndpointFallback("/v1internal:retrieveUserQuotaSummary", {
+      method: "POST",
+      headers: {
+        // The CLI-style `antigravity/<version> <platform>` agent, not the
+        // Electron one: the backend keys what it reports off the client it
+        // thinks is calling.
+        ...getRandomizedHeaders("antigravity"),
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      return { groups: [], error: `HTTP ${response.status}${text ? `: ${text.slice(0, 100)}` : ""}` };
+    }
+
+    const data = (await response.json()) as RetrieveUserQuotaSummaryResponse;
+    return normalizeRateLimitSummary(data);
+  } catch (error) {
+    return { groups: [], error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function normalizeRateLimitSummary(payload: RetrieveUserQuotaSummaryResponse): RateLimitSummary {
+  const groups = (payload.groups ?? []).map((group): RateLimitGroup => ({
+    displayName: group.displayName || "Unknown group",
+    description: group.description || undefined,
+    buckets: (group.buckets ?? []).map((bucket): RateLimitBucket => ({
+      bucketId: bucket.bucketId || "",
+      displayName: bucket.displayName || bucket.bucketId || "",
+      window: bucket.window || "",
+      remainingFraction: normalizeRemainingFraction(bucket.remainingFraction) ?? 0,
+      remainingAmount: bucket.remainingAmount,
+      disabled: bucket.disabled === true,
+      resetTime: bucket.resetTime,
+      description: bucket.description || undefined,
+    })),
+  }));
+
+  return { description: payload.description || undefined, groups };
+}
+
+/** Google names the Gemini group in `displayName`; everything else is third-party. */
+export function isGeminiRateLimitGroup(group: RateLimitGroup): boolean {
+  return /gemini/i.test(group.displayName);
+}
+
+/** Finds one window's bucket (`weekly`, `5h`) in the first matching group. */
+export function findRateLimitBucket(
+  summary: RateLimitSummary | undefined,
+  matches: (group: RateLimitGroup) => boolean,
+  window: string,
+): RateLimitBucket | undefined {
+  const group = summary?.groups.find(matches);
+  return group?.buckets.find((bucket) => bucket.window === window);
+}
+
 async function checkSingleAccountQuota(
   account: AccountMetadataV3,
   index: number,
@@ -400,10 +552,11 @@ async function checkSingleAccountQuota(
     let geminiCliQuotaResult: GeminiCliQuotaSummary;
 
     // Fetch both Antigravity and Gemini CLI quotas in parallel
-    const [antigravityResponse, geminiCliResponse] = await Promise.all([
+    const [antigravityResponse, geminiCliResponse, rateLimitSummary] = await Promise.all([
       fetchAvailableModels(auth.access ?? "", projectContext.effectiveProjectId)
         .catch((): FetchAvailableModelsResponse => ({ models: undefined })),
       fetchGeminiCliQuota(auth.access ?? "", projectContext.effectiveProjectId),
+      fetchRateLimitSummary(auth.access ?? "", projectContext.effectiveProjectId),
     ]);
 
     // Process Antigravity quota
@@ -439,6 +592,7 @@ async function checkSingleAccountQuota(
       disabled,
       quota: quotaResult,
       geminiCliQuota: geminiCliQuotaResult,
+      rateLimits: rateLimitSummary,
       updatedAccount,
     };
   } catch (error) {

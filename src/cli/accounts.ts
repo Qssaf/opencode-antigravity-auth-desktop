@@ -36,6 +36,7 @@ import { addAccountViaBrowser, completePastedLogin, createAuthorization } from "
 import type { AccountLoginResult } from "../plugin/account-login";
 import { pressEnterToContinue } from "../plugin/cli";
 import { updateOpencodeConfig } from "../plugin/config/updater";
+import { checkAccountsQuota } from "../plugin/quota";
 import { clearAccounts } from "../plugin/storage";
 import type { AccountStorageV4 } from "../plugin/storage";
 import type { PluginClient } from "../plugin/types";
@@ -55,7 +56,7 @@ Commands:
   enable <n>             Re-enable account n (1-based)
   disable <n>            Exclude account n from rotation
   remove <n> | --all     Delete account n, or every account
-  quota                  Show remaining quota per account
+  quota [--detailed]     Show rate limits per account (--json for raw data)
   verify [<n>|--all]     Check whether accounts can reach Antigravity
   help                   Show this help
 
@@ -154,7 +155,7 @@ async function runMenu(): Promise<void> {
         break;
 
       case "check":
-        console.log(`\n${await renderQuota(client, ANTIGRAVITY_PROVIDER_ID)}\n`);
+        console.log(`\n${await renderQuota(client, ANTIGRAVITY_PROVIDER_ID, { detailed: true })}\n`);
         await pressEnterToContinue();
         break;
 
@@ -278,9 +279,20 @@ export async function runAccountsCli(argv: readonly string[]): Promise<number> {
       return result.ok ? 0 : 1;
     }
 
-    case "quota":
-      console.log(await renderQuota(client, ANTIGRAVITY_PROVIDER_ID));
+    case "quota": {
+      if (flags.has("--json")) {
+        const storage = await loadAccountPool();
+        if (!storage) {
+          console.log(await renderAccounts());
+          return 1;
+        }
+        const results = await checkAccountsQuota(storage.accounts, client, ANTIGRAVITY_PROVIDER_ID);
+        console.log(JSON.stringify({ activeIndex: storage.activeIndex ?? 0, accounts: results }, null, 2));
+        return 0;
+      }
+      console.log(await renderQuota(client, ANTIGRAVITY_PROVIDER_ID, { detailed: flags.has("--detailed") }));
       return 0;
+    }
 
     case "verify": {
       const indices = await allAccountIndices();
