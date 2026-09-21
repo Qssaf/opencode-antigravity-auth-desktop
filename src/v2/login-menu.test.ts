@@ -11,6 +11,7 @@ import {
   answeredAction,
   buildLoginForm,
   runManagementAction,
+  withKeepOpenHint,
 } from "./login-menu";
 import type { ManagementDeps } from "./login-menu";
 import type { AccountStorageV4 } from "../plugin/storage";
@@ -218,5 +219,14 @@ describe("login menu", () => {
 
   it("has no credential to hand back when the pool is empty", async () => {
     expect(await activeAccountCredential()).toBeNull();
+  });
+
+  it("points at the CLI for a menu that does not close after one action", () => {
+    // OpenCode ends the login flow once authorize resolves, so the looping
+    // menu lives in the standalone CLI.
+    const text = withKeepOpenHint("2 account(s):");
+
+    expect(text).toContain("2 account(s):");
+    expect(text).toContain("antigravity-accounts");
   });
 });

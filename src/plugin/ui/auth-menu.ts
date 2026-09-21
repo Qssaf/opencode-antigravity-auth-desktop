@@ -83,12 +83,17 @@ export async function showAuthMenu(accounts: AccountInfo[]): Promise<AuthMenuAct
 
     { label: 'Danger zone', value: { type: 'cancel' }, kind: 'heading' },
     { label: 'Delete all accounts', value: { type: 'delete-all' }, color: 'red' as const },
+
+    { label: '', value: { type: 'cancel' }, separator: true },
+
+    // Escape and Ctrl+C also leave; this is the visible way out.
+    { label: 'Exit', value: { type: 'cancel' }, hint: 'or press Esc' },
   ];
 
   while (true) {
     const result = await select(items, { 
       message: 'Google accounts (Antigravity)',
-      subtitle: 'Select an action or account',
+      subtitle: 'Select an action or account. The menu stays open until you exit.',
       clearScreen: true,
     });
 

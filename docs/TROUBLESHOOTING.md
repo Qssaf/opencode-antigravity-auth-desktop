@@ -85,6 +85,28 @@ opencode plugin list
 It prints the plugin's resolved source path, so a stale or unexpected copy shows
 up immediately.
 
+### The login menu closes after one action
+
+That is how OpenCode's login works, not a bug in the plugin: `opencode auth
+login` prompts the method's form once, hands the answers to the plugin, and
+ends the flow with a credential. There is no point at which the plugin can
+keep the prompt open for a second action, so each action needs its own
+`opencode auth login`.
+
+For a menu that stays open until you pick **Exit** (or press Esc / Ctrl+C), use
+the standalone CLI, which loops:
+
+```bash
+antigravity-accounts
+```
+
+If the binary is not on your PATH — likely when OpenCode installed the plugin
+into its own directory — install it globally once:
+
+```bash
+npm i -g github:Qssaf/opencode-antigravity-auth-desktop
+```
+
 ### Managing accounts on OpenCode 2.x / the desktop app
 
 OpenCode 2.x owns the login UI and runs plugins in a server process, so the

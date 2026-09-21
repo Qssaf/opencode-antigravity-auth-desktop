@@ -14,6 +14,8 @@
 
 ### Added
 
+- **An explicit Exit entry in the standalone menu** - `antigravity-accounts` loops until you leave it, but the only ways out were Esc and Ctrl+C, neither of them visible. The menu now ends with **Exit**. The login menu inside `opencode auth login` still runs one action per login — OpenCode prompts the form once and ends the flow with a credential — so its output now says where the looping menu is.
+
 - **Quota now reports the weekly pool, not just the 5-hour one** - The quota check calls `v1internal:retrieveUserQuotaSummary` (with endpoint fallback and the CLI-style `antigravity/<version>` user agent), which returns a rate-limit bucket per window per model group. Both surfaces render it as a table: weekly and 5-hour, for Gemini and for Claude/GPT, with a countdown to each reset and an `[exhausted]` marker on a disabled bucket. The previous view only had the per-model 5-hour pools, so a weekly limit that was actually blocking requests was invisible. `antigravity-accounts quota --detailed` lists every bucket plus the per-model pools, and `--json` prints the raw result.
 
 - **`google_search_tool` config option** - Set `"google_search_tool": false` in `antigravity.json` to stop the plugin registering its `google_search` tool. The tool answers through Google Search grounding on your Antigravity quota; with it unregistered the agent falls back to whatever other search or fetch tools the setup provides. Both OpenCode generations read the same switch.

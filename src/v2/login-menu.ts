@@ -180,6 +180,13 @@ export interface ManagementOutcome {
  * Runs a management action and describes the result. Never throws for a user
  * mistake (an action needing an account, with none picked) — it explains.
  */
+/**
+ * OpenCode prompts the login form once and ends the flow with a credential, so
+ * this menu runs one action per `auth login`. The looping menu is the CLI.
+ */
+const KEEP_OPEN_HINT =
+  "One action per login. For a menu that stays open, run `antigravity-accounts` in a terminal.";
+
 export async function runManagementAction(
   action: Exclude<LoginAction, "add">,
   target: number | "all" | null,
@@ -229,6 +236,11 @@ export async function runManagementAction(
     deps.invalidate();
   }
   return { text: `${result.message}\n\n${await list()}`, changed: result.ok };
+}
+
+/** Adds the "this menu is one-shot" note to what the login flow reports back. */
+export function withKeepOpenHint(text: string): string {
+  return `${text}\n\n${KEEP_OPEN_HINT}`;
 }
 
 /**

@@ -1828,12 +1828,15 @@ async function showAuthMenu(accounts) {
     }),
     { label: "", value: { type: "cancel" }, separator: true },
     { label: "Danger zone", value: { type: "cancel" }, kind: "heading" },
-    { label: "Delete all accounts", value: { type: "delete-all" }, color: "red" }
+    { label: "Delete all accounts", value: { type: "delete-all" }, color: "red" },
+    { label: "", value: { type: "cancel" }, separator: true },
+    // Escape and Ctrl+C also leave; this is the visible way out.
+    { label: "Exit", value: { type: "cancel" }, hint: "or press Esc" }
   ];
   while (true) {
     const result = await select(items, {
       message: "Google accounts (Antigravity)",
-      subtitle: "Select an action or account",
+      subtitle: "Select an action or account. The menu stays open until you exit.",
       clearScreen: true
     });
     if (!result) return { type: "cancel" };
@@ -16161,6 +16164,7 @@ function answeredAccount(answer) {
   const parsed = Number.parseInt(value, 10);
   return Number.isInteger(parsed) && parsed >= 1 ? parsed - 1 : null;
 }
+var KEEP_OPEN_HINT = "One action per login. For a menu that stays open, run `antigravity-accounts` in a terminal.";
 async function runManagementAction(action, target, deps) {
   const list = async () => renderAccountList(await loadAccountPool());
   if (action === "list") {
@@ -16206,6 +16210,11 @@ ${await list()}`, changed: result2.ok };
   return { text: `${result.message}
 
 ${await list()}`, changed: result.ok };
+}
+function withKeepOpenHint(text) {
+  return `${text}
+
+${KEEP_OPEN_HINT}`;
 }
 async function activeAccountCredential() {
   const storage = await loadAccountPool();
@@ -16282,7 +16291,7 @@ function createOAuthMethod(deps) {
         client,
         integrationID
       });
-      return completeManagement(outcome.text);
+      return completeManagement(withKeepOpenHint(outcome.text));
     }
     const projectId = typeof answer.projectId === "string" ? answer.projectId.trim() : "";
     const manual = isTruthyAnswer(answer.noBrowser) || isHeadlessEnvironment() || helpers.shouldSkipLocalServer();

@@ -27,6 +27,7 @@ import {
   answeredAction,
   buildLoginForm,
   runManagementAction,
+  withKeepOpenHint,
 } from "./login-menu";
 import type { ManagementDeps } from "./login-menu";
 import type { FormAnswer, FormOption, OAuthAuthorization, OAuthCredential, OAuthMethodRegistration } from "./types";
@@ -137,7 +138,7 @@ export function createOAuthMethod(deps: OAuthMethodDeps): OAuthMethodRegistratio
         client,
         integrationID,
       });
-      return completeManagement(outcome.text);
+      return completeManagement(withKeepOpenHint(outcome.text));
     }
 
     const projectId = typeof answer.projectId === "string" ? answer.projectId.trim() : "";
