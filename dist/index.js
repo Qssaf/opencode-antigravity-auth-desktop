@@ -15858,31 +15858,62 @@ function renderAccountList(storage) {
   });
   return [`${storage.accounts.length} account(s):`, ...lines].join("\n");
 }
-async function renderAccounts() {
-  return renderAccountList(await loadAccountPool());
-}
-async function setAccountEnabled(index, enabled) {
+async function setAccountsEnabled(indices, enabled) {
   const storage = await loadAccountPool();
-  const account = storage?.accounts[index];
-  if (!storage || !account) {
-    return { ok: false, message: `No account ${index + 1}. ${await renderAccounts()}` };
+  if (!storage) {
+    return { ok: false, applied: [], message: NO_ACCOUNTS_MESSAGE };
   }
-  account.enabled = enabled;
-  await saveAccounts(storage);
+  const applied = [];
+  const labels = [];
+  const missing = [];
+  for (const index of indices) {
+    const account = storage.accounts[index];
+    if (!account) {
+      missing.push(index + 1);
+      continue;
+    }
+    account.enabled = enabled;
+    applied.push(index);
+    labels.push(accountLabel(account, index));
+  }
+  if (applied.length > 0) {
+    await saveAccounts(storage);
+  }
+  const done = labels.length > 0 ? `${labels.join(", ")} ${enabled ? "enabled" : "disabled"}.` : "";
+  const skipped = missing.length > 0 ? `No account ${missing.join(", ")}.` : "";
   return {
-    ok: true,
-    index,
-    message: `${accountLabel(account, index)} ${enabled ? "enabled" : "disabled"}.`
+    ok: applied.length > 0,
+    applied,
+    message: [done, skipped].filter(Boolean).join(" ") || NO_ACCOUNTS_MESSAGE
   };
 }
-async function deleteAccount(index) {
+async function deleteAccounts(indices) {
   const storage = await loadAccountPool();
-  const account = storage?.accounts[index];
-  if (!storage || !account) {
-    return { ok: false, message: `No account ${index + 1}. ${await renderAccounts()}` };
+  if (!storage) {
+    return { ok: false, applied: [], message: NO_ACCOUNTS_MESSAGE };
   }
-  await removeAccountFromStorage(account.refreshToken);
-  return { ok: true, index, message: `Deleted ${accountLabel(account, index)}.` };
+  const targets = [];
+  const missing = [];
+  for (const index of indices) {
+    const account = storage.accounts[index];
+    if (!account) {
+      missing.push(index + 1);
+      continue;
+    }
+    targets.push({ index, label: accountLabel(account, index), refreshToken: account.refreshToken });
+  }
+  for (const target of targets) {
+    await removeAccountFromStorage(target.refreshToken);
+  }
+  const done = targets.length > 0 ? `Deleted ${targets.map((t) => t.label).join(", ")}.` : "";
+  const skipped = missing.length > 0 ? `No account ${missing.join(", ")}.` : "";
+  return {
+    ok: targets.length > 0,
+    // Highest first: the caller mirrors each removal into the live pool, which
+    // renumbers as it goes.
+    applied: targets.map((t) => t.index).sort((a, b) => b - a),
+    message: [done, skipped].filter(Boolean).join(" ") || NO_ACCOUNTS_MESSAGE
+  };
 }
 function formatCountdown(resetTime) {
   if (!resetTime) return "";
@@ -16123,8 +16154,10 @@ function buildLoginForm(accounts) {
     });
     fields.push({
       key: "account",
-      type: "string",
-      title: "Which account?",
+      // Multiselect: OpenCode ends the login flow after one action, so picking
+      // several accounts at once is the difference between one login and four.
+      type: "multiselect",
+      title: "Which account(s)?",
       options: accounts,
       // `when` is an AND of conditions, so "needs an account" is spelled out as
       // "not one of the actions that does not".
@@ -16157,12 +16190,13 @@ function answeredAction(answer) {
   const value = answer.action;
   return isLoginAction(value) ? value : "add";
 }
-function answeredAccount(answer) {
+function answeredAccounts(answer) {
   const value = answer.account;
-  if (typeof value !== "string" || value.length === 0) return null;
-  if (value === ALL_ACCOUNTS_VALUE) return "all";
-  const parsed = Number.parseInt(value, 10);
-  return Number.isInteger(parsed) && parsed >= 1 ? parsed - 1 : null;
+  const picked = typeof value === "string" ? [value] : Array.isArray(value) ? value : [];
+  if (picked.length === 0) return null;
+  if (picked.includes(ALL_ACCOUNTS_VALUE)) return "all";
+  const indices = picked.map((entry) => Number.parseInt(String(entry), 10)).filter((parsed) => Number.isInteger(parsed) && parsed >= 1).map((parsed) => parsed - 1);
+  return indices.length > 0 ? indices : null;
 }
 var KEEP_OPEN_HINT = "One action per login. For a menu that stays open, run `antigravity-accounts` in a terminal.";
 async function runManagementAction(action, target, deps) {
@@ -16174,39 +16208,43 @@ async function runManagementAction(action, target, deps) {
     return { text: await renderQuota(deps.client, deps.integrationID), changed: false };
   }
   if (action === "verify") {
-    const indices = target === "all" || target === null ? await allAccountIndices() : [target];
-    if (indices.length === 0) {
+    const indices2 = target === "all" || target === null ? await allAccountIndices() : target;
+    if (indices2.length === 0) {
       return { text: await list(), changed: false };
     }
     return {
-      text: await renderVerification(indices, deps.verify, deps.client, deps.integrationID),
+      text: await renderVerification(indices2, deps.verify, deps.client, deps.integrationID),
       changed: false
     };
   }
-  if (target === null || target === "all") {
+  if (target === null) {
     return {
-      text: `Pick a single account for "${action}".
+      text: `Pick at least one account for "${action}".
 
 ${await list()}`,
       changed: false
     };
   }
+  const indices = target === "all" ? await allAccountIndices() : target;
+  if (indices.length === 0) {
+    return { text: await list(), changed: false };
+  }
   if (action === "remove") {
-    const result2 = await deleteAccount(target);
-    if (result2.ok && result2.index !== void 0) {
-      deps.live.remove(result2.index);
-      deps.invalidate();
+    const result2 = await deleteAccounts(indices);
+    for (const index of result2.applied) {
+      deps.live.remove(index);
     }
+    if (result2.ok) deps.invalidate();
     return { text: `${result2.message}
 
 ${await list()}`, changed: result2.ok };
   }
   const enabled = action === "enable";
-  const result = await setAccountEnabled(target, enabled);
-  if (result.ok && result.index !== void 0) {
-    deps.live.setEnabled(result.index, enabled);
-    deps.invalidate();
+  const result = await setAccountsEnabled(indices, enabled);
+  for (const index of result.applied) {
+    deps.live.setEnabled(index, enabled);
   }
+  if (result.ok) deps.invalidate();
   return { text: `${result.message}
 
 ${await list()}`, changed: result.ok };
@@ -16286,7 +16324,7 @@ function createOAuthMethod(deps) {
           "Account management is not available on this OpenCode build. Use the `antigravity-accounts` CLI."
         );
       }
-      const outcome = await runManagementAction(action, answeredAccount(answer), {
+      const outcome = await runManagementAction(action, answeredAccounts(answer), {
         ...management,
         client,
         integrationID

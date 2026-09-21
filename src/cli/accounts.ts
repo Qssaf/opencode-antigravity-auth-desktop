@@ -24,6 +24,7 @@ import {
   accountState,
   allAccountIndices,
   deleteAccount,
+  deleteAccounts,
   loadAccountPool,
   parseAccountNumber,
   renderAccountList,
@@ -31,6 +32,7 @@ import {
   renderQuota,
   renderVerification,
   setAccountEnabled,
+  setAccountsEnabled,
 } from "../plugin/account-admin";
 import { addAccountViaBrowser, completePastedLogin, createAuthorization } from "../plugin/account-login";
 import type { AccountLoginResult } from "../plugin/account-login";
@@ -53,9 +55,9 @@ Commands:
   (none)                 Interactive menu (falls back to \`list\` without a TTY)
   list                   Show stored accounts
   add [--no-browser]     Sign in and add another Google account
-  enable <n>             Re-enable account n (1-based)
-  disable <n>            Exclude account n from rotation
-  remove <n> | --all     Delete account n, or every account
+  enable <n...>          Re-enable accounts n (1-based, several allowed)
+  disable <n...>         Exclude accounts n from rotation
+  remove <n...> | --all  Delete accounts n, or every account
   quota [--detailed]     Show rate limits per account (--json for raw data)
   verify [<n>|--all]     Check whether accounts can reach Antigravity
   help                   Show this help
@@ -253,12 +255,12 @@ export async function runAccountsCli(argv: readonly string[]): Promise<number> {
 
     case "enable":
     case "disable": {
-      const index = parseAccountNumber(positional[0]);
-      if (index === null) {
-        console.log(`Usage: antigravity-accounts ${command} <account number>`);
+      const indices = positional.map(parseAccountNumber).filter((index): index is number => index !== null);
+      if (indices.length === 0) {
+        console.log(`Usage: antigravity-accounts ${command} <account number> [<account number>...]`);
         return 2;
       }
-      const result = await setAccountEnabled(index, command === "enable");
+      const result = await setAccountsEnabled(indices, command === "enable");
       console.log(result.message);
       return result.ok ? 0 : 1;
     }
@@ -269,12 +271,12 @@ export async function runAccountsCli(argv: readonly string[]): Promise<number> {
         console.log("All accounts deleted.");
         return 0;
       }
-      const index = parseAccountNumber(positional[0]);
-      if (index === null) {
-        console.log("Usage: antigravity-accounts remove <account number> | --all");
+      const indices = positional.map(parseAccountNumber).filter((index): index is number => index !== null);
+      if (indices.length === 0) {
+        console.log("Usage: antigravity-accounts remove <account number> [<account number>...] | --all");
         return 2;
       }
-      const result = await deleteAccount(index);
+      const result = await deleteAccounts(indices);
       console.log(result.message);
       return result.ok ? 0 : 1;
     }

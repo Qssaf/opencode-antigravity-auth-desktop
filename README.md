@@ -399,11 +399,14 @@ prompted by OpenCode:
     Check quotas              Remaining Antigravity and Gemini CLI quota
     Verify access             Check accounts against the Antigravity backend
 
-? Which account?
+? Which account(s)?          (space to tick, enter to run)
   > 1. you@gmail.com          current
     2. other@gmail.com        disabled
     All accounts
 ```
+
+Tick several accounts to disable, remove or verify them in one go — OpenCode
+ends the login once the action runs, so a batch saves you a login per account.
 
 Only **Add** continues into a Google sign-in; the others run immediately and show
 the result. The menu appears once you have an account stored — a first login (and

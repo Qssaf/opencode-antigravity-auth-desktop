@@ -15700,6 +15700,63 @@ async function setAccountEnabled(index, enabled) {
     message: `${accountLabel(account, index)} ${enabled ? "enabled" : "disabled"}.`
   };
 }
+async function setAccountsEnabled(indices, enabled) {
+  const storage = await loadAccountPool();
+  if (!storage) {
+    return { ok: false, applied: [], message: NO_ACCOUNTS_MESSAGE };
+  }
+  const applied = [];
+  const labels = [];
+  const missing = [];
+  for (const index of indices) {
+    const account = storage.accounts[index];
+    if (!account) {
+      missing.push(index + 1);
+      continue;
+    }
+    account.enabled = enabled;
+    applied.push(index);
+    labels.push(accountLabel(account, index));
+  }
+  if (applied.length > 0) {
+    await saveAccounts(storage);
+  }
+  const done = labels.length > 0 ? `${labels.join(", ")} ${enabled ? "enabled" : "disabled"}.` : "";
+  const skipped = missing.length > 0 ? `No account ${missing.join(", ")}.` : "";
+  return {
+    ok: applied.length > 0,
+    applied,
+    message: [done, skipped].filter(Boolean).join(" ") || NO_ACCOUNTS_MESSAGE
+  };
+}
+async function deleteAccounts(indices) {
+  const storage = await loadAccountPool();
+  if (!storage) {
+    return { ok: false, applied: [], message: NO_ACCOUNTS_MESSAGE };
+  }
+  const targets = [];
+  const missing = [];
+  for (const index of indices) {
+    const account = storage.accounts[index];
+    if (!account) {
+      missing.push(index + 1);
+      continue;
+    }
+    targets.push({ index, label: accountLabel(account, index), refreshToken: account.refreshToken });
+  }
+  for (const target of targets) {
+    await removeAccountFromStorage(target.refreshToken);
+  }
+  const done = targets.length > 0 ? `Deleted ${targets.map((t) => t.label).join(", ")}.` : "";
+  const skipped = missing.length > 0 ? `No account ${missing.join(", ")}.` : "";
+  return {
+    ok: targets.length > 0,
+    // Highest first: the caller mirrors each removal into the live pool, which
+    // renumbers as it goes.
+    applied: targets.map((t) => t.index).sort((a, b) => b - a),
+    message: [done, skipped].filter(Boolean).join(" ") || NO_ACCOUNTS_MESSAGE
+  };
+}
 async function deleteAccount(index) {
   const storage = await loadAccountPool();
   const account = storage?.accounts[index];
@@ -16003,9 +16060,9 @@ Commands:
   (none)                 Interactive menu (falls back to \`list\` without a TTY)
   list                   Show stored accounts
   add [--no-browser]     Sign in and add another Google account
-  enable <n>             Re-enable account n (1-based)
-  disable <n>            Exclude account n from rotation
-  remove <n> | --all     Delete account n, or every account
+  enable <n...>          Re-enable accounts n (1-based, several allowed)
+  disable <n...>         Exclude accounts n from rotation
+  remove <n...> | --all  Delete accounts n, or every account
   quota [--detailed]     Show rate limits per account (--json for raw data)
   verify [<n>|--all]     Check whether accounts can reach Antigravity
   help                   Show this help
@@ -16186,12 +16243,12 @@ async function runAccountsCli(argv) {
       return await addAccount({ noBrowser: flags.has("--no-browser") }) ? 0 : 1;
     case "enable":
     case "disable": {
-      const index = parseAccountNumber(positional[0]);
-      if (index === null) {
-        console.log(`Usage: antigravity-accounts ${command} <account number>`);
+      const indices = positional.map(parseAccountNumber).filter((index) => index !== null);
+      if (indices.length === 0) {
+        console.log(`Usage: antigravity-accounts ${command} <account number> [<account number>...]`);
         return 2;
       }
-      const result = await setAccountEnabled(index, command === "enable");
+      const result = await setAccountsEnabled(indices, command === "enable");
       console.log(result.message);
       return result.ok ? 0 : 1;
     }
@@ -16201,12 +16258,12 @@ async function runAccountsCli(argv) {
         console.log("All accounts deleted.");
         return 0;
       }
-      const index = parseAccountNumber(positional[0]);
-      if (index === null) {
-        console.log("Usage: antigravity-accounts remove <account number> | --all");
+      const indices = positional.map(parseAccountNumber).filter((index) => index !== null);
+      if (indices.length === 0) {
+        console.log("Usage: antigravity-accounts remove <account number> [<account number>...] | --all");
         return 2;
       }
-      const result = await deleteAccount(index);
+      const result = await deleteAccounts(indices);
       console.log(result.message);
       return result.ok ? 0 : 1;
     }

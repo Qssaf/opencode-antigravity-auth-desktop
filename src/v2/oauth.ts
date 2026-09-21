@@ -23,7 +23,7 @@ import type { PluginClient } from "../plugin/types";
 import { credentialLabel, OAUTH_METHOD_ID, tokenResultToCredential } from "./credentials";
 import {
   activeAccountCredential,
-  answeredAccount,
+  answeredAccounts,
   answeredAction,
   buildLoginForm,
   runManagementAction,
@@ -133,7 +133,7 @@ export function createOAuthMethod(deps: OAuthMethodDeps): OAuthMethodRegistratio
           "Account management is not available on this OpenCode build. Use the `antigravity-accounts` CLI.",
         );
       }
-      const outcome = await runManagementAction(action, answeredAccount(answer), {
+      const outcome = await runManagementAction(action, answeredAccounts(answer), {
         ...management,
         client,
         integrationID,

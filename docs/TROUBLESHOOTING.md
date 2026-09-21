@@ -93,8 +93,12 @@ ends the flow with a credential. There is no point at which the plugin can
 keep the prompt open for a second action, so each action needs its own
 `opencode auth login`.
 
+The account picker is a multiselect, so one login can disable, remove or verify
+several accounts at once — tick them with space, then press enter.
+
 For a menu that stays open until you pick **Exit** (or press Esc / Ctrl+C), use
-the standalone CLI, which loops:
+the standalone CLI, which loops (terminal only — the desktop app has no plugin
+UI surface a menu could live in):
 
 ```bash
 antigravity-accounts

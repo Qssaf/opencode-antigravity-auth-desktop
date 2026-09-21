@@ -104,6 +104,85 @@ export async function setAccountEnabled(index: number, enabled: boolean): Promis
   };
 }
 
+/**
+ * Enables or disables several accounts in one read/write, so a batch cannot be
+ * half-applied by concurrent saves.
+ */
+export async function setAccountsEnabled(
+  indices: readonly number[],
+  enabled: boolean,
+): Promise<AccountAdminResult & { applied: number[] }> {
+  const storage = await loadAccountPool();
+  if (!storage) {
+    return { ok: false, applied: [], message: NO_ACCOUNTS_MESSAGE };
+  }
+
+  const applied: number[] = [];
+  const labels: string[] = [];
+  const missing: number[] = [];
+
+  for (const index of indices) {
+    const account = storage.accounts[index];
+    if (!account) {
+      missing.push(index + 1);
+      continue;
+    }
+    account.enabled = enabled;
+    applied.push(index);
+    labels.push(accountLabel(account, index));
+  }
+
+  if (applied.length > 0) {
+    await saveAccounts(storage);
+  }
+
+  const done = labels.length > 0 ? `${labels.join(", ")} ${enabled ? "enabled" : "disabled"}.` : "";
+  const skipped = missing.length > 0 ? `No account ${missing.join(", ")}.` : "";
+  return {
+    ok: applied.length > 0,
+    applied,
+    message: [done, skipped].filter(Boolean).join(" ") || NO_ACCOUNTS_MESSAGE,
+  };
+}
+
+/**
+ * Deletes several accounts. They are resolved to refresh tokens before the
+ * first delete, because removing one renumbers the accounts after it.
+ */
+export async function deleteAccounts(
+  indices: readonly number[],
+): Promise<AccountAdminResult & { applied: number[] }> {
+  const storage = await loadAccountPool();
+  if (!storage) {
+    return { ok: false, applied: [], message: NO_ACCOUNTS_MESSAGE };
+  }
+
+  const targets: Array<{ index: number; label: string; refreshToken: string }> = [];
+  const missing: number[] = [];
+  for (const index of indices) {
+    const account = storage.accounts[index];
+    if (!account) {
+      missing.push(index + 1);
+      continue;
+    }
+    targets.push({ index, label: accountLabel(account, index), refreshToken: account.refreshToken });
+  }
+
+  for (const target of targets) {
+    await removeAccountFromStorage(target.refreshToken);
+  }
+
+  const done = targets.length > 0 ? `Deleted ${targets.map((t) => t.label).join(", ")}.` : "";
+  const skipped = missing.length > 0 ? `No account ${missing.join(", ")}.` : "";
+  return {
+    ok: targets.length > 0,
+    // Highest first: the caller mirrors each removal into the live pool, which
+    // renumbers as it goes.
+    applied: targets.map((t) => t.index).sort((a, b) => b - a),
+    message: [done, skipped].filter(Boolean).join(" ") || NO_ACCOUNTS_MESSAGE,
+  };
+}
+
 export async function deleteAccount(index: number): Promise<AccountAdminResult> {
   const storage = await loadAccountPool();
   const account = storage?.accounts[index];

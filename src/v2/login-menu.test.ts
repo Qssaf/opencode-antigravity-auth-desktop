@@ -7,7 +7,7 @@ import {
   ALL_ACCOUNTS_VALUE,
   accountOptions,
   activeAccountCredential,
-  answeredAccount,
+  answeredAccounts,
   answeredAction,
   buildLoginForm,
   runManagementAction,
@@ -15,7 +15,7 @@ import {
 } from "./login-menu";
 import type { ManagementDeps } from "./login-menu";
 import type { AccountStorageV4 } from "../plugin/storage";
-import type { StringFormField } from "./types";
+import type { MultiselectFormField, StringFormField } from "./types";
 
 vi.mock("@opencode-ai/plugin", () => ({
   tool: Object.assign((definition: unknown) => definition, {
@@ -122,7 +122,7 @@ describe("login menu", () => {
 
     const form = buildLoginForm(await accountOptions());
     const action = form.find((field) => field.key === "action") as StringFormField | undefined;
-    const account = form.find((field) => field.key === "account") as StringFormField | undefined;
+    const account = form.find((field) => field.key === "account") as MultiselectFormField | undefined;
 
     expect(action?.options?.map((option) => option.value)).toEqual([
       "add",
@@ -134,6 +134,7 @@ describe("login menu", () => {
       "verify",
     ]);
     expect(action?.default).toBe("add");
+    expect(account?.type).toBe("multiselect");
     // The account picker is hidden for the actions that do not need one.
     expect(account?.when).toEqual([
       { key: "action", op: "neq", value: "add" },
@@ -149,17 +150,20 @@ describe("login menu", () => {
     expect(answeredAction({ action: "disable" })).toBe("disable");
   });
 
-  it("reads the picked account as a zero-based index", () => {
-    expect(answeredAccount({ account: "2" })).toBe(1);
-    expect(answeredAccount({ account: ALL_ACCOUNTS_VALUE })).toBe("all");
-    expect(answeredAccount({})).toBeNull();
-    expect(answeredAccount({ account: "0" })).toBeNull();
+  it("reads the picked accounts as zero-based indices", () => {
+    // A multiselect answers with an array, so one login can act on several.
+    expect(answeredAccounts({ account: ["2", "3"] })).toEqual([1, 2]);
+    // A lone string still works, for `--answer account=2`.
+    expect(answeredAccounts({ account: "2" })).toEqual([1]);
+    expect(answeredAccounts({ account: [ALL_ACCOUNTS_VALUE] })).toBe("all");
+    expect(answeredAccounts({})).toBeNull();
+    expect(answeredAccounts({ account: ["0"] })).toBeNull();
   });
 
   it("disables the picked account and syncs the running pool", async () => {
     await writeStorage(twoAccounts());
 
-    const outcome = await runManagementAction("disable", 1, management());
+    const outcome = await runManagementAction("disable", [1], management());
 
     expect((await readStorage()).accounts[1]?.enabled).toBe(false);
     expect(setEnabledCalls).toEqual([[1, false]]);
@@ -171,7 +175,7 @@ describe("login menu", () => {
   it("removes the picked account", async () => {
     await writeStorage(twoAccounts());
 
-    const outcome = await runManagementAction("remove", 0, management());
+    const outcome = await runManagementAction("remove", [0], management());
 
     expect((await readStorage()).accounts.map((account) => account.email)).toEqual(["second@example.com"]);
     expect(removeCalls).toEqual([0]);
@@ -181,10 +185,10 @@ describe("login menu", () => {
   it("explains when an action needs one account and got none", async () => {
     await writeStorage(twoAccounts());
 
-    const outcome = await runManagementAction("disable", "all", management());
+    const outcome = await runManagementAction("disable", null, management());
 
     expect(outcome.changed).toBe(false);
-    expect(outcome.text).toContain('Pick a single account for "disable"');
+    expect(outcome.text).toContain('Pick at least one account for "disable"');
     expect(setEnabledCalls).toEqual([]);
   });
 
@@ -205,6 +209,38 @@ describe("login menu", () => {
 
     expect(outcome.text).toContain("first@example.com: ok");
     expect(outcome.text).toContain("second@example.com: ok");
+  });
+
+  it("disables several accounts in one pass", async () => {
+    await writeStorage(twoAccounts());
+
+    const outcome = await runManagementAction("disable", [0, 1], management());
+
+    const stored = await readStorage();
+    expect(stored.accounts.every((account) => account.enabled === false)).toBe(true);
+    expect(setEnabledCalls).toEqual([[0, false], [1, false]]);
+    // One reload for the batch, not one per account.
+    expect(invalidated).toBe(1);
+    expect(outcome.text).toContain("first@example.com, second@example.com disabled");
+  });
+
+  it("removes several accounts highest index first, so renumbering cannot misfire", async () => {
+    await writeStorage(twoAccounts());
+
+    const outcome = await runManagementAction("remove", [0, 1], management());
+
+    expect((await readStorage()).accounts).toHaveLength(0);
+    expect(removeCalls).toEqual([1, 0]);
+    expect(outcome.text).toContain("Deleted first@example.com, second@example.com");
+  });
+
+  it("names an account number that does not exist and applies the rest", async () => {
+    await writeStorage(twoAccounts());
+
+    const outcome = await runManagementAction("disable", [1, 7], management());
+
+    expect((await readStorage()).accounts[1]?.enabled).toBe(false);
+    expect(outcome.text).toContain("No account 8");
   });
 
   it("hands back the active account so the login flow can finish", async () => {

@@ -93,7 +93,15 @@ export interface StringFormField extends FormFieldBase {
   readonly custom?: boolean;
 }
 
-export type FormField = BooleanFormField | StringFormField;
+export interface MultiselectFormField extends FormFieldBase {
+  readonly type: "multiselect";
+  readonly options: readonly FormOption[];
+  readonly minItems?: number;
+  readonly maxItems?: number;
+  readonly default?: readonly string[];
+}
+
+export type FormField = BooleanFormField | StringFormField | MultiselectFormField;
 
 export interface OAuthMethod {
   readonly id: string;
