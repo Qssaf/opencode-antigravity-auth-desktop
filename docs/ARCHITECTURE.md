@@ -207,7 +207,6 @@ Contains OAuth refresh tokens - treat as sensitive.
 |----------|---------|
 | `OPENCODE_ANTIGRAVITY_DEBUG` | `1` or `2` for file debug logging |
 | `OPENCODE_ANTIGRAVITY_DEBUG_TUI` | `1` or `true` for TUI log panel debug output |
-| `OPENCODE_ANTIGRAVITY_QUIET` | Suppress toast notifications |
 
 `debug` and `debug_tui` are independent sinks: `debug` controls file logs, while `debug_tui` controls TUI logs.
 

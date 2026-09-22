@@ -8,7 +8,7 @@ Code style, module layout and TypeScript conventions live in @AGENTS.MD — read
 
 ```bash
 npm install
-npm test                                    # vitest run (~1330 tests, ~7s)
+npm test                                    # vitest run (~1340 tests, ~7s)
 npx vitest run src/plugin/auth.test.ts      # one file
 npx vitest run -t "test name"               # one test by name
 npm run typecheck                           # tsc --noEmit
@@ -55,6 +55,8 @@ Requests are intercepted, not proxied by config: the pipeline rewrites calls to 
 
 Both exist because OpenCode may run several processes against one file. A change made outside the request path (the login menu, the CLI) must therefore: mirror into the live pool via `liveAccountPool` (exported from `plugin.ts`), *then* invalidate the cached auth loader (`V2Runtime.invalidateAuth`) so the next request re-reads disk. Skipping the mirror lets a later flush of the live manager write the old value back.
 
+`liveAccountPool` identifies accounts by **refresh token, never by index**. The live pool can number accounts differently from the file (another process added or removed one since it loaded), so an index can land on the wrong account, and that account is then saved back to disk. The batch operations in `account-admin.ts` return the refresh tokens they changed for this reason.
+
 Gemini has **two quota pools per account** (Antigravity headers vs Gemini CLI headers) and the pipeline falls back between them before rotating accounts. The backend's answers depend on the `User-Agent` it sees — `getRandomizedHeaders("antigravity")` vs `getAntigravityHeaders()` are not interchangeable; the quota endpoints need the former.
 
 ### Account management surfaces
@@ -82,6 +84,7 @@ Do not spend time rediscovering these:
 
 - Tests that import the runtime need `vi.mock("@opencode-ai/plugin", ...)` — its published `tool` entry does not resolve under vitest. Copy the stub from `src/plugin.test.ts`.
 - Isolate anything touching the pool with a temp `OPENCODE_CONFIG_DIR` in `beforeEach` (see `src/plugin/account-admin.test.ts`).
+- Config comes from files only (`<config dir>/antigravity.json`, then `<project>/.opencode/antigravity.json`). The only environment switches read are `OPENCODE_ANTIGRAVITY_DEBUG` and `OPENCODE_ANTIGRAVITY_DEBUG_TUI`, so a test that needs a config value writes a project config file into a temp directory and passes it as `directory`.
 - `npm run test:e2e:models` / `test:e2e:regression` and the shell scripts in `script/` hit the live backend with real accounts; they are not part of `npm test`.
 
 ## This is a fork

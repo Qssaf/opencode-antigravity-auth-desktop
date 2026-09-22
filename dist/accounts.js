@@ -3085,7 +3085,6 @@ var AntigravityConfigSchema = z2.object({
   /** 
    * Suppress most toast notifications (rate limit, account switching, etc.)
    * Recovery toasts are always shown regardless of this setting.
-   * Env override: OPENCODE_ANTIGRAVITY_QUIET=1
    * @default false
    */
   quiet_mode: z2.boolean().default(false),
@@ -3097,7 +3096,6 @@ var AntigravityConfigSchema = z2.object({
    * - `all`: All sessions show toasts including subagents and background tasks.
    * 
    * Debug logging captures all toasts regardless of this setting.
-   * Env override: OPENCODE_ANTIGRAVITY_TOAST_SCOPE=all
    * @default "root_only"
    */
   toast_scope: ToastScopeSchema.default("root_only"),
@@ -3116,7 +3114,6 @@ var AntigravityConfigSchema = z2.object({
   debug_tui: z2.boolean().default(false),
   /**
    * Custom directory for debug logs.
-   * Env override: OPENCODE_ANTIGRAVITY_LOG_DIR=/path/to/logs
    * @default OS-specific config dir + "/antigravity-logs"
    */
   log_dir: z2.string().optional(),
@@ -3128,8 +3125,6 @@ var AntigravityConfigSchema = z2.object({
    * 
    * When false (default): Thinking blocks are stripped for reliability.
    * When true: Full context preserved, but may encounter signature errors.
-   * 
-   * Env override: OPENCODE_ANTIGRAVITY_KEEP_THINKING=1
    * @default false
    */
   keep_thinking: z2.boolean().default(false),
@@ -3312,7 +3307,6 @@ var AntigravityConfigSchema = z2.object({
   }),
   /**
    * Strategy for selecting accounts when making requests.
-   * Env override: OPENCODE_ANTIGRAVITY_ACCOUNT_SELECTION_STRATEGY
    * @default "hybrid"
    */
   account_selection_strategy: AccountSelectionStrategySchema.default("hybrid"),
@@ -3324,8 +3318,6 @@ var AntigravityConfigSchema = z2.object({
    * 
    * When disabled (default), accounts start from the same index, which preserves
    * Anthropic's prompt cache across restarts (recommended for single-session use).
-   * 
-   * Env override: OPENCODE_ANTIGRAVITY_PID_OFFSET_ENABLED=1
    * @default false
    */
   pid_offset_enabled: z2.boolean().default(false),
@@ -3342,8 +3334,6 @@ var AntigravityConfigSchema = z2.object({
    * - `cache_first`: Wait for same account to recover (preserves prompt cache). Default.
    * - `balance`: Switch account immediately on rate limit. Maximum availability.
    * - `performance_first`: Round-robin distribution for maximum throughput.
-   * 
-   * Env override: OPENCODE_ANTIGRAVITY_SCHEDULING_MODE
    * @default "cache_first"
    */
   scheduling_mode: SchedulingModeSchema.default("cache_first"),
