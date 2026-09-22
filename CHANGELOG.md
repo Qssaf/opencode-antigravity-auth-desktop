@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- **Login menu changes could land on the wrong account** - After the menu enabled, disabled or removed an account in the file, it mirrored the change into the running pool by account number. The running pool can number accounts differently from the file (another process added or removed one since it loaded), so the change could hit a different account and a later save would write that back to disk. The mirror now matches by refresh token. Picking the same account twice also applies once instead of removing the account that moved into its place.
+
+- **"All accounts" could wipe the pool from one menu pick** - The option was described as "verify only" but applied to remove as well, deleting every stored refresh token with no confirmation. Remove now refuses it and points to `antigravity-accounts remove --all`; enable, disable and verify still accept it.
+
+- **A new account was missing from the login menu until OpenCode restarted** - The menu's account list is read when the login method is registered, and adding an account did not refresh it. It is now refreshed after every successful sign-in.
+
+- **A stalled token refresh could hang every request on that account** - The refresh call to Google had no timeout, and all requests for an account wait on its one shared refresh. It now gives up after 30 seconds and the account is retried later (a timeout does not count toward revocation). Quota checks also keep their 10-second timeout armed while reading the response body, so a response that stalls mid-body can no longer hang the quota view.
+
 - **Adding a second Google account did nothing** - The authorization URL asked Google for `prompt=consent` only, so the browser silently reused whichever account was already signed in. A second `opencode auth login` therefore came back with the account already in the pool, which deduplicates by email — the pool still held one account and the login looked like a no-op. The URL now asks for `prompt=select_account consent`, so Google shows its account chooser every time.
 
 - **Accounts disappearing mid-session, followed by "API key not valid"** - A single `invalid_grant` from Google's token endpoint was treated as proof of revocation and the account was deleted (and tombstoned) on the spot. Google also returns `invalid_grant` transiently — most easily when the same refresh token is refreshed from several places at once, which is what long agent runs do. Two changes: concurrent refreshes of one token are now coalesced into a single request shared by every caller, and an account is dropped only when a later, serialized refresh also returns `invalid_grant` (the first one puts it on a short cooldown instead).
@@ -11,6 +19,10 @@
 - **"API key not valid. Please pass a valid API key." while signed in with OAuth** - When the account pool ended up empty, model requests were forwarded to the public Gemini API even though the provider is registered with an empty api key, so Google answered with a message about an API key the user never configured. Such requests now return an explicit "No usable Google credential for this request" message naming what happened and how to fix it. Non-model requests (listings, token counts) still pass through.
 
 - **The account pool is no longer deleted when it cannot be read** - The auth loader called `clearAccounts()` whenever it could not resolve an OAuth credential, which also fires when the accounts file is briefly unreadable. Losing the stored refresh tokens over a failed read is unrecoverable, so the loader now leaves the file alone and logs instead.
+
+### Performance
+
+- **Streaming no longer slows down on large events** - The SSE transformer re-split its whole buffer on every network chunk, so a single large event — an inline image from an image model arrives as one multi-megabyte line — cost quadratic time (an 8 MB event took 1.7 s to pass through; now about 0.1 s). It also enqueued each line separately; it now emits one piece per network chunk, halving the writes the loopback proxy and the SDK parser handle per event. Ordinary text streaming was already cheap (about 8 µs per event) and is unchanged.
 
 ### Added
 

@@ -3862,14 +3862,20 @@ function createStreamingTransformer(signatureStore, callbacks, options = {}) {
   let hasSeenUsageMetadata = false;
   return new TransformStream({
     transform(chunk, controller) {
-      buffer += decoder.decode(chunk, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
-      for (const line of lines) {
+      const text = decoder.decode(chunk, { stream: true });
+      const lastNewline = text.lastIndexOf("\n");
+      if (lastNewline === -1) {
+        buffer += text;
+        return;
+      }
+      const complete = buffer + text.slice(0, lastNewline);
+      buffer = text.slice(lastNewline + 1);
+      let output2 = "";
+      for (const line of complete.split("\n")) {
         if (line.includes("usageMetadata")) {
           hasSeenUsageMetadata = true;
         }
-        const transformedLine = transformSseLine(
+        output2 += transformSseLine(
           line,
           signatureStore,
           thoughtBuffer,
@@ -3877,9 +3883,9 @@ function createStreamingTransformer(signatureStore, callbacks, options = {}) {
           callbacks,
           options,
           debugState2
-        );
-        controller.enqueue(encoder.encode(transformedLine + "\n"));
+        ) + "\n";
       }
+      controller.enqueue(encoder.encode(output2));
     },
     flush(controller) {
       buffer += decoder.decode();
@@ -8957,6 +8963,7 @@ var AntigravityTokenRefreshError = class extends Error {
 };
 var inFlightRefreshes = /* @__PURE__ */ new Map();
 var invalidGrantStrikes = /* @__PURE__ */ new Map();
+var TOKEN_REFRESH_TIMEOUT_MS = 3e4;
 var INVALID_GRANT_STRIKES_BEFORE_REMOVAL = 2;
 function getInvalidGrantStrikes(refreshToken) {
   return invalidGrantStrikes.get(refreshToken) ?? 0;
@@ -9002,6 +9009,8 @@ function adoptRefreshResult(auth, parts, result) {
 }
 async function performRefresh(auth, refreshTokenValue) {
   const parts = parseRefreshParts(auth.refresh);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TOKEN_REFRESH_TIMEOUT_MS);
   try {
     const startTime = Date.now();
     const response = await fetch("https://oauth2.googleapis.com/token", {
@@ -9014,7 +9023,8 @@ async function performRefresh(auth, refreshTokenValue) {
         refresh_token: parts.refreshToken,
         client_id: ANTIGRAVITY_CLIENT_ID,
         client_secret: ANTIGRAVITY_CLIENT_SECRET
-      })
+      }),
+      signal: controller.signal
     });
     if (!response.ok) {
       let errorText;
@@ -9066,8 +9076,12 @@ async function performRefresh(auth, refreshTokenValue) {
     if (error instanceof AntigravityTokenRefreshError) {
       throw error;
     }
-    log8.error("Unexpected token refresh error", { error: String(error) });
+    log8.error("Unexpected token refresh error", {
+      error: controller.signal.aborted ? `timed out after ${TOKEN_REFRESH_TIMEOUT_MS}ms` : String(error)
+    });
     return void 0;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -11188,13 +11202,7 @@ function aggregateQuota(models) {
   return { groups, modelCount: totalCount };
 }
 async function fetchWithTimeout2(url, options, timeoutMs = FETCH_TIMEOUT_MS2) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(timeout);
-  }
+  return fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
 }
 async function fetchAvailableModels(accessToken, projectId) {
   const endpoint = ANTIGRAVITY_ENDPOINT_PROD;
@@ -15554,12 +15562,17 @@ var createAntigravityPlugin = (providerId) => async (context) => {
 };
 var AntigravityCLIOAuthPlugin = createAntigravityPlugin(ANTIGRAVITY_PROVIDER_ID);
 var GoogleOAuthPlugin = AntigravityCLIOAuthPlugin;
+function liveAccountIndex(refreshToken) {
+  return activeAccountManager?.getAccounts().findIndex((account) => account.parts.refreshToken === refreshToken) ?? -1;
+}
 var liveAccountPool = {
-  setEnabled(index, enabled) {
-    activeAccountManager?.setAccountEnabled(index, enabled);
+  setEnabled(refreshToken, enabled) {
+    const index = liveAccountIndex(refreshToken);
+    if (index >= 0) activeAccountManager?.setAccountEnabled(index, enabled);
   },
-  remove(index) {
-    if (activeAccountManager?.removeAccountByIndex(index)) {
+  remove(refreshToken) {
+    const index = liveAccountIndex(refreshToken);
+    if (index >= 0 && activeAccountManager?.removeAccountByIndex(index)) {
       remapAccountStateAfterRemoval(index);
     }
   }
@@ -15866,14 +15879,14 @@ async function setAccountsEnabled(indices, enabled) {
   const applied = [];
   const labels = [];
   const missing = [];
-  for (const index of indices) {
+  for (const index of new Set(indices)) {
     const account = storage.accounts[index];
     if (!account) {
       missing.push(index + 1);
       continue;
     }
     account.enabled = enabled;
-    applied.push(index);
+    applied.push(account.refreshToken);
     labels.push(accountLabel(account, index));
   }
   if (applied.length > 0) {
@@ -15894,13 +15907,13 @@ async function deleteAccounts(indices) {
   }
   const targets = [];
   const missing = [];
-  for (const index of indices) {
+  for (const index of new Set(indices)) {
     const account = storage.accounts[index];
     if (!account) {
       missing.push(index + 1);
       continue;
     }
-    targets.push({ index, label: accountLabel(account, index), refreshToken: account.refreshToken });
+    targets.push({ label: accountLabel(account, index), refreshToken: account.refreshToken });
   }
   for (const target of targets) {
     await removeAccountFromStorage(target.refreshToken);
@@ -15909,9 +15922,7 @@ async function deleteAccounts(indices) {
   const skipped = missing.length > 0 ? `No account ${missing.join(", ")}.` : "";
   return {
     ok: targets.length > 0,
-    // Highest first: the caller mirrors each removal into the live pool, which
-    // renumbers as it goes.
-    applied: targets.map((t) => t.index).sort((a, b) => b - a),
+    applied: targets.map((t) => t.refreshToken),
     message: [done, skipped].filter(Boolean).join(" ") || NO_ACCOUNTS_MESSAGE
   };
 }
@@ -16135,7 +16146,7 @@ async function accountOptions() {
   options.push({
     value: ALL_ACCOUNTS_VALUE,
     label: "All accounts",
-    description: "Applies to every stored account (verify only)"
+    description: "Every stored account (not for remove)"
   });
   return options;
 }
@@ -16225,14 +16236,22 @@ ${await list()}`,
       changed: false
     };
   }
+  if (action === "remove" && target === "all") {
+    return {
+      text: `"All accounts" is not offered for remove. Pick the accounts, or run \`antigravity-accounts remove --all\`.
+
+${await list()}`,
+      changed: false
+    };
+  }
   const indices = target === "all" ? await allAccountIndices() : target;
   if (indices.length === 0) {
     return { text: await list(), changed: false };
   }
   if (action === "remove") {
     const result2 = await deleteAccounts(indices);
-    for (const index of result2.applied) {
-      deps.live.remove(index);
+    for (const refreshToken of result2.applied) {
+      deps.live.remove(refreshToken);
     }
     if (result2.ok) deps.invalidate();
     return { text: `${result2.message}
@@ -16241,8 +16260,8 @@ ${await list()}`, changed: result2.ok };
   }
   const enabled = action === "enable";
   const result = await setAccountsEnabled(indices, enabled);
-  for (const index of result.applied) {
-    deps.live.setEnabled(index, enabled);
+  for (const refreshToken of result.applied) {
+    deps.live.setEnabled(refreshToken, enabled);
   }
   if (result.ok) deps.invalidate();
   return { text: `${result.message}
@@ -16298,6 +16317,7 @@ function createOAuthMethod(deps) {
     }
     try {
       await helpers.persistAccountPool([result], false);
+      management?.invalidate();
     } catch (error) {
       log12.warn("Could not save the account to the Antigravity account pool", { error: String(error) });
     }

@@ -130,6 +130,24 @@ describe("authorize", () => {
     expect(persistAccountPool).toHaveBeenCalledWith([expect.objectContaining({ type: "success" })], false);
   });
 
+  it("refreshes the account menu once a new account is saved", async () => {
+    const invalidate = vi.fn();
+    const authorization = await createOAuthMethod(
+      deps({
+        management: {
+          verify: async () => ({ status: "ok", message: "ok" }),
+          live: { setEnabled: () => {}, remove: () => {} },
+          invalidate,
+        },
+      }),
+    ).authorize({});
+    if (authorization.mode !== "auto") throw new Error("expected auto mode");
+
+    expect(invalidate).not.toHaveBeenCalled();
+    await authorization.callback;
+    expect(invalidate).toHaveBeenCalledTimes(1);
+  });
+
   it("closes the listener after the callback resolves", async () => {
     const close = vi.fn(async () => {});
     const authorization = await createOAuthMethod(

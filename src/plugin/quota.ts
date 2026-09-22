@@ -246,13 +246,9 @@ function aggregateQuota(models?: Record<string, FetchAvailableModelEntry>): Quot
 }
 
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = FETCH_TIMEOUT_MS): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(timeout);
-  }
+  // The signal stays armed while the caller reads the body, so a response that
+  // stalls mid-body cannot hang the quota check either.
+  return fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
 }
 
 export async function fetchAvailableModels(

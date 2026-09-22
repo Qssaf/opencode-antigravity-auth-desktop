@@ -6,6 +6,7 @@ import {
   isRevokedRefreshToken,
   refreshAccessToken,
   resetTokenRefreshStateForTests,
+  TOKEN_REFRESH_TIMEOUT_MS,
 } from "./token";
 import type { OAuthAuthDetails, PluginClient } from "./types";
 
@@ -30,6 +31,28 @@ describe("refreshAccessToken", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     resetTokenRefreshStateForTests();
+  });
+
+  it("gives up on a refresh that never answers, instead of hanging every request", async () => {
+    vi.useFakeTimers();
+    try {
+      // Answers only by rejecting once its signal aborts, like a stalled socket.
+      global.fetch = vi.fn(
+        (_input: unknown, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+          }),
+      ) as unknown as typeof fetch;
+
+      const pending = refreshAccessToken(baseAuth, createClient(), ANTIGRAVITY_PROVIDER_ID);
+      await vi.advanceTimersByTimeAsync(TOKEN_REFRESH_TIMEOUT_MS);
+
+      await expect(pending).resolves.toBeUndefined();
+      // Not an invalid_grant: the account must not be counted as revoked.
+      expect(getInvalidGrantStrikes("refresh-token")).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("updates the caller when refresh token is unchanged", async () => {

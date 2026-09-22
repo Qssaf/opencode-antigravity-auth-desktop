@@ -534,6 +534,47 @@ describe("request.ts", () => {
       const output = outputChunks.map(chunk => decoder.decode(chunk)).join("");
       expect(output).toContain("[DONE]");
     });
+
+    it("produces the same output however the network splits the stream", async () => {
+      const encoder = new TextEncoder();
+      const decoder = new TextDecoder();
+      const event = (text: string) =>
+        `data: ${JSON.stringify({ response: { candidates: [{ content: { parts: [{ text }] } }] } })}\r\n\r\n`;
+      // Multi-byte characters, so some splits land inside a UTF-8 sequence.
+      const bytes = encoder.encode(event("héllo wörld ✓") + event("second") + event("x".repeat(5000)));
+
+      const run = async (chunks: Uint8Array[]) => {
+        const transformer = createStreamingTransformer(createMockSignatureStore(), defaultCallbacks);
+        const source = new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (const chunk of chunks) controller.enqueue(chunk);
+            controller.close();
+          },
+        });
+        const reader = source.pipeThrough(transformer).getReader();
+        let output = "";
+        let enqueued = 0;
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          output += decoder.decode(value, { stream: true });
+          enqueued++;
+        }
+        return { output, enqueued };
+      };
+
+      const whole = await run([bytes]);
+      for (const size of [1, 3, 7, 1024]) {
+        const chunks: Uint8Array[] = [];
+        for (let offset = 0; offset < bytes.length; offset += size) {
+          chunks.push(bytes.subarray(offset, offset + size));
+        }
+        expect((await run(chunks)).output).toBe(whole.output);
+      }
+      expect(whole.output).toContain("héllo wörld ✓");
+      // One piece for the whole input plus the synthetic usage metadata.
+      expect(whole.enqueued).toBe(2);
+    });
   });
 
   describe("prepareAntigravityRequest", () => {

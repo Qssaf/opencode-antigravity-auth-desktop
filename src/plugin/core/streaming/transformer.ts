@@ -348,18 +348,29 @@ export function createStreamingTransformer(
 
   return new TransformStream({
     transform(chunk, controller) {
-      buffer += decoder.decode(chunk, { stream: true });
+      const text = decoder.decode(chunk, { stream: true });
 
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
+      // Only the new text can hold the end of a line. Scanning it alone keeps a
+      // long line (an inline image arrives as one multi-megabyte event) linear
+      // rather than re-splitting the whole buffer on every network chunk.
+      const lastNewline = text.lastIndexOf('\n');
+      if (lastNewline === -1) {
+        buffer += text;
+        return;
+      }
+      const complete = buffer + text.slice(0, lastNewline);
+      buffer = text.slice(lastNewline + 1);
 
-      for (const line of lines) {
+      // One enqueue per chunk: each enqueued piece becomes a separate write
+      // downstream, so per-line enqueues doubled the work for every event.
+      let output = '';
+      for (const line of complete.split('\n')) {
         // Quick check for usage metadata presence in the raw line
         if (line.includes('usageMetadata')) {
           hasSeenUsageMetadata = true;
         }
 
-        const transformedLine = transformSseLine(
+        output += transformSseLine(
           line,
           signatureStore,
           thoughtBuffer,
@@ -367,9 +378,9 @@ export function createStreamingTransformer(
           callbacks,
           options,
           debugState,
-        );
-        controller.enqueue(encoder.encode(transformedLine + '\n'));
+        ) + '\n';
       }
+      controller.enqueue(encoder.encode(output));
     },
     flush(controller) {
       buffer += decoder.decode();

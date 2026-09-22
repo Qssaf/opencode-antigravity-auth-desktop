@@ -98,6 +98,13 @@ const inFlightRefreshes = new Map<string, Promise<OAuthAuthDetails | undefined>>
  */
 const invalidGrantStrikes = new Map<string, number>();
 
+/**
+ * Upper bound on one refresh, body included. Every request for the account
+ * waits on the shared refresh, so a stalled connection to Google would
+ * otherwise hang them all indefinitely.
+ */
+export const TOKEN_REFRESH_TIMEOUT_MS = 30_000;
+
 /** How many consecutive `invalid_grant` responses mean the token is really gone. */
 export const INVALID_GRANT_STRIKES_BEFORE_REMOVAL = 2;
 
@@ -192,6 +199,8 @@ async function performRefresh(
   refreshTokenValue: string,
 ): Promise<OAuthAuthDetails | undefined> {
   const parts = parseRefreshParts(auth.refresh);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), TOKEN_REFRESH_TIMEOUT_MS);
 
   try {
     const startTime = Date.now();
@@ -206,6 +215,7 @@ async function performRefresh(
         client_id: ANTIGRAVITY_CLIENT_ID,
         client_secret: ANTIGRAVITY_CLIENT_SECRET,
       }),
+      signal: controller.signal,
     });
 
     if (!response.ok) {
@@ -270,8 +280,12 @@ async function performRefresh(
     if (error instanceof AntigravityTokenRefreshError) {
       throw error;
     }
-    log.error("Unexpected token refresh error", { error: String(error) });
+    log.error("Unexpected token refresh error", {
+      error: controller.signal.aborted ? `timed out after ${TOKEN_REFRESH_TIMEOUT_MS}ms` : String(error),
+    });
     return undefined;
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

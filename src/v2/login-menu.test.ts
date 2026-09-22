@@ -28,8 +28,8 @@ vi.mock("@opencode-ai/plugin", () => ({
 }));
 
 let configDir: string;
-let setEnabledCalls: Array<[number, boolean]>;
-let removeCalls: number[];
+let setEnabledCalls: Array<[string, boolean]>;
+let removeCalls: string[];
 let invalidated: number;
 
 function twoAccounts(): AccountStorageV4 {
@@ -66,11 +66,11 @@ function management(): Omit<ManagementDeps, "client" | "integrationID"> & {
     integrationID: "google",
     verify: async () => ({ status: "ok", message: "ok" }),
     live: {
-      setEnabled: (index, enabled) => {
-        setEnabledCalls.push([index, enabled]);
+      setEnabled: (refreshToken, enabled) => {
+        setEnabledCalls.push([refreshToken, enabled]);
       },
-      remove: (index) => {
-        removeCalls.push(index);
+      remove: (refreshToken) => {
+        removeCalls.push(refreshToken);
       },
     },
     invalidate: () => {
@@ -166,7 +166,8 @@ describe("login menu", () => {
     const outcome = await runManagementAction("disable", [1], management());
 
     expect((await readStorage()).accounts[1]?.enabled).toBe(false);
-    expect(setEnabledCalls).toEqual([[1, false]]);
+    // Mirrored by refresh token: the live pool may number accounts differently.
+    expect(setEnabledCalls).toEqual([["token-2", false]]);
     expect(invalidated).toBe(1);
     expect(outcome.changed).toBe(true);
     expect(outcome.text).toContain("second@example.com disabled");
@@ -178,7 +179,7 @@ describe("login menu", () => {
     const outcome = await runManagementAction("remove", [0], management());
 
     expect((await readStorage()).accounts.map((account) => account.email)).toEqual(["second@example.com"]);
-    expect(removeCalls).toEqual([0]);
+    expect(removeCalls).toEqual(["token-1"]);
     expect(outcome.text).toContain("Deleted first@example.com");
   });
 
@@ -218,20 +219,50 @@ describe("login menu", () => {
 
     const stored = await readStorage();
     expect(stored.accounts.every((account) => account.enabled === false)).toBe(true);
-    expect(setEnabledCalls).toEqual([[0, false], [1, false]]);
+    expect(setEnabledCalls).toEqual([["token-1", false], ["token-2", false]]);
     // One reload for the batch, not one per account.
     expect(invalidated).toBe(1);
     expect(outcome.text).toContain("first@example.com, second@example.com disabled");
   });
 
-  it("removes several accounts highest index first, so renumbering cannot misfire", async () => {
+  it("removes several accounts", async () => {
     await writeStorage(twoAccounts());
 
     const outcome = await runManagementAction("remove", [0, 1], management());
 
     expect((await readStorage()).accounts).toHaveLength(0);
-    expect(removeCalls).toEqual([1, 0]);
+    expect(removeCalls).toEqual(["token-1", "token-2"]);
     expect(outcome.text).toContain("Deleted first@example.com, second@example.com");
+  });
+
+  it("applies an account picked twice once", async () => {
+    await writeStorage(twoAccounts());
+
+    const outcome = await runManagementAction("remove", [1, 1], management());
+
+    expect((await readStorage()).accounts.map((account) => account.email)).toEqual(["first@example.com"]);
+    // A second mirror would have removed whichever account moved into its place.
+    expect(removeCalls).toEqual(["token-2"]);
+    expect(outcome.text).toContain("Deleted second@example.com.");
+  });
+
+  it("does not wipe the pool from a single pick of all accounts", async () => {
+    await writeStorage(twoAccounts());
+
+    const outcome = await runManagementAction("remove", "all", management());
+
+    expect((await readStorage()).accounts).toHaveLength(2);
+    expect(removeCalls).toEqual([]);
+    expect(outcome.changed).toBe(false);
+    expect(outcome.text).toContain("antigravity-accounts remove --all");
+  });
+
+  it("disables every account when all is picked", async () => {
+    await writeStorage(twoAccounts());
+
+    await runManagementAction("disable", "all", management());
+
+    expect((await readStorage()).accounts.every((account) => account.enabled === false)).toBe(true);
   });
 
   it("names an account number that does not exist and applies the rest", async () => {

@@ -4374,29 +4374,45 @@ export const AntigravityCLIOAuthPlugin = createAntigravityPlugin(ANTIGRAVITY_PRO
 export const GoogleOAuthPlugin = AntigravityCLIOAuthPlugin;
 
 /**
- * OAuth login helpers shared with the OpenCode 2.x adapter (src/v2). They were
- * private to this module; the 2.x login flow cannot use the 1.x interactive
- * prompts but needs the same browser, callback and account pool logic.
+ * Where an account sits in the live pool. Matched by refresh token because the
+ * live pool can number accounts differently from the file (another process
+ * added or removed one since it was loaded), and a stale index would change
+ * the wrong account and then save that back to disk.
  */
+function liveAccountIndex(refreshToken: string): number {
+  return (
+    activeAccountManager
+      ?.getAccounts()
+      .findIndex((account) => account.parts.refreshToken === refreshToken) ?? -1
+  );
+}
+
 /**
  * Applies a pool change made outside the request path — the OpenCode 2.x
- * `/antigravity` command, which edits the stored pool directly — to the
+ * login menu, which edits the stored pool directly — to the
  * AccountManager the running requests are holding. Without it the change would
  * only be seen after the auth loader runs again, and a later flush of the live
  * manager could write the old value back over it.
  */
 export const liveAccountPool = {
-  setEnabled(index: number, enabled: boolean): void {
-    activeAccountManager?.setAccountEnabled(index, enabled);
+  setEnabled(refreshToken: string, enabled: boolean): void {
+    const index = liveAccountIndex(refreshToken);
+    if (index >= 0) activeAccountManager?.setAccountEnabled(index, enabled);
   },
-  remove(index: number): void {
-    if (activeAccountManager?.removeAccountByIndex(index)) {
+  remove(refreshToken: string): void {
+    const index = liveAccountIndex(refreshToken);
+    if (index >= 0 && activeAccountManager?.removeAccountByIndex(index)) {
       // Renumbering shifted the accounts after it; keep index-keyed state attached.
       remapAccountStateAfterRemoval(index);
     }
   },
 };
 
+/**
+ * OAuth login helpers shared with the OpenCode 2.x adapter (src/v2). They were
+ * private to this module; the 2.x login flow cannot use the 1.x interactive
+ * prompts but needs the same browser, callback and account pool logic.
+ */
 export const oauthFlowHelpers = {
   openBrowser,
   shouldSkipLocalServer,

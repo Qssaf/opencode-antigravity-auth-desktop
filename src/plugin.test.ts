@@ -34,7 +34,7 @@ vi.mock("./plugin/storage", async (importOriginal) => {
   };
 });
 
-const { createAntigravityPlugin, loopEscapeTestHooks, __testExports } = await import("./plugin");
+const { createAntigravityPlugin, liveAccountPool, loopEscapeTestHooks, __testExports } = await import("./plugin");
 const storageModule = await import("./plugin/storage");
 const { resetPublicGeminiApiModelCatalogForTests } = await import("./plugin/model-catalog");
 const { resetAgySdkCredentialStateForTests } = await import("./plugin/api-key");
@@ -1298,4 +1298,45 @@ describe("createAntigravityPlugin capacity-exhaustion header-style fallback (rev
   it("capacity-exhausted both pools + transient SDK 500 rotates to the healthy second account", async () => {
     await runCapacitySdkRetryableRotation(500, "Internal server error");
   }, 20_000);
+});
+
+describe("liveAccountPool", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it("finds the account by refresh token, not by its number in the file", async () => {
+    vi.mocked(storageModule.loadAccounts).mockResolvedValue({
+      version: 4,
+      accounts: [
+        { email: "a@example.com", refreshToken: "token-a", addedAt: 0, lastUsed: 0, enabled: true },
+        { email: "b@example.com", refreshToken: "token-b", addedAt: 0, lastUsed: 0, enabled: true },
+      ],
+      activeIndex: 0,
+    });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}")));
+    const setEnabled = vi.spyOn(AccountManager.prototype, "setAccountEnabled");
+    const removeByIndex = vi.spyOn(AccountManager.prototype, "removeAccountByIndex");
+
+    const plugin = await createAntigravityPlugin("google")({ client, directory: process.cwd() });
+    await plugin.auth.loader(
+      async () => ({ type: "oauth", refresh: "token-a", access: "", expires: 0 }),
+      {},
+    );
+
+    liveAccountPool.setEnabled("token-b", false);
+    expect(setEnabled).toHaveBeenCalledWith(1, false);
+
+    // An account the live pool does not hold is left alone, rather than
+    // changing whichever account happens to sit at that number.
+    setEnabled.mockClear();
+    liveAccountPool.setEnabled("token-unknown", false);
+    liveAccountPool.remove("token-unknown");
+    expect(setEnabled).not.toHaveBeenCalled();
+    expect(removeByIndex).not.toHaveBeenCalled();
+
+    liveAccountPool.remove("token-a");
+    expect(removeByIndex).toHaveBeenCalledWith(0);
+  });
 });

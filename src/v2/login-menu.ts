@@ -84,7 +84,7 @@ export async function accountOptions(): Promise<FormOption[]> {
   options.push({
     value: ALL_ACCOUNTS_VALUE,
     label: "All accounts",
-    description: "Applies to every stored account (verify only)",
+    description: "Every stored account (not for remove)",
   });
   return options;
 }
@@ -172,10 +172,10 @@ export interface ManagementDeps {
   client: PluginClient;
   integrationID: string;
   verify: VerifyAccount;
-  /** Mirrors the change into the pool the request path is holding. */
+  /** Mirrors the change into the pool the request path is holding, by refresh token. */
   live: {
-    setEnabled(index: number, enabled: boolean): void;
-    remove(index: number): void;
+    setEnabled(refreshToken: string, enabled: boolean): void;
+    remove(refreshToken: string): void;
   };
   /** Makes the next request rebuild the pool from disk. */
   invalidate(): void;
@@ -231,6 +231,15 @@ export async function runManagementAction(
     };
   }
 
+  // The form cannot ask "are you sure?", so wiping the pool in one pick is
+  // left to the CLI, where it is spelled out.
+  if (action === "remove" && target === "all") {
+    return {
+      text: `"All accounts" is not offered for remove. Pick the accounts, or run \`antigravity-accounts remove --all\`.\n\n${await list()}`,
+      changed: false,
+    };
+  }
+
   const indices = target === "all" ? await allAccountIndices() : target;
   if (indices.length === 0) {
     return { text: await list(), changed: false };
@@ -238,10 +247,8 @@ export async function runManagementAction(
 
   if (action === "remove") {
     const result = await deleteAccounts(indices);
-    // `applied` comes back highest-index-first, because each removal renumbers
-    // the accounts after it in the live pool.
-    for (const index of result.applied) {
-      deps.live.remove(index);
+    for (const refreshToken of result.applied) {
+      deps.live.remove(refreshToken);
     }
     if (result.ok) deps.invalidate();
     return { text: `${result.message}\n\n${await list()}`, changed: result.ok };
@@ -249,8 +256,8 @@ export async function runManagementAction(
 
   const enabled = action === "enable";
   const result = await setAccountsEnabled(indices, enabled);
-  for (const index of result.applied) {
-    deps.live.setEnabled(index, enabled);
+  for (const refreshToken of result.applied) {
+    deps.live.setEnabled(refreshToken, enabled);
   }
   if (result.ok) deps.invalidate();
   return { text: `${result.message}\n\n${await list()}`, changed: result.ok };

@@ -98,6 +98,9 @@ export function createOAuthMethod(deps: OAuthMethodDeps): OAuthMethodRegistratio
     try {
       // Adds to the account pool without replacing accounts from earlier logins.
       await helpers.persistAccountPool([result], false);
+      // The menu's account list is fixed when the method is registered, so
+      // without this the new account is missing from it until a restart.
+      management?.invalidate();
     } catch (error) {
       log.warn("Could not save the account to the Antigravity account pool", { error: String(error) });
     }

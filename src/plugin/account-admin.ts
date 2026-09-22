@@ -106,29 +106,31 @@ export async function setAccountEnabled(index: number, enabled: boolean): Promis
 
 /**
  * Enables or disables several accounts in one read/write, so a batch cannot be
- * half-applied by concurrent saves.
+ * half-applied by concurrent saves. `applied` holds the refresh tokens of the
+ * accounts changed: the live pool may number its accounts differently from the
+ * file, so the token is what identifies an account there.
  */
 export async function setAccountsEnabled(
   indices: readonly number[],
   enabled: boolean,
-): Promise<AccountAdminResult & { applied: number[] }> {
+): Promise<AccountAdminResult & { applied: string[] }> {
   const storage = await loadAccountPool();
   if (!storage) {
     return { ok: false, applied: [], message: NO_ACCOUNTS_MESSAGE };
   }
 
-  const applied: number[] = [];
+  const applied: string[] = [];
   const labels: string[] = [];
   const missing: number[] = [];
 
-  for (const index of indices) {
+  for (const index of new Set(indices)) {
     const account = storage.accounts[index];
     if (!account) {
       missing.push(index + 1);
       continue;
     }
     account.enabled = enabled;
-    applied.push(index);
+    applied.push(account.refreshToken);
     labels.push(accountLabel(account, index));
   }
 
@@ -148,24 +150,25 @@ export async function setAccountsEnabled(
 /**
  * Deletes several accounts. They are resolved to refresh tokens before the
  * first delete, because removing one renumbers the accounts after it.
+ * `applied` holds those refresh tokens, as for `setAccountsEnabled`.
  */
 export async function deleteAccounts(
   indices: readonly number[],
-): Promise<AccountAdminResult & { applied: number[] }> {
+): Promise<AccountAdminResult & { applied: string[] }> {
   const storage = await loadAccountPool();
   if (!storage) {
     return { ok: false, applied: [], message: NO_ACCOUNTS_MESSAGE };
   }
 
-  const targets: Array<{ index: number; label: string; refreshToken: string }> = [];
+  const targets: Array<{ label: string; refreshToken: string }> = [];
   const missing: number[] = [];
-  for (const index of indices) {
+  for (const index of new Set(indices)) {
     const account = storage.accounts[index];
     if (!account) {
       missing.push(index + 1);
       continue;
     }
-    targets.push({ index, label: accountLabel(account, index), refreshToken: account.refreshToken });
+    targets.push({ label: accountLabel(account, index), refreshToken: account.refreshToken });
   }
 
   for (const target of targets) {
@@ -176,9 +179,7 @@ export async function deleteAccounts(
   const skipped = missing.length > 0 ? `No account ${missing.join(", ")}.` : "";
   return {
     ok: targets.length > 0,
-    // Highest first: the caller mirrors each removal into the live pool, which
-    // renumbers as it goes.
-    applied: targets.map((t) => t.index).sort((a, b) => b - a),
+    applied: targets.map((t) => t.refreshToken),
     message: [done, skipped].filter(Boolean).join(" ") || NO_ACCOUNTS_MESSAGE,
   };
 }
