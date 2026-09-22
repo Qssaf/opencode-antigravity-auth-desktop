@@ -1425,7 +1425,6 @@ const FIRST_RETRY_DELAY_MS = 1000;      // 1s - first 429 quick retry on same ac
 // How long an account sits out after an unconfirmed `invalid_grant` before the
 // next request re-checks it (and, if Google says invalid_grant again, drops it).
 const INVALID_GRANT_RECHECK_COOLDOWN_MS = 15_000;
-const SWITCH_ACCOUNT_DELAY_MS = 5000;   // 5s - delay before switching to another account
 
 /**
  * Rate limit state tracking with time-window deduplication.
@@ -3028,11 +3027,8 @@ export const createAntigravityRuntime = (providerId: string) => async (
 
                   const accountLabel = account.email || `Account ${account.index + 1}`;
 
-                  // Progressive retry for standard 429s: 1st 429 → 1s then switch (if enabled) or retry same
+                  // Progressive retry for standard 429s: 1st 429 → switch now (if enabled) or retry same after 1s
                   if (attempt === 1 && rateLimitReason !== "QUOTA_EXHAUSTED") {
-                    await showToast(`Rate limited. Quick retry in 1s...`, "warning");
-                    await sleep(FIRST_RETRY_DELAY_MS, abortSignal);
-                    
                     // CacheFirst mode: wait for same account if within threshold (preserves prompt cache)
                     if (config.scheduling_mode === 'cache_first') {
                       const maxCacheFirstWaitMs = config.max_cache_first_wait_seconds * 1000;
@@ -3050,6 +3046,8 @@ export const createAntigravityRuntime = (providerId: string) => async (
                       pushDebug(`cache_first: wait ${effectiveDelayMs}ms exceeds max ${maxCacheFirstWaitMs}ms, switching account`);
                     }
                     
+                    // Another account has its own quota, so there is nothing to wait for
+                    // before switching; the wait only helps a retry on this account.
                     if (config.switch_on_first_rate_limit && accountCount > 1) {
                       accountManager.markRateLimitedWithReason(account, family, headerStyle, model, rateLimitReason, serverRetryMs, config.failure_ttl_seconds * 1000);
                       shouldSwitchAccount = true;
@@ -3057,6 +3055,8 @@ export const createAntigravityRuntime = (providerId: string) => async (
                     }
                     
                     // Same endpoint retry for first RPM hit
+                    await showToast(`Rate limited. Quick retry in 1s...`, "warning");
+                    await sleep(FIRST_RETRY_DELAY_MS, abortSignal);
                     i -= 1; 
                     continue;
                   }
@@ -3071,8 +3071,7 @@ export const createAntigravityRuntime = (providerId: string) => async (
                       // Check if any other account has Antigravity quota for this model
                       if (hasOtherAccountWithAntigravity(account)) {
                         pushDebug(`antigravity exhausted on account ${account.index}, but available on others. Switching account.`);
-                        await showToast(`Rate limited again. Switching account in 5s...`, "warning");
-                        await sleep(SWITCH_ACCOUNT_DELAY_MS, abortSignal);
+                        await showToast(`Rate limited again. Switching account...`, "warning");
                         shouldSwitchAccount = true;
                         break;
                       }
@@ -3142,8 +3141,7 @@ export const createAntigravityRuntime = (providerId: string) => async (
                     const quotaMsg = bodyInfo.quotaResetTime 
                       ? ` (quota resets ${bodyInfo.quotaResetTime})`
                       : ``;
-                    await showToast(`Rate limited again. Switching account in 5s...${quotaMsg}`, "warning");
-                    await sleep(SWITCH_ACCOUNT_DELAY_MS, abortSignal);
+                    await showToast(`Rate limited again. Switching account...${quotaMsg}`, "warning");
                   } else {
                     // Single account: exponential backoff (1s, 2s, 4s, 8s... max 60s)
                     const expBackoffMs = Math.min(FIRST_RETRY_DELAY_MS * Math.pow(2, attempt - 1), 60000);

@@ -1194,6 +1194,91 @@ describe("createAntigravityPlugin capacity-exhaustion header-style fallback (rev
     expect(geminiCliContentCalls).toBeGreaterThan(0); // then gemini-cli was tried on the SAME account
   }, 20_000);
 
+  it("switches to another account on a rate limit without waiting first", async () => {
+    // `balance` switches on a rate limit; the default `cache_first` deliberately
+    // waits for the same account to keep its prompt cache.
+    const directory = join(tmpConfigHome, "project");
+    mkdirSync(join(directory, ".opencode"), { recursive: true });
+    writeFileSync(join(directory, ".opencode", "antigravity.json"), JSON.stringify({ scheduling_mode: "balance" }));
+    const now = Date.now();
+    vi.mocked(storageModule.loadAccounts).mockResolvedValue({
+      version: 4,
+      accounts: [
+        { email: "a@example.com", refreshToken: "refresh-a", projectId: "project-id", managedProjectId: "managed-a", addedAt: now, lastUsed: now, enabled: true },
+        { email: "b@example.com", refreshToken: "refresh-b", projectId: "project-id", managedProjectId: "managed-b", addedAt: now, lastUsed: now, enabled: true },
+      ],
+      activeIndex: 0,
+    });
+
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url.includes("oauth2.googleapis.com")) {
+        const token = new URLSearchParams(String(init?.body)).get("refresh_token");
+        return new Response(
+          JSON.stringify({ access_token: token === "refresh-b" ? "access-b" : "access-a", expires_in: 3600 }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.includes("cloudcode-pa") && url.includes(":generateContent")) {
+        const account = (headerValue(input, init, "authorization") ?? "").endsWith("access-b") ? "b" : "a";
+        calls.push(account);
+        if (account === "a") {
+          return new Response(
+            JSON.stringify({
+              error: {
+                code: 429,
+                message: "Resource has been exhausted (e.g. check quota).",
+                status: "RESOURCE_EXHAUSTED",
+                details: [
+                  { "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "RATE_LIMIT_EXCEEDED" },
+                  { "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "30s" },
+                ],
+              },
+            }),
+            { status: 429, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({ response: { candidates: [{ content: { parts: [{ text: "ok" }], role: "model" }, finishReason: "STOP", index: 0 }] } }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return new Response(JSON.stringify({ models: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response("1.2.3");
+    }));
+
+    const plugin = await createAntigravityPlugin("google")({ client, directory });
+    const loader = await plugin.auth.loader(
+      async () => ({
+        type: "oauth" as const,
+        refresh: formatRefreshParts({ refreshToken: "refresh-a", projectId: "project-id", managedProjectId: "managed-a" }),
+        access: "access-a",
+        expires: now + 3_600_000,
+      }),
+      { id: "google", api: "https://generativelanguage.googleapis.com/v1beta", npm: "@ai-sdk/google", models: {} },
+    );
+
+    vi.useFakeTimers();
+    const fetchPromise = (loader as { fetch: typeof fetch }).fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent",
+      { method: "POST", body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "hello" }] }] }) },
+    );
+    let settled = false;
+    fetchPromise.then(() => { settled = true; }, () => { settled = true; });
+    // Well under the 1s quick retry and the old 5s switch delay: the second
+    // account has its own quota, so the request must not sit out either.
+    await vi.advanceTimersByTimeAsync(500);
+    expect(settled, `calls=${calls.join(",")}`).toBe(true);
+
+    const response = await fetchPromise;
+    vi.useRealTimers();
+    expect(response.status).toBe(200);
+    expect(calls).toEqual(["a", "b"]);
+  }, 20_000);
+
   // Regression for the round-2/round-3 HIGH: tryAgySdkFallbackForRequest can return
   // its last RETRYABLE failure (429 and, after round-3, transient 5xx like 500). The
   // capacity-escape must NOT treat that as terminal — it should keep rotating so a

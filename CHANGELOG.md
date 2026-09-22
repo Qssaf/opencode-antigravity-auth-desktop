@@ -22,6 +22,8 @@
 
 ### Performance
 
+- **No more waiting before switching to another account** - On a rate limit the plugin slept 1 s before switching accounts, and 5 s on every later switch, even though the next account has its own quota and nothing was gained by waiting. It now switches immediately. The 1 s pause still applies when it retries the same account, and single-account backoff is unchanged. With the default `scheduling_mode: "cache_first"`, a rate limit that resets within `max_cache_first_wait_seconds` (60 s) still waits for the same account to keep its prompt cache; set `"scheduling_mode": "balance"` to switch right away instead.
+
 - **Streaming no longer slows down on large events** - The SSE transformer re-split its whole buffer on every network chunk, so a single large event — an inline image from an image model arrives as one multi-megabyte line — cost quadratic time (an 8 MB event took 1.7 s to pass through; now about 0.1 s). It also enqueued each line separately; it now emits one piece per network chunk, halving the writes the loopback proxy and the SDK parser handle per event. Ordinary text streaming was already cheap (about 8 µs per event) and is unchanged.
 
 ### Added

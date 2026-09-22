@@ -13378,7 +13378,6 @@ function createSoftQuotaBlockedResponse(input3) {
 }
 var FIRST_RETRY_DELAY_MS = 1e3;
 var INVALID_GRANT_RECHECK_COOLDOWN_MS = 15e3;
-var SWITCH_ACCOUNT_DELAY_MS = 5e3;
 var RATE_LIMIT_DEDUP_WINDOW_MS = 2e3;
 var RATE_LIMIT_STATE_RESET_MS = 12e4;
 var rateLimitStateByAccountQuota = /* @__PURE__ */ new Map();
@@ -14459,8 +14458,6 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                       getHealthTracker().recordRateLimit(account.index);
                       const accountLabel2 = account.email || `Account ${account.index + 1}`;
                       if (attempt === 1 && rateLimitReason !== "QUOTA_EXHAUSTED") {
-                        await showToast(`Rate limited. Quick retry in 1s...`, "warning");
-                        await sleep(FIRST_RETRY_DELAY_MS, abortSignal);
                         if (config.scheduling_mode === "cache_first") {
                           const maxCacheFirstWaitMs = config.max_cache_first_wait_seconds * 1e3;
                           if (effectiveDelayMs <= maxCacheFirstWaitMs) {
@@ -14478,6 +14475,8 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                           shouldSwitchAccount = true;
                           break;
                         }
+                        await showToast(`Rate limited. Quick retry in 1s...`, "warning");
+                        await sleep(FIRST_RETRY_DELAY_MS, abortSignal);
                         i -= 1;
                         continue;
                       }
@@ -14487,8 +14486,7 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                         if (headerStyle === "antigravity") {
                           if (hasOtherAccountWithAntigravity(account)) {
                             pushDebug(`antigravity exhausted on account ${account.index}, but available on others. Switching account.`);
-                            await showToast(`Rate limited again. Switching account in 5s...`, "warning");
-                            await sleep(SWITCH_ACCOUNT_DELAY_MS, abortSignal);
+                            await showToast(`Rate limited again. Switching account...`, "warning");
                             shouldSwitchAccount = true;
                             break;
                           }
@@ -14544,8 +14542,7 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                       const quotaName = headerStyle === "antigravity" ? "Antigravity" : "Gemini CLI";
                       if (accountCount2 > 1) {
                         const quotaMsg = bodyInfo.quotaResetTime ? ` (quota resets ${bodyInfo.quotaResetTime})` : ``;
-                        await showToast(`Rate limited again. Switching account in 5s...${quotaMsg}`, "warning");
-                        await sleep(SWITCH_ACCOUNT_DELAY_MS, abortSignal);
+                        await showToast(`Rate limited again. Switching account...${quotaMsg}`, "warning");
                       } else {
                         const expBackoffMs = Math.min(FIRST_RETRY_DELAY_MS * Math.pow(2, attempt - 1), 6e4);
                         const expBackoffFormatted = expBackoffMs >= 1e3 ? `${Math.round(expBackoffMs / 1e3)}s` : `${expBackoffMs}ms`;
