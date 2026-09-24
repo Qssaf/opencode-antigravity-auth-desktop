@@ -44,13 +44,13 @@ import {
 import { EmptyResponseError } from "./plugin/errors";
 import { AntigravityTokenRefreshError, isRevokedRefreshToken, refreshAccessToken } from "./plugin/token";
 import { startOAuthListener, type OAuthListener } from "./plugin/server";
-import { clearAccounts, loadAccounts, removeAccountFromStorage, saveAccounts } from "./plugin/storage";
+import { clearAccounts, hashRefreshToken, loadAccounts, removeAccountFromStorage, saveAccounts } from "./plugin/storage";
 import { AccountManager, type ModelFamily, parseRateLimitReason, calculateBackoffMs, computeSoftQuotaCacheTtlMs } from "./plugin/accounts";
 import { createAutoUpdateCheckerHook } from "./hooks/auto-update-checker";
 import { loadConfig, initRuntimeConfig, type AntigravityConfig } from "./plugin/config";
 import { createSessionRecoveryHook, getRecoverySuccessToast } from "./plugin/recovery";
 import { checkAccountsQuota, fetchAvailableModels } from "./plugin/quota";
-import { initDiskSignatureCache } from "./plugin/cache";
+import { initDiskSignatureCache, shutdownDiskSignatureCache } from "./plugin/cache";
 import { createProactiveRefreshQueue, type ProactiveRefreshQueue } from "./plugin/refresh-queue";
 import { initLogger, createLogger } from "./plugin/logger";
 import { initHealthTracker, getHealthTracker, initTokenTracker, getTokenTracker } from "./plugin/rotation";
@@ -162,6 +162,10 @@ function resetAllAccountsBlockedToasts(): void {
 }
 
 const quotaRefreshInProgressByEmail = new Set<string>();
+// When each account's background quota refresh last ran, successful or not. A
+// failed refresh leaves `cachedQuotaUpdatedAt` alone, so without this every
+// later request would start another refresh while the endpoint keeps failing.
+const quotaRefreshAttemptedAt = new Map<string, number>();
 
 function defaultRetryMsForConfig(config: AntigravityConfig): number {
   return (config.default_retry_after_seconds ?? 60) * 1000;
@@ -436,8 +440,10 @@ async function triggerAsyncQuotaRefreshForAccount(
     : Infinity;
   
   if (age < intervalMs) return;
+  if (Date.now() - (quotaRefreshAttemptedAt.get(accountKey) ?? 0) < intervalMs) return;
   
   quotaRefreshInProgressByEmail.add(accountKey);
+  quotaRefreshAttemptedAt.set(accountKey, Date.now());
   
   try {
     const accountsForCheck = accountManager.getAccountsForQuotaCheck();
@@ -449,7 +455,9 @@ async function triggerAsyncQuotaRefreshForAccount(
     
     const results = await checkAccountsQuota([singleAccount], client, providerId);
     
-    if (results[0]?.status === "ok" && results[0]?.quota?.groups) {
+    // A failed models fetch still reports status "ok", with empty groups and an
+    // error; keep the last good numbers rather than replacing them with nothing.
+    if (results[0]?.status === "ok" && results[0]?.quota?.groups && !results[0].quota.error) {
       accountManager.updateQuotaCache(accountIndex, results[0].quota.groups);
       accountManager.requestSaveToDisk();
     }
@@ -1092,6 +1100,10 @@ async function persistAccountPool(
 
   const indexByRefreshToken = new Map<string, number>();
   const indexByEmail = new Map<string, number>();
+  // Tokens a new sign-in replaced. The save merges by refresh token, so without
+  // a tombstone the old entry stays on disk next to the new one, and whichever
+  // copy looks more recently used can win the next load.
+  const replacedRefreshTokens: string[] = [];
   for (let i = 0; i < accounts.length; i++) {
     const acc = accounts[i];
     if (acc?.refreshToken) {
@@ -1156,6 +1168,7 @@ async function persistAccountPool(
     if (oldToken !== parts.refreshToken) {
       indexByRefreshToken.delete(oldToken);
       indexByRefreshToken.set(parts.refreshToken, existingIndex);
+      replacedRefreshTokens.push(oldToken);
     }
   }
 
@@ -1176,6 +1189,9 @@ async function persistAccountPool(
       claude: clampInt(activeIndex, 0, accounts.length - 1),
       gemini: clampInt(activeIndex, 0, accounts.length - 1),
     },
+    ...(replacedRefreshTokens.length > 0
+      ? { deletedRefreshTokenHashes: replacedRefreshTokens.map(hashRefreshToken) }
+      : {}),
   });
 }
 
@@ -1668,6 +1684,7 @@ export const loopEscapeTestHooks = {
     rateLimitStateByAccountQuota.clear()
     warmupAttemptCounts.clear()
     warmupSucceededSessionIds.clear()
+    quotaRefreshAttemptedAt.clear()
   },
 }
 
@@ -4101,6 +4118,7 @@ export const createAntigravityRuntime = (providerId: string) => async (
                     const updatedAccounts = [...currentStorage.accounts];
                     const parts = parseRefreshParts(result.refresh);
                     if (parts.refreshToken) {
+                      const replacedToken = updatedAccounts[refreshAccountIndex]?.refreshToken;
                       updatedAccounts[refreshAccountIndex] = {
                         email: result.email ?? updatedAccounts[refreshAccountIndex]?.email,
                         refreshToken: parts.refreshToken,
@@ -4114,6 +4132,11 @@ export const createAntigravityRuntime = (providerId: string) => async (
                         accounts: updatedAccounts,
                         activeIndex: currentStorage.activeIndex,
                         activeIndexByFamily: currentStorage.activeIndexByFamily,
+                        // The save merges by refresh token; tombstone the old one
+                        // so it is not kept alongside its replacement.
+                        ...(replacedToken && replacedToken !== parts.refreshToken
+                          ? { deletedRefreshTokenHashes: [hashRefreshToken(replacedToken)] }
+                          : {}),
                       });
                     }
                   }
@@ -4345,6 +4368,7 @@ export const createAntigravityRuntime = (providerId: string) => async (
   const dispose = async (): Promise<void> => {
     activeRefreshQueue?.stop();
     activeRefreshQueue = null;
+    shutdownDiskSignatureCache();
     const manager = activeLoaderAccountManager;
     activeLoaderAccountManager = null;
     if (manager) {
@@ -4533,6 +4557,7 @@ function getHeaderStyleFromUrl(
 
 export const __testExports = {
   getHeaderStyleFromUrl,
+  triggerAsyncQuotaRefreshForAccount,
   createSoftQuotaBlockedResponse,
   tryFetchWithAgySdkCredentials,
   verifyAccountAccess,

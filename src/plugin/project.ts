@@ -117,6 +117,13 @@ export function invalidateProjectContextCache(refresh?: string): void {
 }
 
 /**
+ * Upper bound on one project-resolution call, body included. These run before
+ * the first model request of an account, so a stalled connection would
+ * otherwise hang that request; a timeout moves on to the next endpoint.
+ */
+const PROJECT_REQUEST_TIMEOUT_MS = 15_000;
+
+/**
  * Loads managed project information for the given access token and optional project.
  */
 export async function loadManagedProject(
@@ -144,6 +151,7 @@ export async function loadManagedProject(
           method: "POST",
           headers: loadHeaders,
           body: JSON.stringify(requestBody),
+          signal: AbortSignal.timeout(PROJECT_REQUEST_TIMEOUT_MS),
         },
       );
 
@@ -191,6 +199,7 @@ export async function onboardManagedProject(
               "User-Agent": ANTIGRAVITY_CLI_USER_AGENT,
             },
             body: JSON.stringify(requestBody),
+            signal: AbortSignal.timeout(PROJECT_REQUEST_TIMEOUT_MS),
           },
         );
 

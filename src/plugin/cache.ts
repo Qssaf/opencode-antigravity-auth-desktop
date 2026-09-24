@@ -146,8 +146,17 @@ let diskCache: SignatureCache | null = null;
  * Call this from plugin initialization when keep_thinking is enabled.
  */
 export function initDiskSignatureCache(config: SignatureCacheConfig | undefined): SignatureCache | null {
+  // A runtime can be created again in one process (OpenCode 2.x recreates it
+  // after its last location unloads); stop the previous cache's timers first.
+  diskCache?.shutdown();
   diskCache = createSignatureCache(config);
   return diskCache;
+}
+
+/** Flushes the disk cache and stops its timers. */
+export function shutdownDiskSignatureCache(): void {
+  diskCache?.shutdown();
+  diskCache = null;
 }
 
 /**

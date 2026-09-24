@@ -7,6 +7,7 @@ const { ensureGitignoreSyncMock } = vi.hoisted(() => ({
 
 vi.mock("./storage", () => ({
   ensureGitignoreSync: ensureGitignoreSyncMock,
+  getConfigDir: () => "/tmp/opencode-antigravity-debug-tests-config",
 }))
 
 describe("debug sink policy", () => {

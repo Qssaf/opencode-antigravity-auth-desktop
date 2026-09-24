@@ -376,7 +376,8 @@ export class ProactiveRefreshQueue {
       bufferSeconds: this.config.bufferSeconds,
     });
 
-    // Run initial check after a short delay (let things settle)
+    // Run initial check after a short delay (let things settle).
+    // Neither timer may keep the process alive on its own.
     setTimeout(() => {
       if (this.state.isRunning) {
         this.runRefreshCheck().catch((error) => {
@@ -385,7 +386,7 @@ export class ProactiveRefreshQueue {
           });
         });
       }
-    }, 5000);
+    }, 5000).unref?.();
 
     // Set up periodic checks
     this.state.intervalHandle = setInterval(() => {
@@ -395,6 +396,7 @@ export class ProactiveRefreshQueue {
         });
       });
     }, intervalMs);
+    this.state.intervalHandle.unref?.();
   }
 
   /**

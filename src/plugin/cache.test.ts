@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
+  initDiskSignatureCache,
+  shutdownDiskSignatureCache,
   resolveCachedAuth,
   storeCachedAuth,
   clearCachedAuth,
@@ -327,5 +332,44 @@ describe("Signature Cache", () => {
       // Entry at index 0 (timestamp 0) should be evicted
       expect(getCachedSignature("session", "text-0")).toBeUndefined();
     });
+  });
+});
+
+describe("disk signature cache lifecycle", () => {
+  let configDir: string;
+  const cacheConfig = {
+    enabled: true,
+    memory_ttl_seconds: 3600,
+    disk_ttl_seconds: 172800,
+    write_interval_seconds: 60,
+  };
+
+  beforeEach(() => {
+    configDir = mkdtempSync(join(tmpdir(), "antigravity-sigcache-"));
+    process.env.OPENCODE_CONFIG_DIR = configDir;
+  });
+
+  afterEach(() => {
+    shutdownDiskSignatureCache();
+    delete process.env.OPENCODE_CONFIG_DIR;
+    rmSync(configDir, { recursive: true, force: true });
+  });
+
+  it("stops the previous cache when the runtime initializes it again", () => {
+    const first = initDiskSignatureCache(cacheConfig);
+    const shutdown = vi.spyOn(first!, "shutdown");
+
+    initDiskSignatureCache(cacheConfig);
+
+    expect(shutdown).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes to the configured OpenCode config directory", async () => {
+    const cache = initDiskSignatureCache(cacheConfig);
+    cache!.store("session:model", "signature");
+
+    await cache!.flush();
+
+    expect(existsSync(join(configDir, "antigravity-signature-cache.json"))).toBe(true);
   });
 });

@@ -210,7 +210,7 @@ export async function exchangeAntigravity(
     const { verifier, projectId } = decodeState(state);
 
     const startTime = Date.now();
-    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+    const tokenResponse = await fetchWithTimeout("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
@@ -235,7 +235,7 @@ export async function exchangeAntigravity(
 
     const tokenPayload = (await tokenResponse.json()) as AntigravityTokenResponse;
 
-    const userInfoResponse = await fetch(
+    const userInfoResponse = await fetchWithTimeout(
       "https://www.googleapis.com/oauth2/v1/userinfo?alt=json",
       {
         headers: {

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import {
   deduplicateAccountsByEmail,
+  hashRefreshToken,
   migrateV2ToV3,
   loadAccounts,
   removeAccountFromStorage,
@@ -275,6 +276,33 @@ describe("removeAccountFromStorage", () => {
     expect(saved.activeIndex).toBe(0);
     expect(saved.activeIndexByFamily).toEqual({ claude: 0, gemini: 0 });
     expect(diskContent).not.toContain("revoked");
+  });
+
+  it("drops a replaced token instead of keeping it next to its replacement", async () => {
+    // Signing in again as the same account swaps its refresh token. The save
+    // merges by token, so only the tombstone keeps the old entry from staying.
+    let diskContent = JSON.stringify({
+      version: 4,
+      accounts: [{ refreshToken: "old-token", email: "same@example.com", addedAt: 1, lastUsed: 1 }],
+      activeIndex: 0,
+    } satisfies AccountStorageV4);
+    vi.mocked(fs.readFile).mockImplementation(async (path) => {
+      if (String(path).endsWith(".gitignore")) return "";
+      return diskContent;
+    });
+    vi.mocked(fs.writeFile).mockImplementation(async (path, data) => {
+      if (String(path).includes(".tmp")) diskContent = String(data);
+    });
+
+    await saveAccounts({
+      version: 4,
+      accounts: [{ refreshToken: "new-token", email: "same@example.com", addedAt: 1, lastUsed: 2 }],
+      activeIndex: 0,
+      deletedRefreshTokenHashes: [hashRefreshToken("old-token")],
+    });
+
+    const saved = JSON.parse(diskContent) as AccountStorageV4;
+    expect(saved.accounts.map((account) => account.refreshToken)).toEqual(["new-token"]);
   });
 });
 

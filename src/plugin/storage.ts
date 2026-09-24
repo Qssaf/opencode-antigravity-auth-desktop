@@ -684,7 +684,8 @@ function mergeAccountStorage(
   };
 }
 
-function hashRefreshToken(refreshToken: string): string {
+/** The form a deleted refresh token is remembered in (`deletedRefreshTokenHashes`). */
+export function hashRefreshToken(refreshToken: string): string {
   return createHash("sha256").update(refreshToken).digest("hex");
 }
 

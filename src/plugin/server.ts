@@ -311,6 +311,26 @@ const successResponse = `<!DOCTYPE html>
       return;
     }
 
+    // Google redirects with `error` (e.g. access_denied) when the sign-in is
+    // cancelled or refused. That ends the login, but not as a success.
+    const oauthError = url.searchParams.get("error");
+    if (oauthError) {
+      response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+      response.end(`Google sign-in was not completed (${oauthError}). You can close this tab.`);
+      rejectCallback(new Error(`Google sign-in was not completed: ${oauthError}`));
+      setImmediate(() => {
+        server.close();
+      });
+      return;
+    }
+
+    // Anything else without a code is not the redirect; keep waiting for it.
+    if (!url.searchParams.get("code")) {
+      response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+      response.end("Missing authorization code.");
+      return;
+    }
+
     response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     response.end(successResponse);
 

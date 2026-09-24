@@ -150,7 +150,6 @@ import { generatePKCE } from "@openauthjs/openauth/pkce";
 import { createWriteStream, mkdirSync as mkdirSync2, readdirSync, statSync, unlinkSync as unlinkSync2 } from "node:fs";
 import { join as join2 } from "node:path";
 import { env } from "node:process";
-import { homedir as homedir2 } from "node:os";
 
 // src/plugin/logging-utils.ts
 function isTruthyFlag(flag) {
@@ -967,16 +966,8 @@ var MAX_BODY_PREVIEW_CHARS = 12e3;
 var MAX_BODY_LOG_CHARS = 5e4;
 var DEBUG_MESSAGE_PREFIX = "[opencode-antigravity-auth debug]";
 var debugState = null;
-function getConfigDir2() {
-  const platform = process.platform;
-  if (platform === "win32") {
-    return join2(env.APPDATA || join2(homedir2(), "AppData", "Roaming"), "opencode");
-  }
-  const xdgConfig = env.XDG_CONFIG_HOME || join2(homedir2(), ".config");
-  return join2(xdgConfig, "opencode");
-}
 function getLogsDir(customLogDir) {
-  const logsDir = customLogDir || join2(getConfigDir2(), "antigravity-logs");
+  const logsDir = customLogDir || join2(getConfigDir(), "antigravity-logs");
   try {
     mkdirSync2(logsDir, { recursive: true });
   } catch {
@@ -1040,7 +1031,7 @@ function initializeDebug(config) {
   const logFilePath = debugEnabled ? createLogFilePath(config.log_dir) : void 0;
   const logWriter = createLogWriter(logFilePath);
   if (debugEnabled) {
-    ensureGitignoreSync(getConfigDir2());
+    ensureGitignoreSync(getConfigDir());
   }
   debugState = {
     debugEnabled,
@@ -1442,7 +1433,7 @@ async function exchangeAntigravity(code, state) {
   try {
     const { verifier, projectId } = decodeState(state);
     const startTime = Date.now();
-    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+    const tokenResponse = await fetchWithTimeout("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
@@ -1464,7 +1455,7 @@ async function exchangeAntigravity(code, state) {
       return { type: "failed", error: errorText };
     }
     const tokenPayload = await tokenResponse.json();
-    const userInfoResponse = await fetch(
+    const userInfoResponse = await fetchWithTimeout(
       "https://www.googleapis.com/oauth2/v1/userinfo?alt=json",
       {
         headers: {
@@ -1888,7 +1879,7 @@ async function showAccountDetails(account) {
 // src/plugin/config/updater.ts
 import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2, mkdirSync as mkdirSync3 } from "node:fs";
 import { join as join3, dirname as dirname2 } from "node:path";
-import { homedir as homedir3 } from "node:os";
+import { homedir as homedir2 } from "node:os";
 
 // src/plugin/config/models.ts
 var DEFAULT_MODALITIES = {
@@ -2178,7 +2169,7 @@ function stripJsonCommentsAndTrailingCommas(json) {
   ).replace(/,(\s*[}\]])/g, "$1");
 }
 function getOpencodeConfigDir() {
-  const xdgConfig = process.env.XDG_CONFIG_HOME || join3(homedir3(), ".config");
+  const xdgConfig = process.env.XDG_CONFIG_HOME || join3(homedir2(), ".config");
   return join3(xdgConfig, "opencode");
 }
 function getOpencodeConfigPath() {
@@ -2434,6 +2425,7 @@ function invalidateProjectContextCache(refresh) {
   projectContextPendingCache.delete(refresh);
   projectContextResultCache.delete(refresh);
 }
+var PROJECT_REQUEST_TIMEOUT_MS = 15e3;
 async function loadManagedProject(accessToken, projectId) {
   const metadata = buildMetadata(projectId);
   const requestBody = { metadata };
@@ -2452,7 +2444,8 @@ async function loadManagedProject(accessToken, projectId) {
         {
           method: "POST",
           headers: loadHeaders,
-          body: JSON.stringify(requestBody)
+          body: JSON.stringify(requestBody),
+          signal: AbortSignal.timeout(PROJECT_REQUEST_TIMEOUT_MS)
         }
       );
       if (!response.ok) {
@@ -2484,7 +2477,8 @@ async function onboardManagedProject(accessToken, tierId, projectId, attempts = 
               Authorization: `Bearer ${accessToken}`,
               "User-Agent": ANTIGRAVITY_CLI_USER_AGENT
             },
-            body: JSON.stringify(requestBody)
+            body: JSON.stringify(requestBody),
+            signal: AbortSignal.timeout(PROJECT_REQUEST_TIMEOUT_MS)
           }
         );
         if (!response.ok) {
@@ -2592,17 +2586,8 @@ import { createHash as createHash2 } from "node:crypto";
 // src/plugin/cache/signature-cache.ts
 import { existsSync as existsSync3, mkdirSync as mkdirSync4, readFileSync as readFileSync3, writeFileSync as writeFileSync3, renameSync as renameSync2, unlinkSync as unlinkSync3 } from "node:fs";
 import { join as join4, dirname as dirname3 } from "node:path";
-import { homedir as homedir4 } from "node:os";
-function getConfigDir3() {
-  const platform = process.platform;
-  if (platform === "win32") {
-    return join4(process.env.APPDATA || join4(homedir4(), "AppData", "Roaming"), "opencode");
-  }
-  const xdgConfig = process.env.XDG_CONFIG_HOME || join4(homedir4(), ".config");
-  return join4(xdgConfig, "opencode");
-}
 function getCacheFilePath() {
-  return join4(getConfigDir3(), "antigravity-signature-cache.json");
+  return join4(getConfigDir(), "antigravity-signature-cache.json");
 }
 var SignatureCache = class {
   // In-memory cache: key -> entry with signature and optional thinking text
@@ -2882,6 +2867,8 @@ var SignatureCache = class {
     this.cleanupTimer = setInterval(() => {
       this.cleanupExpired();
     }, 30 * 60 * 1e3);
+    this.writeTimer.unref?.();
+    this.cleanupTimer.unref?.();
   }
   /**
    * Remove expired entries from memory.
@@ -2960,8 +2947,13 @@ function evictStaleSessions(now) {
 var SIGNATURE_TEXT_HASH_HEX_LEN = 16;
 var diskCache = null;
 function initDiskSignatureCache(config) {
+  diskCache?.shutdown();
   diskCache = createSignatureCache(config);
   return diskCache;
+}
+function shutdownDiskSignatureCache() {
+  diskCache?.shutdown();
+  diskCache = null;
 }
 function hashText(text) {
   return createHash2("sha256").update(text, "utf8").digest("hex").slice(0, SIGNATURE_TEXT_HASH_HEX_LEN);
@@ -3505,17 +3497,17 @@ var DEFAULT_CONFIG = {
 // src/plugin/config/loader.ts
 import { existsSync as existsSync4, readFileSync as readFileSync4 } from "node:fs";
 import { join as join5 } from "node:path";
-import { homedir as homedir5 } from "node:os";
+import { homedir as homedir3 } from "node:os";
 var log4 = createLogger("config");
-function getConfigDir4() {
+function getConfigDir2() {
   if (process.env.OPENCODE_CONFIG_DIR) {
     return process.env.OPENCODE_CONFIG_DIR;
   }
-  const xdgConfig = process.env.XDG_CONFIG_HOME || join5(homedir5(), ".config");
+  const xdgConfig = process.env.XDG_CONFIG_HOME || join5(homedir3(), ".config");
   return join5(xdgConfig, "opencode");
 }
 function getUserConfigPath() {
-  return join5(getConfigDir4(), "antigravity.json");
+  return join5(getConfigDir2(), "antigravity.json");
 }
 function getProjectConfigPath(directory) {
   return join5(directory, ".opencode", "antigravity.json");
@@ -3580,11 +3572,11 @@ function getKeepThinking() {
 
 // src/plugin/image-saver.ts
 import { mkdirSync as mkdirSync5, writeFileSync as writeFileSync4 } from "node:fs";
-import { homedir as homedir6 } from "node:os";
+import { homedir as homedir4 } from "node:os";
 import { join as join6 } from "node:path";
 var log5 = createLogger("image-saver");
 function getImageOutputDir() {
-  const homeDir = homedir6();
+  const homeDir = homedir4();
   return join6(homeDir, ".opencode", "generated-images");
 }
 function generateImageFilename(mimeType) {
@@ -6757,13 +6749,13 @@ import { join as join8 } from "node:path";
 
 // src/plugin/recovery/constants.ts
 import { join as join7 } from "node:path";
-import { homedir as homedir7 } from "node:os";
+import { homedir as homedir5 } from "node:os";
 function getXdgData() {
   const platform = process.platform;
   if (platform === "win32") {
-    return process.env.APPDATA || join7(homedir7(), "AppData", "Roaming");
+    return process.env.APPDATA || join7(homedir5(), "AppData", "Roaming");
   }
-  return process.env.XDG_DATA_HOME || join7(homedir7(), ".local", "share");
+  return process.env.XDG_DATA_HOME || join7(homedir5(), ".local", "share");
 }
 var OPENCODE_STORAGE = join7(getXdgData(), "opencode", "storage");
 var MESSAGE_STORAGE = join7(OPENCODE_STORAGE, "message");
@@ -9308,6 +9300,21 @@ async function startOAuthListener({ timeoutMs = 5 * 60 * 1e3 } = {}) {
       response.end("Not found");
       return;
     }
+    const oauthError = url.searchParams.get("error");
+    if (oauthError) {
+      response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+      response.end(`Google sign-in was not completed (${oauthError}). You can close this tab.`);
+      rejectCallback(new Error(`Google sign-in was not completed: ${oauthError}`));
+      setImmediate(() => {
+        server.close();
+      });
+      return;
+    }
+    if (!url.searchParams.get("code")) {
+      response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+      response.end("Missing authorization code.");
+      return;
+    }
     response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     response.end(successResponse);
     resolveCallback(url);
@@ -11713,7 +11720,7 @@ var ProactiveRefreshQueue = class {
           });
         });
       }
-    }, 5e3);
+    }, 5e3).unref?.();
     this.state.intervalHandle = setInterval(() => {
       this.runRefreshCheck().catch((error) => {
         log9.error("Check failed", {
@@ -11721,6 +11728,7 @@ var ProactiveRefreshQueue = class {
         });
       });
     }, intervalMs);
+    this.state.intervalHandle.unref?.();
   }
   /**
    * Stop the background refresh queue.
@@ -12416,6 +12424,7 @@ function resetAllAccountsBlockedToasts() {
   rateLimitToastShown = false;
 }
 var quotaRefreshInProgressByEmail = /* @__PURE__ */ new Set();
+var quotaRefreshAttemptedAt = /* @__PURE__ */ new Map();
 function defaultRetryMsForConfig(config) {
   return (config.default_retry_after_seconds ?? 60) * 1e3;
 }
@@ -12621,7 +12630,9 @@ async function triggerAsyncQuotaRefreshForAccount(accountManager, accountIndex, 
   const intervalMs = intervalMinutes * 60 * 1e3;
   const age = account.cachedQuotaUpdatedAt != null ? Date.now() - account.cachedQuotaUpdatedAt : Infinity;
   if (age < intervalMs) return;
+  if (Date.now() - (quotaRefreshAttemptedAt.get(accountKey) ?? 0) < intervalMs) return;
   quotaRefreshInProgressByEmail.add(accountKey);
+  quotaRefreshAttemptedAt.set(accountKey, Date.now());
   try {
     const accountsForCheck = accountManager.getAccountsForQuotaCheck();
     const singleAccount = accountsForCheck[accountIndex];
@@ -12630,7 +12641,7 @@ async function triggerAsyncQuotaRefreshForAccount(accountManager, accountIndex, 
       return;
     }
     const results = await checkAccountsQuota([singleAccount], client2, providerId);
-    if (results[0]?.status === "ok" && results[0]?.quota?.groups) {
+    if (results[0]?.status === "ok" && results[0]?.quota?.groups && !results[0].quota.error) {
       accountManager.updateQuotaCache(accountIndex, results[0].quota.groups);
       accountManager.requestSaveToDisk();
     }
@@ -13111,6 +13122,7 @@ async function persistAccountPool(results, replaceAll = false) {
   const accounts = stored?.accounts ? [...stored.accounts] : [];
   const indexByRefreshToken = /* @__PURE__ */ new Map();
   const indexByEmail = /* @__PURE__ */ new Map();
+  const replacedRefreshTokens = [];
   for (let i = 0; i < accounts.length; i++) {
     const acc = accounts[i];
     if (acc?.refreshToken) {
@@ -13161,6 +13173,7 @@ async function persistAccountPool(results, replaceAll = false) {
     if (oldToken !== parts.refreshToken) {
       indexByRefreshToken.delete(oldToken);
       indexByRefreshToken.set(parts.refreshToken, existingIndex);
+      replacedRefreshTokens.push(oldToken);
     }
   }
   if (accounts.length === 0) {
@@ -13174,7 +13187,8 @@ async function persistAccountPool(results, replaceAll = false) {
     activeIndexByFamily: {
       claude: clampInt(activeIndex, 0, accounts.length - 1),
       gemini: clampInt(activeIndex, 0, accounts.length - 1)
-    }
+    },
+    ...replacedRefreshTokens.length > 0 ? { deletedRefreshTokenHashes: replacedRefreshTokens.map(hashRefreshToken) } : {}
   });
 }
 function buildAuthSuccessFromStoredAccount(account) {
@@ -15336,6 +15350,7 @@ Re-authenticating ${refreshEmail || "account"}...
                       const updatedAccounts = [...currentStorage.accounts];
                       const parts = parseRefreshParts(result.refresh);
                       if (parts.refreshToken) {
+                        const replacedToken = updatedAccounts[refreshAccountIndex]?.refreshToken;
                         updatedAccounts[refreshAccountIndex] = {
                           email: result.email ?? updatedAccounts[refreshAccountIndex]?.email,
                           refreshToken: parts.refreshToken,
@@ -15348,7 +15363,10 @@ Re-authenticating ${refreshEmail || "account"}...
                           version: 4,
                           accounts: updatedAccounts,
                           activeIndex: currentStorage.activeIndex,
-                          activeIndexByFamily: currentStorage.activeIndexByFamily
+                          activeIndexByFamily: currentStorage.activeIndexByFamily,
+                          // The save merges by refresh token; tombstone the old one
+                          // so it is not kept alongside its replacement.
+                          ...replacedToken && replacedToken !== parts.refreshToken ? { deletedRefreshTokenHashes: [hashRefreshToken(replacedToken)] } : {}
                         });
                       }
                     }
@@ -15536,6 +15554,7 @@ Re-authenticating ${refreshEmail || "account"}...
   const dispose = async () => {
     activeRefreshQueue?.stop();
     activeRefreshQueue = null;
+    shutdownDiskSignatureCache();
     const manager = activeLoaderAccountManager;
     activeLoaderAccountManager = null;
     if (manager) {

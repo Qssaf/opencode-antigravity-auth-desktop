@@ -34,7 +34,7 @@ vi.mock("./plugin/storage", async (importOriginal) => {
   };
 });
 
-const { createAntigravityPlugin, liveAccountPool, loopEscapeTestHooks, __testExports } = await import("./plugin");
+const { createAntigravityPlugin, liveAccountPool, loopEscapeTestHooks, oauthFlowHelpers, __testExports } = await import("./plugin");
 const storageModule = await import("./plugin/storage");
 const { resetPublicGeminiApiModelCatalogForTests } = await import("./plugin/model-catalog");
 const { resetAgySdkCredentialStateForTests } = await import("./plugin/api-key");
@@ -1423,5 +1423,95 @@ describe("liveAccountPool", () => {
 
     liveAccountPool.remove("token-a");
     expect(removeByIndex).toHaveBeenCalledWith(0);
+  });
+});
+
+describe("persistAccountPool", () => {
+  it("tombstones the token a new sign-in replaces", async () => {
+    vi.mocked(storageModule.loadAccounts).mockResolvedValue({
+      version: 4,
+      accounts: [{ email: "same@example.com", refreshToken: "old-token", addedAt: 1, lastUsed: 1, enabled: true }],
+      activeIndex: 0,
+    });
+    vi.mocked(storageModule.saveAccounts).mockClear();
+
+    await oauthFlowHelpers.persistAccountPool(
+      [{ type: "success", refresh: "new-token|project|managed", access: "a", expires: 1, email: "same@example.com", projectId: "project" }],
+      false,
+    );
+
+    const saved = vi.mocked(storageModule.saveAccounts).mock.calls.at(-1)?.[0];
+    expect(saved?.accounts.map((account) => account.refreshToken)).toEqual(["new-token"]);
+    expect(saved?.deletedRefreshTokenHashes).toEqual([storageModule.hashRefreshToken("old-token")]);
+  });
+
+  it("adds no tombstone when the token is unchanged", async () => {
+    vi.mocked(storageModule.loadAccounts).mockResolvedValue({
+      version: 4,
+      accounts: [{ email: "same@example.com", refreshToken: "same-token", addedAt: 1, lastUsed: 1, enabled: true }],
+      activeIndex: 0,
+    });
+    vi.mocked(storageModule.saveAccounts).mockClear();
+
+    await oauthFlowHelpers.persistAccountPool(
+      [{ type: "success", refresh: "same-token|project|managed", access: "a", expires: 1, email: "same@example.com", projectId: "project" }],
+      false,
+    );
+
+    expect(vi.mocked(storageModule.saveAccounts).mock.calls.at(-1)?.[0].deletedRefreshTokenHashes).toBeUndefined();
+  });
+});
+
+describe("background quota refresh", () => {
+  beforeEach(() => {
+    loopEscapeTestHooks.resetAllInternalState();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function managerWithCachedQuota() {
+    const account = {
+      index: 0,
+      email: "quota@example.com",
+      enabled: true,
+      cachedQuota: { claude: { remainingFraction: 0.5, modelCount: 1 } },
+      cachedQuotaUpdatedAt: 0,
+    };
+    return {
+      account,
+      manager: {
+        getAccounts: () => [account],
+        getAccountsForQuotaCheck: () => [
+          { email: account.email, refreshToken: "refresh-token", addedAt: 0, lastUsed: 0, enabled: true },
+        ],
+        updateQuotaCache: vi.fn(),
+        requestSaveToDisk: vi.fn(),
+      },
+    };
+  }
+
+  it("keeps the last good quota and does not retry on every request when the check fails", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo) => {
+      const url = String(input);
+      if (url.includes("oauth2.googleapis.com")) {
+        return new Response(JSON.stringify({ access_token: "access", expires_in: 3600 }), { status: 200 });
+      }
+      // Every quota endpoint is failing.
+      return new Response("unavailable", { status: 500 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { manager } = managerWithCachedQuota();
+
+    await __testExports.triggerAsyncQuotaRefreshForAccount(manager as never, 0, client, "google", 15);
+    const callsAfterFirst = fetchMock.mock.calls.length;
+    await __testExports.triggerAsyncQuotaRefreshForAccount(manager as never, 0, client, "google", 15);
+
+    expect(callsAfterFirst).toBeGreaterThan(0);
+    // The failed result must not replace the cached numbers with nothing.
+    expect(manager.updateQuotaCache).not.toHaveBeenCalled();
+    // And the next request does not start another refresh straight away.
+    expect(fetchMock.mock.calls.length).toBe(callsAfterFirst);
   });
 });
