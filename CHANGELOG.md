@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- **Signing in again as the same account could bring the old token back** - A second sign-in as an account already in the pool swaps its refresh token, but saves merge by refresh token, so the old entry stayed in the file next to the new one. Whichever copy looked more recently used won the next load, which could put a stale or revoked token back in rotation. The replaced token is now tombstoned, the same way a removed account is, in both the login path and the 1.x "refresh account" path.
+
+- **Cancelling the Google sign-in reported success** - The local callback listener treated any hit on `/oauth-callback` as the redirect. When Google returned `error=access_denied` (sign-in cancelled or refused), the browser showed "Authentication Successful" and the login then failed with "Missing code or state". It now shows that the sign-in was not completed and fails with Google's error. A stray request to the callback path without a code no longer ends the login; the listener keeps waiting for the real redirect.
+
+- **A failing quota endpoint emptied the cached quota and was retried on every request** - The background quota refresh treated a failed models fetch as a result with no quota groups, replacing the last good numbers (which feed soft-quota routing) with nothing, and did not record the attempt, so every later request started another refresh. It now keeps the last good numbers and waits the normal refresh interval before trying again.
+
+- **More network calls are bounded by timeouts** - Project resolution (`loadCodeAssist`, `onboardUser`), which runs before an account's first request, now gives up after 15 seconds and moves to the next endpoint instead of hanging the request. The token exchange and user-info calls at sign-in use the 10-second timeout the rest of the login already had.
+
+- **Background timers no longer leak or keep the process alive** - The disk signature cache (used with `keep_thinking`) was never shut down, so each runtime rebuild left its write and cleanup timers running, and neither those nor the proactive refresh timers were unreferenced. The cache is now shut down with the runtime and before being recreated, and all of these timers are unreferenced.
+
+- **Debug logs and the signature cache now live in the documented directory** - Both computed their own config directory, using `%APPDATA%\opencode` on Windows and ignoring `OPENCODE_CONFIG_DIR`, while the account pool, the config file and the docs use `~/.config/opencode` everywhere. They now share the account pool's directory.
+
 - **Login menu changes could land on the wrong account** - After the menu enabled, disabled or removed an account in the file, it mirrored the change into the running pool by account number. The running pool can number accounts differently from the file (another process added or removed one since it loaded), so the change could hit a different account and a later save would write that back to disk. The mirror now matches by refresh token. Picking the same account twice also applies once instead of removing the account that moved into its place.
 
 - **"All accounts" could wipe the pool from one menu pick** - The option was described as "verify only" but applied to remove as well, deleting every stored refresh token with no confirmation. Remove now refuses it and points to `antigravity-accounts remove --all`; enable, disable and verify still accept it.
