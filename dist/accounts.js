@@ -258,6 +258,7 @@ var GITIGNORE_ENTRIES = [
   ".gitignore",
   "antigravity-accounts.json",
   "antigravity-accounts.json.*.tmp",
+  "antigravity-accounts.json.corrupt-*",
   "antigravity-signature-cache.json",
   "antigravity-logs/"
 ];
@@ -903,12 +904,28 @@ async function writeAccountsAtomically(path4, storage) {
     throw error;
   }
 }
+async function backupUnreadableAccounts(path4, content) {
+  const digest = createHash("sha256").update(content).digest("hex").slice(0, 12);
+  const backupPath = `${path4}.corrupt-${digest}`;
+  try {
+    await fs.writeFile(backupPath, content, { encoding: "utf-8", mode: 384 });
+    log.warn("Account storage could not be read; kept a copy before replacing it", { backupPath });
+  } catch (error) {
+    log.warn("Could not back up unreadable account storage", { backupPath, error: String(error) });
+  }
+}
 async function loadAccountsUnsafe() {
   try {
     const path4 = getStoragePath();
     await ensureSecurePermissions(path4);
     const content = await fs.readFile(path4, "utf-8");
-    const parsed = JSON.parse(content);
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      await backupUnreadableAccounts(path4, content);
+      return null;
+    }
     if (parsed.version === 1) {
       return remapDeduplicatedStorage(
         migrateV3ToV4(migrateV2ToV3(migrateV1ToV2(parsed)))
@@ -923,6 +940,7 @@ async function loadAccountsUnsafe() {
     if (parsed.version === 4) {
       return remapDeduplicatedStorage(parsed);
     }
+    await backupUnreadableAccounts(path4, content);
     return null;
   } catch (error) {
     const code = error.code;
@@ -1383,8 +1401,7 @@ async function fetchProjectID(accessToken) {
   const loadHeaders = {
     Authorization: `Bearer ${accessToken}`,
     "Content-Type": "application/json",
-    "User-Agent": GEMINI_CLI_HEADERS["User-Agent"],
-    "Client-Metadata": getAntigravityHeaders()["Client-Metadata"]
+    "User-Agent": ANTIGRAVITY_CLI_USER_AGENT
   };
   const loadEndpoints = Array.from(
     /* @__PURE__ */ new Set([...ANTIGRAVITY_LOAD_ENDPOINTS, ...ANTIGRAVITY_ENDPOINT_FALLBACKS])
@@ -1397,9 +1414,7 @@ async function fetchProjectID(accessToken) {
         headers: loadHeaders,
         body: JSON.stringify({
           metadata: {
-            ideType: "ANTIGRAVITY",
-            platform: process.platform === "win32" ? "WINDOWS" : "MACOS",
-            pluginType: "GEMINI"
+            ideType: "ANTIGRAVITY"
           }
         })
       });
@@ -15274,9 +15289,10 @@ Re-authenticating ${refreshEmail || "account"}...
                     try {
                       const SOFT_TIMEOUT_MS = 3e4;
                       const callbackPromise = listener2.waitForCallback();
-                      const timeoutPromise = new Promise(
-                        (_, reject) => setTimeout(() => reject(new Error("SOFT_TIMEOUT")), SOFT_TIMEOUT_MS)
-                      );
+                      let softTimer;
+                      const timeoutPromise = new Promise((_, reject) => {
+                        softTimer = setTimeout(() => reject(new Error("SOFT_TIMEOUT")), SOFT_TIMEOUT_MS);
+                      });
                       let callbackUrl;
                       try {
                         callbackUrl = await Promise.race([callbackPromise, timeoutPromise]);
@@ -15293,6 +15309,8 @@ Re-authenticating ${refreshEmail || "account"}...
                           return promptManualOAuthInput(fallbackState2);
                         }
                         throw err;
+                      } finally {
+                        clearTimeout(softTimer);
                       }
                       const params = extractOAuthCallbackParams(callbackUrl);
                       if (!params) {
@@ -15451,9 +15469,10 @@ Re-authenticating ${refreshEmail || "account"}...
                   const CALLBACK_TIMEOUT_MS = 3e4;
                   try {
                     const callbackPromise = listener.waitForCallback();
-                    const timeoutPromise = new Promise(
-                      (_, reject) => setTimeout(() => reject(new Error("CALLBACK_TIMEOUT")), CALLBACK_TIMEOUT_MS)
-                    );
+                    let callbackTimer;
+                    const timeoutPromise = new Promise((_, reject) => {
+                      callbackTimer = setTimeout(() => reject(new Error("CALLBACK_TIMEOUT")), CALLBACK_TIMEOUT_MS);
+                    });
                     let callbackUrl;
                     try {
                       callbackUrl = await Promise.race([callbackPromise, timeoutPromise]);
@@ -15465,6 +15484,8 @@ Re-authenticating ${refreshEmail || "account"}...
                         };
                       }
                       throw err;
+                    } finally {
+                      clearTimeout(callbackTimer);
                     }
                     const params = extractOAuthCallbackParams(callbackUrl);
                     if (!params) {

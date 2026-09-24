@@ -278,6 +278,27 @@ describe("removeAccountFromStorage", () => {
     expect(diskContent).not.toContain("revoked");
   });
 
+  it("keeps a copy of an unreadable account file before a save replaces it", async () => {
+    const corrupt = '{"version": 4, "accounts": [{"refreshToken": "recover-me"';
+    vi.mocked(fs.readFile).mockImplementation(async (path) => {
+      if (String(path).endsWith(".gitignore")) return "";
+      return corrupt;
+    });
+    vi.mocked(fs.writeFile).mockClear();
+    vi.mocked(fs.writeFile).mockResolvedValue(undefined);
+
+    await saveAccounts({
+      version: 4,
+      accounts: [{ refreshToken: "new-token", addedAt: 1, lastUsed: 1 }],
+      activeIndex: 0,
+    });
+
+    const backup = vi.mocked(fs.writeFile).mock.calls.find(([path]) => String(path).includes(".corrupt-"));
+    expect(backup?.[1]).toBe(corrupt);
+    // The save itself still goes ahead.
+    expect(vi.mocked(fs.writeFile).mock.calls.some(([path]) => String(path).endsWith(".tmp"))).toBe(true);
+  });
+
   it("drops a replaced token instead of keeping it next to its replacement", async () => {
     // Signing in again as the same account swaps its refresh token. The save
     // merges by token, so only the tombstone keeps the old entry from staying.
@@ -660,6 +681,7 @@ describe("Storage Migration", () => {
         ".gitignore",
         "antigravity-accounts.json",
         "antigravity-accounts.json.*.tmp",
+        "antigravity-accounts.json.corrupt-*",
         "antigravity-signature-cache.json",
         "antigravity-logs/",
       ].join("\n");
@@ -724,6 +746,7 @@ describe("Storage Migration", () => {
         ".gitignore",
         "antigravity-accounts.json",
         "antigravity-accounts.json.*.tmp",
+        "antigravity-accounts.json.corrupt-*",
         "antigravity-signature-cache.json",
         "antigravity-logs/",
       ].join("\n");

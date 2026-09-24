@@ -253,6 +253,7 @@ var GITIGNORE_ENTRIES = [
   ".gitignore",
   "antigravity-accounts.json",
   "antigravity-accounts.json.*.tmp",
+  "antigravity-accounts.json.corrupt-*",
   "antigravity-signature-cache.json",
   "antigravity-logs/"
 ];
@@ -898,12 +899,28 @@ async function writeAccountsAtomically(path4, storage) {
     throw error;
   }
 }
+async function backupUnreadableAccounts(path4, content) {
+  const digest2 = createHash("sha256").update(content).digest("hex").slice(0, 12);
+  const backupPath = `${path4}.corrupt-${digest2}`;
+  try {
+    await fs.writeFile(backupPath, content, { encoding: "utf-8", mode: 384 });
+    log.warn("Account storage could not be read; kept a copy before replacing it", { backupPath });
+  } catch (error) {
+    log.warn("Could not back up unreadable account storage", { backupPath, error: String(error) });
+  }
+}
 async function loadAccountsUnsafe() {
   try {
     const path4 = getStoragePath();
     await ensureSecurePermissions(path4);
     const content = await fs.readFile(path4, "utf-8");
-    const parsed = JSON.parse(content);
+    let parsed;
+    try {
+      parsed = JSON.parse(content);
+    } catch {
+      await backupUnreadableAccounts(path4, content);
+      return null;
+    }
     if (parsed.version === 1) {
       return remapDeduplicatedStorage(
         migrateV3ToV4(migrateV2ToV3(migrateV1ToV2(parsed)))
@@ -918,6 +935,7 @@ async function loadAccountsUnsafe() {
     if (parsed.version === 4) {
       return remapDeduplicatedStorage(parsed);
     }
+    await backupUnreadableAccounts(path4, content);
     return null;
   } catch (error) {
     const code = error.code;
@@ -1378,8 +1396,7 @@ async function fetchProjectID(accessToken) {
   const loadHeaders = {
     Authorization: `Bearer ${accessToken}`,
     "Content-Type": "application/json",
-    "User-Agent": GEMINI_CLI_HEADERS["User-Agent"],
-    "Client-Metadata": getAntigravityHeaders()["Client-Metadata"]
+    "User-Agent": ANTIGRAVITY_CLI_USER_AGENT
   };
   const loadEndpoints = Array.from(
     /* @__PURE__ */ new Set([...ANTIGRAVITY_LOAD_ENDPOINTS, ...ANTIGRAVITY_ENDPOINT_FALLBACKS])
@@ -1392,9 +1409,7 @@ async function fetchProjectID(accessToken) {
         headers: loadHeaders,
         body: JSON.stringify({
           metadata: {
-            ideType: "ANTIGRAVITY",
-            platform: process.platform === "win32" ? "WINDOWS" : "MACOS",
-            pluginType: "GEMINI"
+            ideType: "ANTIGRAVITY"
           }
         })
       });
@@ -15269,9 +15284,10 @@ Re-authenticating ${refreshEmail || "account"}...
                     try {
                       const SOFT_TIMEOUT_MS = 3e4;
                       const callbackPromise = listener2.waitForCallback();
-                      const timeoutPromise = new Promise(
-                        (_, reject) => setTimeout(() => reject(new Error("SOFT_TIMEOUT")), SOFT_TIMEOUT_MS)
-                      );
+                      let softTimer;
+                      const timeoutPromise = new Promise((_, reject) => {
+                        softTimer = setTimeout(() => reject(new Error("SOFT_TIMEOUT")), SOFT_TIMEOUT_MS);
+                      });
                       let callbackUrl;
                       try {
                         callbackUrl = await Promise.race([callbackPromise, timeoutPromise]);
@@ -15288,6 +15304,8 @@ Re-authenticating ${refreshEmail || "account"}...
                           return promptManualOAuthInput(fallbackState2);
                         }
                         throw err;
+                      } finally {
+                        clearTimeout(softTimer);
                       }
                       const params = extractOAuthCallbackParams(callbackUrl);
                       if (!params) {
@@ -15446,9 +15464,10 @@ Re-authenticating ${refreshEmail || "account"}...
                   const CALLBACK_TIMEOUT_MS = 3e4;
                   try {
                     const callbackPromise = listener.waitForCallback();
-                    const timeoutPromise = new Promise(
-                      (_, reject) => setTimeout(() => reject(new Error("CALLBACK_TIMEOUT")), CALLBACK_TIMEOUT_MS)
-                    );
+                    let callbackTimer;
+                    const timeoutPromise = new Promise((_, reject) => {
+                      callbackTimer = setTimeout(() => reject(new Error("CALLBACK_TIMEOUT")), CALLBACK_TIMEOUT_MS);
+                    });
                     let callbackUrl;
                     try {
                       callbackUrl = await Promise.race([callbackPromise, timeoutPromise]);
@@ -15460,6 +15479,8 @@ Re-authenticating ${refreshEmail || "account"}...
                         };
                       }
                       throw err;
+                    } finally {
+                      clearTimeout(callbackTimer);
                     }
                     const params = extractOAuthCallbackParams(callbackUrl);
                     if (!params) {
@@ -15741,6 +15762,12 @@ var DEFAULT_INPUT_MODALITIES = ["text", "image", "pdf"];
 var DEFAULT_OUTPUT_MODALITIES = ["text"];
 var DEFAULT_CONTEXT_LIMIT = 1048576;
 var DEFAULT_OUTPUT_LIMIT = 65536;
+var FREE_COST = [{ input: 0, output: 0, cache: { read: 0, write: 0 } }];
+function isFree(cost) {
+  return (cost ?? []).every(
+    (entry) => entry.input === 0 && entry.output === 0 && entry.cache.read === 0 && entry.cache.write === 0
+  );
+}
 function isRecord2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -15791,8 +15818,7 @@ function toV2Model(providerID, id, definition) {
     },
     variants: legacyVariantsToV2(definition.variants),
     time: { released: 0 },
-    // Antigravity usage is not billed per token; show it as free like the 1.x plugin did.
-    cost: [{ input: 0, output: 0, cache: { read: 0, write: 0 } }],
+    cost: FREE_COST,
     status: "active",
     enabled: true,
     limit: {
@@ -15823,13 +15849,16 @@ function catalogFromDefinitions(providerID, definitions) {
   }
   return catalog2;
 }
-function mergeCatalog(existing, catalog2) {
+function mergeCatalog(existing, catalog2, options = {}) {
   const merged = /* @__PURE__ */ new Map();
   let changed = false;
   for (const [id, model] of existing) {
-    const migrated = migrateModelSettings(model);
-    if (migrated !== model) changed = true;
-    merged.set(id, migrated);
+    let next = migrateModelSettings(model);
+    if (options.free && !isFree(next.cost)) {
+      next = { ...next, cost: FREE_COST };
+    }
+    if (next !== model) changed = true;
+    merged.set(id, next);
   }
   for (const [id, model] of catalog2) {
     if (merged.has(id)) continue;
@@ -16865,8 +16894,14 @@ var V2Runtime = class _V2Runtime {
   applyModels(editor) {
     const record = editor.get(PROVIDER_ID);
     if (!record) return;
-    const merged = mergeCatalog(record.models, this.catalog);
+    const merged = mergeCatalog(record.models, this.catalog, { free: this.hasAccounts() });
     if (merged) editor.models.set(PROVIDER_ID, merged);
+  }
+  hasAccounts() {
+    return this.loginAccounts.length > 0;
+  }
+  notifyCatalogChange() {
+    for (const listener of this.catalogListeners) listener();
   }
   onCatalogChange(listener) {
     this.catalogListeners.add(listener);
@@ -16898,9 +16933,7 @@ var V2Runtime = class _V2Runtime {
       }
       const changed = next.size !== this.catalog.size || [...next.keys()].some((id) => !this.catalog.has(id));
       this.catalog = next;
-      if (changed) {
-        for (const listener of this.catalogListeners) listener();
-      }
+      if (changed) this.notifyCatalogChange();
     } catch (error) {
       log14.debug("Model discovery failed; keeping the built-in model list", { error: String(error) });
     }
@@ -16923,6 +16956,7 @@ var V2Runtime = class _V2Runtime {
    * offers matches the pool after a change.
    */
   async reloadLoginMenu() {
+    const hadAccounts = this.hasAccounts();
     await this.refreshLoginAccounts();
     for (const ctx of this.attached) {
       try {
@@ -16931,6 +16965,7 @@ var V2Runtime = class _V2Runtime {
         log14.debug("Could not reload the login menu for this location", { error: String(error) });
       }
     }
+    if (this.hasAccounts() !== hadAccounts) this.notifyCatalogChange();
   }
   /** The OAuth method registered on the `google` integration. */
   oauthMethod() {

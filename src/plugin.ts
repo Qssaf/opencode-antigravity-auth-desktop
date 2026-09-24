@@ -4033,9 +4033,10 @@ export const createAntigravityRuntime = (providerId: string) => async (
                   try {
                     const SOFT_TIMEOUT_MS = 30000;
                     const callbackPromise = listener.waitForCallback();
-                    const timeoutPromise = new Promise<never>((_, reject) =>
-                      setTimeout(() => reject(new Error("SOFT_TIMEOUT")), SOFT_TIMEOUT_MS)
-                    );
+                    let softTimer: ReturnType<typeof setTimeout> | undefined;
+                    const timeoutPromise = new Promise<never>((_, reject) => {
+                      softTimer = setTimeout(() => reject(new Error("SOFT_TIMEOUT")), SOFT_TIMEOUT_MS);
+                    });
 
                     let callbackUrl: URL;
                     try {
@@ -4054,6 +4055,9 @@ export const createAntigravityRuntime = (providerId: string) => async (
                         return promptManualOAuthInput(fallbackState);
                       }
                       throw err;
+                    } finally {
+                      // A login that finishes early must not leave the timer holding the process.
+                      clearTimeout(softTimer);
                     }
 
                     const params = extractOAuthCallbackParams(callbackUrl);
@@ -4244,9 +4248,10 @@ export const createAntigravityRuntime = (providerId: string) => async (
                 const CALLBACK_TIMEOUT_MS = 30000;
                 try {
                   const callbackPromise = listener.waitForCallback();
-                  const timeoutPromise = new Promise<never>((_, reject) =>
-                    setTimeout(() => reject(new Error("CALLBACK_TIMEOUT")), CALLBACK_TIMEOUT_MS),
-                  );
+                  let callbackTimer: ReturnType<typeof setTimeout> | undefined;
+                  const timeoutPromise = new Promise<never>((_, reject) => {
+                    callbackTimer = setTimeout(() => reject(new Error("CALLBACK_TIMEOUT")), CALLBACK_TIMEOUT_MS);
+                  });
 
                   let callbackUrl: URL;
                   try {
@@ -4259,6 +4264,8 @@ export const createAntigravityRuntime = (providerId: string) => async (
                       };
                     }
                     throw err;
+                  } finally {
+                    clearTimeout(callbackTimer);
                   }
 
                   const params = extractOAuthCallbackParams(callbackUrl);

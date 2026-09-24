@@ -26,6 +26,7 @@ export const GITIGNORE_ENTRIES = [
   ".gitignore",
   "antigravity-accounts.json",
   "antigravity-accounts.json.*.tmp",
+  "antigravity-accounts.json.corrupt-*",
   "antigravity-signature-cache.json",
   "antigravity-logs/",
 ];
@@ -1094,6 +1095,23 @@ async function writeAccountsAtomically(path: string, storage: AccountStorageV4):
   }
 }
 
+/**
+ * Keeps a copy of an account file that exists but cannot be used. The saves
+ * that call `loadAccountsUnsafe` treat it as empty and write over it, which
+ * would lose refresh tokens that may still be recoverable by hand. The name
+ * carries a content hash, so saving repeatedly over one bad file keeps one copy.
+ */
+async function backupUnreadableAccounts(path: string, content: string): Promise<void> {
+  const digest = createHash("sha256").update(content).digest("hex").slice(0, 12);
+  const backupPath = `${path}.corrupt-${digest}`;
+  try {
+    await fs.writeFile(backupPath, content, { encoding: "utf-8", mode: 0o600 });
+    log.warn("Account storage could not be read; kept a copy before replacing it", { backupPath });
+  } catch (error) {
+    log.warn("Could not back up unreadable account storage", { backupPath, error: String(error) });
+  }
+}
+
 async function loadAccountsUnsafe(): Promise<AccountStorageV4 | null> {
   try {
     const path = getStoragePath();
@@ -1101,7 +1119,13 @@ async function loadAccountsUnsafe(): Promise<AccountStorageV4 | null> {
     await ensureSecurePermissions(path);
 
     const content = await fs.readFile(path, "utf-8");
-    const parsed = JSON.parse(content) as AnyAccountStorage;
+    let parsed: AnyAccountStorage;
+    try {
+      parsed = JSON.parse(content) as AnyAccountStorage;
+    } catch {
+      await backupUnreadableAccounts(path, content);
+      return null;
+    }
 
     if (parsed.version === 1) {
       return remapDeduplicatedStorage(
@@ -1119,6 +1143,8 @@ async function loadAccountsUnsafe(): Promise<AccountStorageV4 | null> {
       return remapDeduplicatedStorage(parsed);
     }
 
+    // A version this build does not know, most likely written by a newer one.
+    await backupUnreadableAccounts(path, content);
     return null;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;

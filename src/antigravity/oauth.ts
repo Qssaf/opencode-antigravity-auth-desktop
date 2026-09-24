@@ -7,7 +7,7 @@ import {
   ANTIGRAVITY_SCOPES,
   ANTIGRAVITY_ENDPOINT_FALLBACKS,
   ANTIGRAVITY_LOAD_ENDPOINTS,
-  getAntigravityHeaders,
+  ANTIGRAVITY_CLI_USER_AGENT,
   GEMINI_CLI_HEADERS,
 } from "../constants";
 import { createLogger } from "../plugin/logger";
@@ -135,11 +135,13 @@ async function fetchWithTimeout(
 
 async function fetchProjectID(accessToken: string): Promise<string> {
   const errors: string[] = [];
+  // Same request the runtime makes in `plugin/project.ts`: the Antigravity CLI
+  // user agent and metadata carrying `ideType` only. The backend rejects
+  // `metadata.platform` with HTTP 400, which made this lookup fail on every login.
   const loadHeaders: Record<string, string> = {
     Authorization: `Bearer ${accessToken}`,
     "Content-Type": "application/json",
-    "User-Agent": GEMINI_CLI_HEADERS["User-Agent"],
-    "Client-Metadata": getAntigravityHeaders()["Client-Metadata"],
+    "User-Agent": ANTIGRAVITY_CLI_USER_AGENT,
   };
 
   const loadEndpoints = Array.from(
@@ -155,8 +157,6 @@ async function fetchProjectID(accessToken: string): Promise<string> {
         body: JSON.stringify({
           metadata: {
             ideType: "ANTIGRAVITY",
-            platform: process.platform === "win32" ? "WINDOWS" : "MACOS",
-            pluginType: "GEMINI",
           },
         }),
       });

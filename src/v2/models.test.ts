@@ -143,6 +143,22 @@ describe("mergeCatalog", () => {
     expect(merged?.[0]?.variants[0]?.settings).toEqual({ thinkingConfig: { thinkingLevel: "low" } });
   });
 
+  it("shows the provider's own models as free when the account pool serves them", () => {
+    const priced = model({ cost: [{ input: 1.25, output: 10, cache: { read: 0.31, write: 0 } }] });
+    const existing = new Map([["m", priced]]);
+
+    expect(mergeCatalog(existing, new Map(), { free: true })?.[0]?.cost).toEqual([
+      { input: 0, output: 0, cache: { read: 0, write: 0 } },
+    ]);
+    // Without the pool, requests go to the paid API, so the price stays.
+    expect(mergeCatalog(existing, new Map())).toBeUndefined();
+  });
+
+  it("leaves an already free model untouched", () => {
+    const existing = new Map([["m", model()]]);
+    expect(mergeCatalog(existing, new Map(), { free: true })).toBeUndefined();
+  });
+
   it("returns undefined when the provider already matches", () => {
     const existing = new Map([["m", model()]]);
     expect(mergeCatalog(existing, new Map([["m", model({ name: "other" })]]))).toBeUndefined();

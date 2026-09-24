@@ -293,8 +293,18 @@ export class V2Runtime {
   applyModels(editor: ProviderEditor): void {
     const record = editor.get(PROVIDER_ID);
     if (!record) return;
-    const merged = mergeCatalog(record.models, this.catalog);
+    // With accounts signed in, every Gemini request goes through the pool,
+    // which is not billed per token, so OpenCode's prices would be wrong.
+    const merged = mergeCatalog(record.models, this.catalog, { free: this.hasAccounts() });
     if (merged) editor.models.set(PROVIDER_ID, merged);
+  }
+
+  private hasAccounts(): boolean {
+    return this.loginAccounts.length > 0;
+  }
+
+  private notifyCatalogChange(): void {
+    for (const listener of this.catalogListeners) listener();
   }
 
   onCatalogChange(listener: () => void): () => void {
@@ -331,9 +341,7 @@ export class V2Runtime {
       }
       const changed = next.size !== this.catalog.size || [...next.keys()].some((id) => !this.catalog.has(id));
       this.catalog = next;
-      if (changed) {
-        for (const listener of this.catalogListeners) listener();
-      }
+      if (changed) this.notifyCatalogChange();
     } catch (error) {
       log.debug("Model discovery failed; keeping the built-in model list", { error: String(error) });
     }
@@ -358,6 +366,7 @@ export class V2Runtime {
    * offers matches the pool after a change.
    */
   async reloadLoginMenu(): Promise<void> {
+    const hadAccounts = this.hasAccounts();
     await this.refreshLoginAccounts();
     for (const ctx of this.attached) {
       try {
@@ -366,6 +375,8 @@ export class V2Runtime {
         log.debug("Could not reload the login menu for this location", { error: String(error) });
       }
     }
+    // Model prices depend on whether the pool serves requests (see applyModels).
+    if (this.hasAccounts() !== hadAccounts) this.notifyCatalogChange();
   }
 
   /** The OAuth method registered on the `google` integration. */

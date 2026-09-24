@@ -10,12 +10,21 @@
  */
 
 import type { ProviderModel } from "../plugin/types";
-import type { ModelInfo, ModelVariant } from "./types";
+import type { ModelCost, ModelInfo, ModelVariant } from "./types";
 
 const DEFAULT_INPUT_MODALITIES = ["text", "image", "pdf"] as const;
 const DEFAULT_OUTPUT_MODALITIES = ["text"] as const;
 const DEFAULT_CONTEXT_LIMIT = 1_048_576;
 const DEFAULT_OUTPUT_LIMIT = 65_536;
+
+/** Antigravity usage is not billed per token; shown as free, as the 1.x plugin did. */
+const FREE_COST: readonly ModelCost[] = [{ input: 0, output: 0, cache: { read: 0, write: 0 } }];
+
+function isFree(cost: readonly ModelCost[] | undefined): boolean {
+  return (cost ?? []).every(
+    (entry) => entry.input === 0 && entry.output === 0 && entry.cache.read === 0 && entry.cache.write === 0,
+  );
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -87,8 +96,7 @@ export function toV2Model(providerID: string, id: string, definition: ProviderMo
     },
     variants: legacyVariantsToV2(definition.variants),
     time: { released: 0 },
-    // Antigravity usage is not billed per token; show it as free like the 1.x plugin did.
-    cost: [{ input: 0, output: 0, cache: { read: 0, write: 0 } }],
+    cost: FREE_COST,
     status: "active",
     enabled: true,
     limit: {
@@ -133,10 +141,19 @@ export function catalogFromDefinitions(
   return catalog;
 }
 
+export interface MergeCatalogOptions {
+  /**
+   * Requests are served by the Antigravity account pool, so the provider's own
+   * models (priced from the public Gemini API) are shown as free too.
+   */
+  free?: boolean;
+}
+
 /**
  * Adds catalog models the provider does not have yet and migrates legacy
  * thinking keys on models it does have. Existing models keep every other
- * field, so user configuration always wins over the plugin defaults.
+ * field (apart from their price when `free`), so user configuration always
+ * wins over the plugin defaults.
  *
  * Returns `undefined` when the provider already matches, so callers can skip
  * rewriting the provider's model inventory.
@@ -144,14 +161,18 @@ export function catalogFromDefinitions(
 export function mergeCatalog(
   existing: ReadonlyMap<string, ModelInfo>,
   catalog: ReadonlyMap<string, ModelInfo>,
+  options: MergeCatalogOptions = {},
 ): ModelInfo[] | undefined {
   const merged = new Map<string, ModelInfo>();
   let changed = false;
 
   for (const [id, model] of existing) {
-    const migrated = migrateModelSettings(model);
-    if (migrated !== model) changed = true;
-    merged.set(id, migrated);
+    let next = migrateModelSettings(model);
+    if (options.free && !isFree(next.cost)) {
+      next = { ...next, cost: FREE_COST };
+    }
+    if (next !== model) changed = true;
+    merged.set(id, next);
   }
 
   for (const [id, model] of catalog) {

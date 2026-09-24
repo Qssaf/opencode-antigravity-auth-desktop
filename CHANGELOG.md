@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- **The project lookup at sign-in always failed** - Right after a sign-in, the plugin asks the backend for the account's project with `loadCodeAssist`. That request still sent `metadata.platform` (and reported Linux as `MACOS`), which the backend rejects with HTTP 400, so every login stored an empty project and logged a warning. The runtime already sent the accepted form (`ideType` only, Antigravity CLI user agent); the sign-in now sends the same. The runtime's own project resolution was unaffected, so requests kept working.
+
+- **OpenCode 2.x showed paid prices for Gemini models the plugin serves for free** - Models OpenCode already knows about kept their public Gemini API prices, even though requests go through the Antigravity account pool, which is not billed per token. The 1.x plugin showed them as free. They are now shown as free whenever accounts are signed in, and the model list refreshes when the first account is added or the last one removed.
+
+- **An unreadable account file is backed up before it is overwritten** - When `antigravity-accounts.json` could not be parsed (or carried a version this build does not know), the next save treated it as empty and replaced it, losing any refresh tokens that could still have been recovered by hand. A copy is now kept next to it as `antigravity-accounts.json.corrupt-<hash>` (one copy per distinct content, also added to the config directory's `.gitignore`).
+
+- **The 1.x sign-in no longer leaves a 30-second timer running** - The race between the OAuth callback and its 30-second fallback never cleared the timer, which kept the process alive after a quick sign-in.
+
 - **Signing in again as the same account could bring the old token back** - A second sign-in as an account already in the pool swaps its refresh token, but saves merge by refresh token, so the old entry stayed in the file next to the new one. Whichever copy looked more recently used won the next load, which could put a stale or revoked token back in rotation. The replaced token is now tombstoned, the same way a removed account is, in both the login path and the 1.x "refresh account" path.
 
 - **Cancelling the Google sign-in reported success** - The local callback listener treated any hit on `/oauth-callback` as the redirect. When Google returned `error=access_denied` (sign-in cancelled or refused), the browser showed "Authentication Successful" and the login then failed with "Missing code or state". It now shows that the sign-in was not completed and fails with Google's error. A stray request to the callback path without a code no longer ends the login; the listener keeps waiting for the real redirect.
