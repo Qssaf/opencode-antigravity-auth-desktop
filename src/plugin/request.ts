@@ -69,11 +69,8 @@ import {
 } from "./transform";
 import {
   resolveModelForHeaderStyle,
-  resolveAntigravityGemini35FlashBackendModel,
-  resolveAntigravityGemini36FlashBackendModel,
-  resolveAntigravityGemini37FlashBackendModel,
-  resolveAntigravityGemini38FlashBackendModel,
-  isGemini3ProModel,
+  resolveAntigravityGeminiBackend,
+  toAntigravityWireModel,
   getDefaultGemini3ThinkingLevel,
   isClaudeModel,
   isClaudeThinkingModel,
@@ -1348,44 +1345,15 @@ export function prepareAntigravityRequest(
         }
 
         if (headerStyle === "antigravity") {
-          const gemini38FlashBackendModel =
-            resolveAntigravityGemini38FlashBackendModel(
-              effectiveModel,
-              tierThinkingLevel,
-            );
-          const gemini37FlashBackendModel =
-            resolveAntigravityGemini37FlashBackendModel(
-              effectiveModel,
-              tierThinkingLevel,
-            );
-          const gemini36FlashBackendModel =
-            resolveAntigravityGemini36FlashBackendModel(
-              effectiveModel,
-              tierThinkingLevel,
-            );
-          const gemini35FlashBackendModel =
-            resolveAntigravityGemini35FlashBackendModel(
-              effectiveModel,
-              tierThinkingLevel,
-            );
-          if (gemini38FlashBackendModel) {
-            effectiveModel = gemini38FlashBackendModel;
-            wrappedBody.model = gemini38FlashBackendModel;
-          } else if (gemini37FlashBackendModel) {
-            effectiveModel = gemini37FlashBackendModel;
-            wrappedBody.model = gemini37FlashBackendModel;
-          } else if (gemini36FlashBackendModel) {
-            effectiveModel = gemini36FlashBackendModel;
-            wrappedBody.model = gemini36FlashBackendModel;
-          } else if (gemini35FlashBackendModel) {
-            effectiveModel = gemini35FlashBackendModel;
-            wrappedBody.model = gemini35FlashBackendModel;
-          } else if (isGemini3ProModel(effectiveModel) && tierThinkingLevel) {
-            const basePro = effectiveModel.replace(/-(low|high)$/i, "");
-            const proModel = `${basePro}-${tierThinkingLevel === "high" ? "high" : "low"}`;
-            effectiveModel = proModel;
-            wrappedBody.model = proModel;
+          const backend = resolveAntigravityGeminiBackend(
+            effectiveModel,
+            tierThinkingLevel,
+          );
+          if (backend) {
+            effectiveModel = backend.model;
+            tierThinkingLevel = backend.thinkingLevel;
           }
+          wrappedBody.model = toAntigravityWireModel(effectiveModel);
         }
 
         const conversationKey =
@@ -1513,37 +1481,13 @@ export function prepareAntigravityRequest(
         }
 
         if (headerStyle === "antigravity") {
-          const gemini38FlashBackendModel =
-            resolveAntigravityGemini38FlashBackendModel(
-              effectiveModel,
-              tierThinkingLevel,
-            );
-          const gemini37FlashBackendModel =
-            resolveAntigravityGemini37FlashBackendModel(
-              effectiveModel,
-              tierThinkingLevel,
-            );
-          const gemini36FlashBackendModel =
-            resolveAntigravityGemini36FlashBackendModel(
-              effectiveModel,
-              tierThinkingLevel,
-            );
-          const gemini35FlashBackendModel =
-            resolveAntigravityGemini35FlashBackendModel(
-              effectiveModel,
-              tierThinkingLevel,
-            );
-          if (gemini38FlashBackendModel) {
-            effectiveModel = gemini38FlashBackendModel;
-          } else if (gemini37FlashBackendModel) {
-            effectiveModel = gemini37FlashBackendModel;
-          } else if (gemini36FlashBackendModel) {
-            effectiveModel = gemini36FlashBackendModel;
-          } else if (gemini35FlashBackendModel) {
-            effectiveModel = gemini35FlashBackendModel;
-          } else if (isGemini3ProModel(effectiveModel) && tierThinkingLevel) {
-            const basePro = effectiveModel.replace(/-(low|high)$/i, "");
-            effectiveModel = `${basePro}-${tierThinkingLevel === "high" ? "high" : "low"}`;
+          const backend = resolveAntigravityGeminiBackend(
+            effectiveModel,
+            tierThinkingLevel,
+          );
+          if (backend) {
+            effectiveModel = backend.model;
+            tierThinkingLevel = backend.thinkingLevel;
           }
         }
 
@@ -2272,7 +2216,10 @@ export function prepareAntigravityRequest(
 
         const wrappedBody: Record<string, unknown> = {
           project: effectiveProjectId,
-          model: effectiveModel,
+          model:
+            headerStyle === "antigravity"
+              ? toAntigravityWireModel(effectiveModel)
+              : effectiveModel,
           request: requestPayload,
         };
 
@@ -2461,6 +2408,11 @@ export async function transformAntigravityResponse(
   const contentType = response.headers.get("content-type") ?? "";
   const isJsonResponse = contentType.includes("application/json");
   const isEventStreamResponse = contentType.includes("text/event-stream");
+  // Tool-argument repair is for Claude only; Gemini's structured args pass through as sent.
+  const responseModel = effectiveModel ?? requestedModel;
+  const repairToolArgs = !responseModel || isClaudeModel(responseModel);
+  const transformParts = (body: unknown) =>
+    transformThinkingParts(body, { repairToolArgs });
 
   // Generate text for thinking injection:
   // - If debug=true: inject full debug logs
@@ -2497,7 +2449,7 @@ export async function transformAntigravityResponse(
         onCacheSignature: cacheSignature,
         onInjectDebug: injectDebugThinking,
         // onInjectSyntheticThinking removed - keep_thinking now uses debugText path
-        transformThinkingParts,
+        transformThinkingParts: transformParts,
       },
       {
         signatureSessionKey: sessionId,
@@ -2691,7 +2643,7 @@ export async function transformAntigravityResponse(
       if (debugText) {
         responseBody = injectDebugThinking(responseBody, debugText);
       }
-      const transformed = transformThinkingParts(responseBody);
+      const transformed = transformParts(responseBody);
       return new Response(JSON.stringify(transformed), init);
     }
 

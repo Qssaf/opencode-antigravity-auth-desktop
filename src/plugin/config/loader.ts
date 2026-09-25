@@ -67,17 +67,36 @@ function loadConfigFile(path: string): Partial<AntigravityConfig> | null {
     const rawConfig = JSON.parse(content);
 
     // Validate with Zod (partial - we'll merge with defaults later)
-    const result = AntigravityConfigSchema.partial().safeParse(rawConfig);
+    const schema = AntigravityConfigSchema.partial();
+    const result = schema.safeParse(rawConfig);
 
-    if (!result.success) {
-      log.warn("Config validation error", {
-        path,
-        issues: result.error.issues.map(i => `${i.path.join(".")}: ${i.message}`).join(", "),
-      });
-      return null;
+    if (result.success) {
+      return result.data;
     }
 
-    return result.data;
+    log.warn("Config validation error", {
+      path,
+      issues: result.error.issues.map(i => `${i.path.join(".")}: ${i.message}`).join(", "),
+    });
+
+    // One bad value should not discard the whole file: drop only the invalid
+    // top-level fields, so they fall back to defaults and the rest still apply.
+    if (!rawConfig || typeof rawConfig !== "object" || Array.isArray(rawConfig)) {
+      return null;
+    }
+    const invalidKeys = new Set(result.error.issues.map(i => String(i.path[0])));
+    const kept = Object.fromEntries(
+      Object.entries(rawConfig).filter(([key]) => !invalidKeys.has(key)),
+    );
+    const retry = schema.safeParse(kept);
+    if (!retry.success) {
+      return null;
+    }
+    log.warn("Using defaults for invalid config fields", {
+      path,
+      fields: [...invalidKeys].join(", "),
+    });
+    return retry.data;
   } catch (error) {
     if (error instanceof SyntaxError) {
       log.warn("Invalid JSON in config file", { path, error: error.message });

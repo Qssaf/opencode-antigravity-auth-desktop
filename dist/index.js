@@ -1891,21 +1891,368 @@ import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync
 import { join as join3, dirname as dirname2 } from "node:path";
 import { homedir as homedir2 } from "node:os";
 
+// src/plugin/transform/model-resolver.ts
+var THINKING_TIER_BUDGETS = {
+  claude: { low: 8192, medium: 16384, high: 32768 },
+  "gemini-2.5-pro": { low: 8192, medium: 16384, high: 32768 },
+  "gemini-2.5-flash": { low: 6144, medium: 12288, high: 24576 },
+  default: { low: 4096, medium: 8192, high: 16384 }
+};
+var MODEL_ALIASES = {
+  "gemini-flash-latest": "gemini-3.7-flash",
+  "gemini-flash-lite-latest": "gemini-3.5-flash-lite",
+  // Gemini 3 variants - for Gemini CLI only (tier stripped, thinkingLevel used)
+  // For Antigravity, these are bypassed and full model name is kept
+  "gemini-3-pro-low": "gemini-3-pro",
+  "gemini-3-pro-high": "gemini-3-pro",
+  "gemini-3.1-pro-low": "gemini-3.1-pro",
+  "gemini-3.1-pro-high": "gemini-3.1-pro",
+  "gemini-3-flash-low": "gemini-3-flash",
+  "gemini-3-flash-medium": "gemini-3-flash",
+  "gemini-3-flash-high": "gemini-3-flash",
+  "gemini-3.7-flash-minimal": "gemini-3.7-flash",
+  "gemini-3.7-flash-low": "gemini-3.7-flash",
+  "gemini-3.7-flash-medium": "gemini-3.7-flash",
+  "gemini-3.7-flash-high": "gemini-3.7-flash",
+  // Claude proxy names (gemini- prefix for compatibility)
+  "gemini-claude-opus-4-6-thinking-low": "claude-opus-4-6-thinking",
+  "gemini-claude-opus-4-6-thinking-medium": "claude-opus-4-6-thinking",
+  "gemini-claude-opus-4-6-thinking-high": "claude-opus-4-6-thinking",
+  "gemini-claude-sonnet-4-6": "claude-sonnet-4-6"
+  // Image generation models - only gemini-3-pro-image is available via Antigravity API
+  // Note: gemini-2.5-flash-image (Nano Banana) is NOT supported by Antigravity - only Google AI API
+  // Reference: Antigravity-Manager/src-tauri/src/proxy/common/model_mapping.rs
+};
+var TIER_REGEX = /-(minimal|low|medium|high)$/;
+var QUOTA_PREFIX_REGEX = /^antigravity-/i;
+var GEMINI_3_PRO_REGEX = /^gemini-3(?:\.\d+)?-pro/i;
+var GEMINI_3_FLASH_REGEX = /^gemini-3(?:\.\d+)?-flash/i;
+var GEMINI_3_PRO_TIER_REGEX = /^(gemini-3(?:\.\d+)?-pro)(?:-(minimal|low|medium|high))?$/i;
+var GEMINI_36_FLASH_REGEX = /^gemini-3\.6-flash(?:-(low|medium|high))?$/i;
+var GEMINI_36_FLASH_MODELS = {
+  low: "gemini-3.6-flash-low",
+  medium: "gemini-3.6-flash-medium",
+  high: "gemini-3.6-flash-high"
+};
+var GEMINI_37_FLASH_REGEX = /^gemini-3\.7-flash(?:-(minimal|low|medium|high))?$/i;
+var GEMINI_37_FLASH_MODELS = {
+  low: "gemini-3.7-flash-low",
+  medium: "gemini-3.7-flash-medium",
+  high: "gemini-3.7-flash-high"
+};
+var GEMINI_38_FLASH_REGEX = /^gemini-3\.8-flash(?:-(low|medium|high))?$/i;
+var GEMINI_38_FLASH_MODELS = {
+  low: "gemini-3.8-flash-low",
+  medium: "gemini-3.8-flash-medium",
+  high: "gemini-3.8-flash-high"
+};
+var GEMINI_PUBLIC_ONLY_REGEX = /^(?:gemini-3\.5-flash-lite(?:-(?:minimal|low|medium|high))?|gemini-flash-lite-latest)$/i;
+var GEMINI_DOTTED_MINOR_REGEX = /^gemini-3\.(?:[1-9]\d*)/i;
+var IMAGE_GENERATION_MODELS = /image|imagen/i;
+function supportsThinkingTiers(model) {
+  const lower = model.toLowerCase();
+  return lower.includes("gemini-3") || lower.includes("gemini-2.5") || lower.includes("claude") && lower.includes("thinking");
+}
+function extractThinkingTierFromModel(model) {
+  if (!supportsThinkingTiers(model)) {
+    return void 0;
+  }
+  const tierMatch = model.match(TIER_REGEX);
+  return tierMatch?.[1];
+}
+function getBudgetFamily(model) {
+  if (model.includes("claude")) {
+    return "claude";
+  }
+  if (model.includes("gemini-2.5-pro")) {
+    return "gemini-2.5-pro";
+  }
+  if (model.includes("gemini-2.5-flash")) {
+    return "gemini-2.5-flash";
+  }
+  return "default";
+}
+function isThinkingCapableModel(model) {
+  const lower = model.toLowerCase();
+  return lower.includes("thinking") || lower.includes("gemini-3") || lower.includes("gemini-2.5");
+}
+function isGemini3ProModel(model) {
+  return GEMINI_3_PRO_REGEX.test(model);
+}
+function isGemini3FlashModel(model) {
+  return GEMINI_3_FLASH_REGEX.test(model);
+}
+function remapRetiredAntigravityGeminiModel(model) {
+  const lower = model.toLowerCase();
+  if (lower === "gemini-pro-agent") return "gemini-3.1-pro-high";
+  if (lower === "gemini-3-flash-agent") return "gemini-3.7-flash-high";
+  if (lower === "gemini-3.5-flash-extra-low") return "gemini-3.7-flash-low";
+  const pro = lower.match(/^gemini-3-pro(-(?:low|medium|high))?$/);
+  if (pro) return `gemini-3.1-pro${pro[1] ?? ""}`;
+  const flash = lower.match(/^gemini-3\.5-flash(-(?:minimal|low|medium|high))?$/);
+  if (flash) return `gemini-3.7-flash${flash[1] ?? ""}`;
+  return model;
+}
+var ANTIGRAVITY_WIRE_MODEL_IDS = {
+  "gemini-3.1-pro-high": "gemini-pro-agent"
+};
+function toAntigravityWireModel(model) {
+  return ANTIGRAVITY_WIRE_MODEL_IDS[model.toLowerCase()] ?? model;
+}
+function resolveAntigravityGemini3ProBackendModel(model, thinkingLevel) {
+  const match = model.replace(QUOTA_PREFIX_REGEX, "").match(GEMINI_3_PRO_TIER_REGEX);
+  if (!match) {
+    return void 0;
+  }
+  const level = (thinkingLevel ?? match[2] ?? "high").toLowerCase();
+  const tier = level === "low" || level === "minimal" ? "low" : "high";
+  return `${match[1]}-${tier}`;
+}
+function resolveAntigravityGemini36FlashBackendModel(model, thinkingLevel) {
+  const modelWithoutQuota = model.replace(QUOTA_PREFIX_REGEX, "");
+  const match = modelWithoutQuota.match(GEMINI_36_FLASH_REGEX);
+  if (!match) {
+    return void 0;
+  }
+  const rawLevel = (thinkingLevel ?? match[1] ?? "medium").toLowerCase();
+  const level = rawLevel === "minimal" ? "low" : rawLevel;
+  if (level !== "low" && level !== "medium" && level !== "high") {
+    return void 0;
+  }
+  return GEMINI_36_FLASH_MODELS[level];
+}
+function resolveAntigravityGemini37FlashBackendModel(model, thinkingLevel) {
+  const modelWithoutQuota = model.replace(QUOTA_PREFIX_REGEX, "");
+  const match = modelWithoutQuota.match(GEMINI_37_FLASH_REGEX);
+  if (!match) {
+    return void 0;
+  }
+  const rawLevel = (thinkingLevel ?? match[1] ?? "medium").toLowerCase();
+  const level = rawLevel === "minimal" ? "low" : rawLevel;
+  if (level !== "low" && level !== "medium" && level !== "high") {
+    return void 0;
+  }
+  return GEMINI_37_FLASH_MODELS[level];
+}
+function resolveAntigravityGemini38FlashBackendModel(model, thinkingLevel) {
+  const modelWithoutQuota = model.replace(QUOTA_PREFIX_REGEX, "");
+  const match = modelWithoutQuota.match(GEMINI_38_FLASH_REGEX);
+  if (!match) {
+    return void 0;
+  }
+  const rawLevel = (thinkingLevel ?? match[1] ?? "medium").toLowerCase();
+  const level = rawLevel === "minimal" ? "low" : rawLevel;
+  if (level !== "low" && level !== "medium" && level !== "high") {
+    return void 0;
+  }
+  return GEMINI_38_FLASH_MODELS[level];
+}
+function resolveAntigravityGeminiBackend(model, thinkingLevel) {
+  const tieredFlash = resolveAntigravityGemini38FlashBackendModel(model, thinkingLevel) ?? resolveAntigravityGemini37FlashBackendModel(model, thinkingLevel);
+  if (tieredFlash) {
+    return {
+      model: tieredFlash,
+      thinkingLevel: thinkingLevel === "minimal" ? "low" : thinkingLevel
+    };
+  }
+  const flash36 = resolveAntigravityGemini36FlashBackendModel(model, thinkingLevel);
+  if (flash36) {
+    return { model: flash36, thinkingLevel };
+  }
+  const pro = resolveAntigravityGemini3ProBackendModel(model, thinkingLevel);
+  if (pro) {
+    return { model: pro, thinkingLevel: pro.endsWith("-low") ? "low" : "high" };
+  }
+  return void 0;
+}
+function getDefaultGemini3ThinkingLevel(model) {
+  const normalized = model.toLowerCase().replace(QUOTA_PREFIX_REGEX, "");
+  if (/^gemini-3\.[678]-flash(?:-|$)/.test(normalized)) {
+    return "medium";
+  }
+  if (/^gemini-3\.5-flash-lite(?:-|$)/.test(normalized)) {
+    return "minimal";
+  }
+  if (isGemini3ProModel(normalized) && !IMAGE_GENERATION_MODELS.test(normalized)) {
+    return /-low$/.test(normalized) ? "low" : "high";
+  }
+  return "low";
+}
+function isGeminiPublicOnlyModel(model) {
+  return GEMINI_PUBLIC_ONLY_REGEX.test(model.replace(QUOTA_PREFIX_REGEX, ""));
+}
+function resolveModelWithTier(requestedModel, options = {}) {
+  const isAntigravity = QUOTA_PREFIX_REGEX.test(requestedModel);
+  const strippedModel = requestedModel.replace(QUOTA_PREFIX_REGEX, "");
+  const modelWithoutQuota = isAntigravity ? remapRetiredAntigravityGeminiModel(strippedModel) : strippedModel;
+  const tier = extractThinkingTierFromModel(modelWithoutQuota);
+  const baseName = tier ? modelWithoutQuota.replace(TIER_REGEX, "") : modelWithoutQuota;
+  const isImageModel = IMAGE_GENERATION_MODELS.test(modelWithoutQuota);
+  const isClaudeModel2 = modelWithoutQuota.toLowerCase().includes("claude");
+  const preferGeminiCli = !isAntigravity && (isGeminiPublicOnlyModel(modelWithoutQuota) || options.cli_first === true && !isImageModel && !isClaudeModel2);
+  const quotaPreference = preferGeminiCli ? "gemini-cli" : "antigravity";
+  const explicitQuota = isAntigravity || isImageModel;
+  const isGemini3 = modelWithoutQuota.toLowerCase().startsWith("gemini-3");
+  const skipAlias = isAntigravity && isGemini3;
+  const isGemini3Flash = isGemini3FlashModel(modelWithoutQuota);
+  let effectiveTier = tier;
+  let antigravityModel = modelWithoutQuota;
+  if (skipAlias) {
+    const gemini38FlashBackendModel = resolveAntigravityGemini38FlashBackendModel(modelWithoutQuota, tier);
+    const gemini37FlashBackendModel = resolveAntigravityGemini37FlashBackendModel(modelWithoutQuota, effectiveTier);
+    const gemini36FlashBackendModel = resolveAntigravityGemini36FlashBackendModel(modelWithoutQuota, effectiveTier);
+    const gemini3ProBackendModel = isImageModel ? void 0 : resolveAntigravityGemini3ProBackendModel(modelWithoutQuota, effectiveTier);
+    if (gemini38FlashBackendModel) {
+      antigravityModel = gemini38FlashBackendModel;
+    } else if (gemini37FlashBackendModel) {
+      antigravityModel = gemini37FlashBackendModel;
+      if (String(effectiveTier) === "minimal") {
+        effectiveTier = "low";
+      }
+    } else if (gemini36FlashBackendModel) {
+      antigravityModel = gemini36FlashBackendModel;
+    } else if (gemini3ProBackendModel) {
+      antigravityModel = gemini3ProBackendModel;
+      if (effectiveTier) {
+        effectiveTier = gemini3ProBackendModel.endsWith("-low") ? "low" : "high";
+      }
+    } else if (isGemini3Flash && effectiveTier) {
+      antigravityModel = baseName;
+    }
+  }
+  const actualModel = skipAlias ? antigravityModel : MODEL_ALIASES[modelWithoutQuota] || MODEL_ALIASES[baseName] || baseName;
+  const resolvedModel = actualModel;
+  const isThinking = isThinkingCapableModel(resolvedModel);
+  if (isImageModel) {
+    return {
+      actualModel: resolvedModel,
+      isThinkingModel: false,
+      isImageModel: true,
+      quotaPreference,
+      explicitQuota
+    };
+  }
+  const isEffectiveGemini3 = resolvedModel.toLowerCase().includes("gemini-3");
+  const isClaudeThinking = resolvedModel.toLowerCase().includes("claude") && resolvedModel.toLowerCase().includes("thinking");
+  if (!effectiveTier) {
+    if (isEffectiveGemini3) {
+      return {
+        actualModel: resolvedModel,
+        thinkingLevel: getDefaultGemini3ThinkingLevel(resolvedModel),
+        isThinkingModel: true,
+        quotaPreference,
+        explicitQuota
+      };
+    }
+    if (isClaudeThinking) {
+      return {
+        actualModel: resolvedModel,
+        thinkingBudget: THINKING_TIER_BUDGETS.claude.high,
+        isThinkingModel: true,
+        quotaPreference,
+        explicitQuota
+      };
+    }
+    return {
+      actualModel: resolvedModel,
+      isThinkingModel: isThinking,
+      quotaPreference,
+      explicitQuota
+    };
+  }
+  if (isEffectiveGemini3) {
+    return {
+      actualModel: resolvedModel,
+      thinkingLevel: effectiveTier,
+      tier: effectiveTier,
+      isThinkingModel: true,
+      quotaPreference,
+      explicitQuota
+    };
+  }
+  const budgetFamily = getBudgetFamily(resolvedModel);
+  const budgets = THINKING_TIER_BUDGETS[budgetFamily];
+  const thinkingBudget = budgets[effectiveTier];
+  return {
+    actualModel: resolvedModel,
+    thinkingBudget,
+    tier: effectiveTier,
+    isThinkingModel: isThinking,
+    quotaPreference,
+    explicitQuota
+  };
+}
+function getModelFamily(model) {
+  const lower = model.toLowerCase();
+  if (lower.includes("claude")) {
+    return "claude";
+  }
+  if (lower.includes("flash")) {
+    return "gemini-flash";
+  }
+  return "gemini-pro";
+}
+var ANTIGRAVITY_TO_PUBLIC_API_MODEL_MAP = /* @__PURE__ */ new Map([
+  ["gemini-3-pro", "gemini-3-pro-preview"],
+  ["gemini-3-flash", "gemini-3-flash-preview"],
+  ["gemini-3.1-pro", "gemini-3.1-pro-preview"],
+  ["gemini-3.1-flash", "gemini-3.1-flash-lite"]
+]);
+function mapAntigravityModelToPublicApi(model) {
+  const stripped = model.toLowerCase().replace(/^antigravity-/, "");
+  const base = stripped.replace(/-(minimal|low|medium|high)$/, "");
+  return ANTIGRAVITY_TO_PUBLIC_API_MODEL_MAP.get(base);
+}
+function resolveModelForHeaderStyle(requestedModel, headerStyle) {
+  const aliasResolvedModel = MODEL_ALIASES[requestedModel];
+  const keepsTier = headerStyle === "antigravity" && TIER_REGEX.test(requestedModel);
+  if (aliasResolvedModel && !keepsTier) {
+    return resolveModelForHeaderStyle(aliasResolvedModel, headerStyle);
+  }
+  const lower = requestedModel.toLowerCase();
+  const isGemini3 = lower.includes("gemini-3");
+  if (headerStyle === "agy-sdk") {
+    const modelWithTier = requestedModel.replace(/^antigravity-/i, "");
+    const stripped = modelWithTier.replace(/-(minimal|low|medium|high)$/i, "");
+    const transformedModel = mapAntigravityModelToPublicApi(stripped) ?? stripped;
+    return {
+      ...resolveModelWithTier(modelWithTier),
+      actualModel: transformedModel,
+      quotaPreference: "agy-sdk",
+      explicitQuota: false
+    };
+  }
+  if (!isGemini3) {
+    return resolveModelWithTier(requestedModel);
+  }
+  if (headerStyle === "antigravity") {
+    const transformedModel = requestedModel.replace(/-preview-customtools$/i, "").replace(/-preview$/i, "").replace(/^antigravity-/i, "");
+    const prefixedModel = `antigravity-${transformedModel}`;
+    return resolveModelWithTier(prefixedModel);
+  }
+  if (headerStyle === "gemini-cli") {
+    let transformedModel = requestedModel.replace(/^antigravity-/i, "").replace(/-(minimal|low|medium|high)$/i, "");
+    const hasPreviewSuffix = /-preview($|-)/i.test(transformedModel);
+    const usesBareName = GEMINI_DOTTED_MINOR_REGEX.test(transformedModel);
+    if (usesBareName && /-preview$/i.test(transformedModel)) {
+      transformedModel = transformedModel.replace(/-preview$/i, "");
+    } else if (!hasPreviewSuffix && !usesBareName) {
+      transformedModel = `${transformedModel}-preview`;
+    }
+    return {
+      ...resolveModelWithTier(transformedModel),
+      quotaPreference: "gemini-cli"
+    };
+  }
+  return resolveModelWithTier(requestedModel);
+}
+
 // src/plugin/config/models.ts
 var DEFAULT_MODALITIES = {
   input: ["text", "image", "pdf"],
   output: ["text"]
 };
 var OPENCODE_MODEL_DEFINITIONS = {
-  "antigravity-gemini-3-pro": {
-    name: "Gemini 3 Pro (Antigravity)",
-    limit: { context: 1048576, output: 65535 },
-    modalities: DEFAULT_MODALITIES,
-    variants: {
-      low: { thinkingLevel: "low" },
-      high: { thinkingLevel: "high" }
-    }
-  },
   "antigravity-gemini-3.1-pro": {
     name: "Gemini 3.1 Pro (Antigravity)",
     limit: { context: 1048576, output: 65535 },
@@ -1915,9 +2262,9 @@ var OPENCODE_MODEL_DEFINITIONS = {
       high: { thinkingLevel: "high" }
     }
   },
-  "antigravity-gemini-3-flash": {
-    name: "Gemini 3 Flash (Antigravity)",
-    limit: { context: 1048576, output: 65536 },
+  "antigravity-gemini-3.1-flash-lite": {
+    name: "Gemini 3.1 Flash Lite (Antigravity)",
+    limit: { context: 1048576, output: 65535 },
     modalities: DEFAULT_MODALITIES,
     variants: {
       minimal: { thinkingLevel: "minimal" },
@@ -1926,8 +2273,8 @@ var OPENCODE_MODEL_DEFINITIONS = {
       high: { thinkingLevel: "high" }
     }
   },
-  "antigravity-gemini-3.5-flash": {
-    name: "Gemini 3.5 Flash (Antigravity)",
+  "antigravity-gemini-3-flash": {
+    name: "Gemini 3 Flash (Antigravity)",
     limit: { context: 1048576, output: 65536 },
     modalities: DEFAULT_MODALITIES,
     variants: {
@@ -2150,8 +2497,13 @@ function modelsFromGeminiApi(models) {
 function modelsFromAntigravityAvailableModels(models) {
   const definitions = {};
   for (const [sourceId, entry] of Object.entries(models)) {
+    if (!entry.displayName) continue;
     const modelId = antigravityModelIdFromEntry(sourceId, entry);
     if (!modelId) continue;
+    const backendId = modelId.replace(/^antigravity-/, "");
+    if (remapRetiredAntigravityGeminiModel(backendId) !== backendId || toAntigravityWireModel(backendId) !== backendId) {
+      continue;
+    }
     const variants = defaultVariantsForModel(modelId);
     const discovered = {
       name: entry.displayName ? `${entry.displayName} (Antigravity)` : `${titleFromModelId(modelId)} (Antigravity)`,
@@ -3529,15 +3881,31 @@ function loadConfigFile(path4) {
     }
     const content = readFileSync4(path4, "utf-8");
     const rawConfig = JSON.parse(content);
-    const result = AntigravityConfigSchema.partial().safeParse(rawConfig);
-    if (!result.success) {
-      log4.warn("Config validation error", {
-        path: path4,
-        issues: result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join(", ")
-      });
+    const schema = AntigravityConfigSchema.partial();
+    const result = schema.safeParse(rawConfig);
+    if (result.success) {
+      return result.data;
+    }
+    log4.warn("Config validation error", {
+      path: path4,
+      issues: result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join(", ")
+    });
+    if (!rawConfig || typeof rawConfig !== "object" || Array.isArray(rawConfig)) {
       return null;
     }
-    return result.data;
+    const invalidKeys = new Set(result.error.issues.map((i) => String(i.path[0])));
+    const kept = Object.fromEntries(
+      Object.entries(rawConfig).filter(([key]) => !invalidKeys.has(key))
+    );
+    const retry = schema.safeParse(kept);
+    if (!retry.success) {
+      return null;
+    }
+    log4.warn("Using defaults for invalid config fields", {
+      path: path4,
+      fields: [...invalidKeys].join(", ")
+    });
+    return retry.data;
   } catch (error) {
     if (error instanceof SyntaxError) {
       log4.warn("Invalid JSON in config file", { path: path4, error: error.message });
@@ -4404,7 +4772,7 @@ function cleanJSONSchemaForAntigravity(schema) {
   return result;
 }
 var DEFAULT_THINKING_BUDGET = 16e3;
-function isThinkingCapableModel(modelName) {
+function isThinkingCapableModel2(modelName) {
   const lowerModel = modelName.toLowerCase();
   return lowerModel.includes("thinking") || lowerModel.includes("gemini-3") || lowerModel.includes("opus");
 }
@@ -4778,7 +5146,7 @@ function deepFilterThinkingBlocks(payload, sessionId, getCachedSignatureFn, isCl
   walk(payload);
   return payload;
 }
-function transformGeminiCandidate(candidate) {
+function transformGeminiCandidate(candidate, repairToolArgs) {
   if (!candidate || typeof candidate !== "object") {
     return candidate;
   }
@@ -4827,7 +5195,8 @@ function transformGeminiCandidate(candidate) {
       return transformed;
     }
     if (part.functionCall) {
-      const parsedArgs = part.functionCall.args ? recursivelyParseJsonStrings(part.functionCall.args) : {};
+      const args = part.functionCall.args;
+      const parsedArgs = !args ? {} : repairToolArgs ? recursivelyParseJsonStrings(args) : args;
       return {
         ...part,
         functionCall: {
@@ -4853,7 +5222,8 @@ function transformGeminiCandidate(candidate) {
     ...thinkingTexts.length > 0 ? { reasoning_content: thinkingTexts.join("\n\n") } : {}
   };
 }
-function transformThinkingParts(response) {
+function transformThinkingParts(response, options = {}) {
+  const repairToolArgs = options.repairToolArgs ?? true;
   if (!response || typeof response !== "object") {
     return response;
   }
@@ -4888,7 +5258,9 @@ function transformThinkingParts(response) {
     result.content = transformedContent;
   }
   if (Array.isArray(resp.candidates)) {
-    result.candidates = resp.candidates.map(transformGeminiCandidate);
+    result.candidates = resp.candidates.map(
+      (candidate) => transformGeminiCandidate(candidate, repairToolArgs)
+    );
   }
   if (reasoningTexts.length > 0 && !result.reasoning_content) {
     result.reasoning_content = reasoningTexts.join("\n\n");
@@ -6316,7 +6688,7 @@ function wrapToolsAsFunctionDeclarations(payload) {
 // src/plugin/transform/cross-model-sanitizer.ts
 var GEMINI_SIGNATURE_FIELDS = ["thoughtSignature", "thinkingMetadata"];
 var CLAUDE_SIGNATURE_FIELDS = ["signature"];
-function getModelFamily(model) {
+function getModelFamily2(model) {
   if (isClaudeModel(model)) return "claude";
   if (isGeminiModel(model)) return "gemini";
   return "unknown";
@@ -6373,12 +6745,12 @@ function stripClaudeThinkingFields(part) {
   return { part, stripped };
 }
 function sanitizeCrossModelPayloadInPlace(payload, options) {
-  const targetFamily = getModelFamily(options.targetModel);
+  const targetFamily = getModelFamily2(options.targetModel);
   if (targetFamily === "unknown") {
     return 0;
   }
   if (options.sourceModel) {
-    const sourceFamily = getModelFamily(options.sourceModel);
+    const sourceFamily = getModelFamily2(options.sourceModel);
     if (sourceFamily === targetFamily) {
       return 0;
     }
@@ -6427,330 +6799,6 @@ function sanitizeCrossModelPayloadInPlace(payload, options) {
     }
   }
   return totalStripped;
-}
-
-// src/plugin/transform/model-resolver.ts
-var THINKING_TIER_BUDGETS = {
-  claude: { low: 8192, medium: 16384, high: 32768 },
-  "gemini-2.5-pro": { low: 8192, medium: 16384, high: 32768 },
-  "gemini-2.5-flash": { low: 6144, medium: 12288, high: 24576 },
-  default: { low: 4096, medium: 8192, high: 16384 }
-};
-var MODEL_ALIASES = {
-  "gemini-flash-latest": "gemini-3.7-flash",
-  "gemini-flash-lite-latest": "gemini-3.5-flash-lite",
-  // Gemini 3 variants - for Gemini CLI only (tier stripped, thinkingLevel used)
-  // For Antigravity, these are bypassed and full model name is kept
-  "gemini-3-pro-low": "gemini-3-pro",
-  "gemini-3-pro-high": "gemini-3-pro",
-  "gemini-3.1-pro-low": "gemini-3.1-pro",
-  "gemini-3.1-pro-high": "gemini-3.1-pro",
-  "gemini-3-flash-low": "gemini-3-flash",
-  "gemini-3-flash-medium": "gemini-3-flash",
-  "gemini-3-flash-high": "gemini-3-flash",
-  "gemini-3.7-flash-minimal": "gemini-3.7-flash",
-  "gemini-3.7-flash-low": "gemini-3.7-flash",
-  "gemini-3.7-flash-medium": "gemini-3.7-flash",
-  "gemini-3.7-flash-high": "gemini-3.7-flash",
-  // Claude proxy names (gemini- prefix for compatibility)
-  "gemini-claude-opus-4-6-thinking-low": "claude-opus-4-6-thinking",
-  "gemini-claude-opus-4-6-thinking-medium": "claude-opus-4-6-thinking",
-  "gemini-claude-opus-4-6-thinking-high": "claude-opus-4-6-thinking",
-  "gemini-claude-sonnet-4-6": "claude-sonnet-4-6"
-  // Image generation models - only gemini-3-pro-image is available via Antigravity API
-  // Note: gemini-2.5-flash-image (Nano Banana) is NOT supported by Antigravity - only Google AI API
-  // Reference: Antigravity-Manager/src-tauri/src/proxy/common/model_mapping.rs
-};
-var TIER_REGEX = /-(minimal|low|medium|high)$/;
-var QUOTA_PREFIX_REGEX = /^antigravity-/i;
-var GEMINI_3_PRO_REGEX = /^gemini-3(?:\.\d+)?-pro/i;
-var GEMINI_3_FLASH_REGEX = /^gemini-3(?:\.\d+)?-flash/i;
-var GEMINI_35_FLASH_REGEX = /^gemini-3\.5-flash(?:-(minimal|low|medium|high))?$/i;
-var GEMINI_35_FLASH_LOW_MODEL = "gemini-3.5-flash-low";
-var GEMINI_35_FLASH_HIGH_MODEL = "gemini-3-flash-agent";
-var GEMINI_36_FLASH_REGEX = /^gemini-3\.6-flash(?:-(low|medium|high))?$/i;
-var GEMINI_36_FLASH_MODELS = {
-  low: "gemini-3.6-flash-low",
-  medium: "gemini-3.6-flash-medium",
-  high: "gemini-3.6-flash-high"
-};
-var GEMINI_37_FLASH_REGEX = /^gemini-3\.7-flash(?:-(minimal|low|medium|high))?$/i;
-var GEMINI_37_FLASH_MODELS = {
-  low: "gemini-3.7-flash-low",
-  medium: "gemini-3.7-flash-medium",
-  high: "gemini-3.7-flash-high"
-};
-var GEMINI_38_FLASH_REGEX = /^gemini-3\.8-flash(?:-(low|medium|high))?$/i;
-var GEMINI_38_FLASH_MODELS = {
-  low: "gemini-3.8-flash-low",
-  medium: "gemini-3.8-flash-medium",
-  high: "gemini-3.8-flash-high"
-};
-var GEMINI_PUBLIC_ONLY_REGEX = /^(?:gemini-3\.5-flash-lite(?:-(?:minimal|low|medium|high))?|gemini-flash-lite-latest)$/i;
-var GEMINI_DOTTED_MINOR_REGEX = /^gemini-3\.(?:[1-9]\d*)/i;
-var IMAGE_GENERATION_MODELS = /image|imagen/i;
-function supportsThinkingTiers(model) {
-  const lower = model.toLowerCase();
-  return lower.includes("gemini-3") || lower.includes("gemini-2.5") || lower.includes("claude") && lower.includes("thinking");
-}
-function extractThinkingTierFromModel(model) {
-  if (!supportsThinkingTiers(model)) {
-    return void 0;
-  }
-  const tierMatch = model.match(TIER_REGEX);
-  return tierMatch?.[1];
-}
-function getBudgetFamily(model) {
-  if (model.includes("claude")) {
-    return "claude";
-  }
-  if (model.includes("gemini-2.5-pro")) {
-    return "gemini-2.5-pro";
-  }
-  if (model.includes("gemini-2.5-flash")) {
-    return "gemini-2.5-flash";
-  }
-  return "default";
-}
-function isThinkingCapableModel2(model) {
-  const lower = model.toLowerCase();
-  return lower.includes("thinking") || lower.includes("gemini-3") || lower.includes("gemini-2.5");
-}
-function isGemini3ProModel(model) {
-  return GEMINI_3_PRO_REGEX.test(model);
-}
-function isGemini3FlashModel(model) {
-  return GEMINI_3_FLASH_REGEX.test(model);
-}
-function resolveAntigravityGemini35FlashBackendModel(model, thinkingLevel) {
-  const modelWithoutQuota = model.replace(QUOTA_PREFIX_REGEX, "");
-  const match = modelWithoutQuota.match(GEMINI_35_FLASH_REGEX);
-  if (!match) {
-    return void 0;
-  }
-  const level = (thinkingLevel ?? match[1] ?? "low").toLowerCase();
-  return level === "high" ? GEMINI_35_FLASH_HIGH_MODEL : GEMINI_35_FLASH_LOW_MODEL;
-}
-function resolveAntigravityGemini36FlashBackendModel(model, thinkingLevel) {
-  const modelWithoutQuota = model.replace(QUOTA_PREFIX_REGEX, "");
-  const match = modelWithoutQuota.match(GEMINI_36_FLASH_REGEX);
-  if (!match) {
-    return void 0;
-  }
-  const rawLevel = (thinkingLevel ?? match[1] ?? "medium").toLowerCase();
-  const level = rawLevel === "minimal" ? "low" : rawLevel;
-  if (level !== "low" && level !== "medium" && level !== "high") {
-    return void 0;
-  }
-  return GEMINI_36_FLASH_MODELS[level];
-}
-function resolveAntigravityGemini37FlashBackendModel(model, thinkingLevel) {
-  const modelWithoutQuota = model.replace(QUOTA_PREFIX_REGEX, "");
-  const match = modelWithoutQuota.match(GEMINI_37_FLASH_REGEX);
-  if (!match) {
-    return void 0;
-  }
-  const rawLevel = (thinkingLevel ?? match[1] ?? "medium").toLowerCase();
-  const level = rawLevel === "minimal" ? "low" : rawLevel;
-  if (level !== "low" && level !== "medium" && level !== "high") {
-    return void 0;
-  }
-  return GEMINI_37_FLASH_MODELS[level];
-}
-function resolveAntigravityGemini38FlashBackendModel(model, thinkingLevel) {
-  const modelWithoutQuota = model.replace(QUOTA_PREFIX_REGEX, "");
-  const match = modelWithoutQuota.match(GEMINI_38_FLASH_REGEX);
-  if (!match) {
-    return void 0;
-  }
-  const rawLevel = (thinkingLevel ?? match[1] ?? "medium").toLowerCase();
-  const level = rawLevel === "minimal" ? "low" : rawLevel;
-  if (level !== "low" && level !== "medium" && level !== "high") {
-    return void 0;
-  }
-  return GEMINI_38_FLASH_MODELS[level];
-}
-function getDefaultGemini3ThinkingLevel(model) {
-  const normalized = model.toLowerCase().replace(QUOTA_PREFIX_REGEX, "");
-  if (/^gemini-3\.[678]-flash(?:-|$)/.test(normalized)) {
-    return "medium";
-  }
-  if (/^gemini-3\.5-flash-lite(?:-|$)/.test(normalized)) {
-    return "minimal";
-  }
-  return "low";
-}
-function isGeminiPublicOnlyModel(model) {
-  return GEMINI_PUBLIC_ONLY_REGEX.test(model.replace(QUOTA_PREFIX_REGEX, ""));
-}
-function resolveModelWithTier(requestedModel, options = {}) {
-  const isAntigravity = QUOTA_PREFIX_REGEX.test(requestedModel);
-  const modelWithoutQuota = requestedModel.replace(QUOTA_PREFIX_REGEX, "");
-  const tier = extractThinkingTierFromModel(modelWithoutQuota);
-  const baseName = tier ? modelWithoutQuota.replace(TIER_REGEX, "") : modelWithoutQuota;
-  const isImageModel = IMAGE_GENERATION_MODELS.test(modelWithoutQuota);
-  const isClaudeModel2 = modelWithoutQuota.toLowerCase().includes("claude");
-  const preferGeminiCli = !isAntigravity && (isGeminiPublicOnlyModel(modelWithoutQuota) || options.cli_first === true && !isImageModel && !isClaudeModel2);
-  const quotaPreference = preferGeminiCli ? "gemini-cli" : "antigravity";
-  const explicitQuota = isAntigravity || isImageModel;
-  const isGemini3 = modelWithoutQuota.toLowerCase().startsWith("gemini-3");
-  const skipAlias = isAntigravity && isGemini3;
-  const isGemini3Pro = isGemini3ProModel(modelWithoutQuota);
-  const isGemini3Flash = isGemini3FlashModel(modelWithoutQuota);
-  let effectiveTier = tier;
-  let antigravityModel = modelWithoutQuota;
-  if (skipAlias) {
-    const gemini38FlashBackendModel = resolveAntigravityGemini38FlashBackendModel(modelWithoutQuota, tier);
-    const gemini37FlashBackendModel = resolveAntigravityGemini37FlashBackendModel(modelWithoutQuota, effectiveTier);
-    const gemini36FlashBackendModel = resolveAntigravityGemini36FlashBackendModel(modelWithoutQuota, effectiveTier);
-    const gemini35FlashBackendModel = resolveAntigravityGemini35FlashBackendModel(modelWithoutQuota, tier);
-    if (gemini38FlashBackendModel) {
-      antigravityModel = gemini38FlashBackendModel;
-    } else if (gemini37FlashBackendModel) {
-      antigravityModel = gemini37FlashBackendModel;
-      if (String(effectiveTier) === "minimal") {
-        effectiveTier = "low";
-      }
-    } else if (gemini36FlashBackendModel) {
-      antigravityModel = gemini36FlashBackendModel;
-    } else if (gemini35FlashBackendModel) {
-      antigravityModel = gemini35FlashBackendModel;
-    } else if (isGemini3Pro && !effectiveTier && !isImageModel) {
-      antigravityModel = `${modelWithoutQuota}-low`;
-    } else if (isGemini3Flash && effectiveTier) {
-      antigravityModel = baseName;
-    }
-  }
-  const actualModel = skipAlias ? antigravityModel : MODEL_ALIASES[modelWithoutQuota] || MODEL_ALIASES[baseName] || baseName;
-  const resolvedModel = actualModel;
-  const isThinking = isThinkingCapableModel2(resolvedModel);
-  if (isImageModel) {
-    return {
-      actualModel: resolvedModel,
-      isThinkingModel: false,
-      isImageModel: true,
-      quotaPreference,
-      explicitQuota
-    };
-  }
-  const isEffectiveGemini3 = resolvedModel.toLowerCase().includes("gemini-3");
-  const isClaudeThinking = resolvedModel.toLowerCase().includes("claude") && resolvedModel.toLowerCase().includes("thinking");
-  if (!effectiveTier) {
-    if (isEffectiveGemini3) {
-      return {
-        actualModel: resolvedModel,
-        thinkingLevel: getDefaultGemini3ThinkingLevel(resolvedModel),
-        isThinkingModel: true,
-        quotaPreference,
-        explicitQuota
-      };
-    }
-    if (isClaudeThinking) {
-      return {
-        actualModel: resolvedModel,
-        thinkingBudget: THINKING_TIER_BUDGETS.claude.high,
-        isThinkingModel: true,
-        quotaPreference,
-        explicitQuota
-      };
-    }
-    return {
-      actualModel: resolvedModel,
-      isThinkingModel: isThinking,
-      quotaPreference,
-      explicitQuota
-    };
-  }
-  if (isEffectiveGemini3) {
-    return {
-      actualModel: resolvedModel,
-      thinkingLevel: effectiveTier,
-      tier: effectiveTier,
-      isThinkingModel: true,
-      quotaPreference,
-      explicitQuota
-    };
-  }
-  const budgetFamily = getBudgetFamily(resolvedModel);
-  const budgets = THINKING_TIER_BUDGETS[budgetFamily];
-  const thinkingBudget = budgets[effectiveTier];
-  return {
-    actualModel: resolvedModel,
-    thinkingBudget,
-    tier: effectiveTier,
-    isThinkingModel: isThinking,
-    quotaPreference,
-    explicitQuota
-  };
-}
-function getModelFamily2(model) {
-  const lower = model.toLowerCase();
-  if (lower.includes("claude")) {
-    return "claude";
-  }
-  if (lower.includes("flash")) {
-    return "gemini-flash";
-  }
-  return "gemini-pro";
-}
-var ANTIGRAVITY_TO_PUBLIC_API_MODEL_MAP = /* @__PURE__ */ new Map([
-  ["gemini-3-pro", "gemini-3-pro-preview"],
-  ["gemini-3-flash", "gemini-3-flash-preview"],
-  ["gemini-3.1-pro", "gemini-3.1-pro-preview"],
-  ["gemini-3.1-flash", "gemini-3.1-flash-lite"]
-]);
-function mapAntigravityModelToPublicApi(model) {
-  const stripped = model.toLowerCase().replace(/^antigravity-/, "");
-  const base = stripped.replace(/-(minimal|low|medium|high)$/, "");
-  return ANTIGRAVITY_TO_PUBLIC_API_MODEL_MAP.get(base);
-}
-function resolveModelForHeaderStyle(requestedModel, headerStyle) {
-  const aliasResolvedModel = MODEL_ALIASES[requestedModel];
-  if (aliasResolvedModel) {
-    return resolveModelForHeaderStyle(aliasResolvedModel, headerStyle);
-  }
-  const lower = requestedModel.toLowerCase();
-  const isGemini3 = lower.includes("gemini-3");
-  if (headerStyle === "agy-sdk") {
-    const modelWithTier = requestedModel.replace(/^antigravity-/i, "");
-    const stripped = modelWithTier.replace(/-(minimal|low|medium|high)$/i, "");
-    const transformedModel = mapAntigravityModelToPublicApi(stripped) ?? stripped;
-    return {
-      ...resolveModelWithTier(modelWithTier),
-      actualModel: transformedModel,
-      quotaPreference: "agy-sdk",
-      explicitQuota: false
-    };
-  }
-  if (!isGemini3) {
-    return resolveModelWithTier(requestedModel);
-  }
-  if (headerStyle === "antigravity") {
-    let transformedModel = requestedModel.replace(/-preview-customtools$/i, "").replace(/-preview$/i, "").replace(/^antigravity-/i, "");
-    const isGemini3Pro = isGemini3ProModel(transformedModel);
-    const hasTierSuffix = /-(low|medium|high)$/i.test(transformedModel);
-    const isImageModel = IMAGE_GENERATION_MODELS.test(transformedModel);
-    if (isGemini3Pro && !hasTierSuffix && !isImageModel) {
-      transformedModel = `${transformedModel}-low`;
-    }
-    const prefixedModel = `antigravity-${transformedModel}`;
-    return resolveModelWithTier(prefixedModel);
-  }
-  if (headerStyle === "gemini-cli") {
-    let transformedModel = requestedModel.replace(/^antigravity-/i, "").replace(/-(minimal|low|medium|high)$/i, "");
-    const hasPreviewSuffix = /-preview($|-)/i.test(transformedModel);
-    const usesBareName = GEMINI_DOTTED_MINOR_REGEX.test(transformedModel);
-    if (usesBareName && /-preview$/i.test(transformedModel)) {
-      transformedModel = transformedModel.replace(/-preview$/i, "");
-    } else if (!hasPreviewSuffix && !usesBareName) {
-      transformedModel = `${transformedModel}-preview`;
-    }
-    return {
-      ...resolveModelWithTier(transformedModel),
-      quotaPreference: "gemini-cli"
-    };
-  }
-  return resolveModelWithTier(requestedModel);
 }
 
 // src/plugin/recovery/storage.ts
@@ -8003,40 +8051,15 @@ function prepareAntigravityRequest(input2, init, accessToken, projectId, endpoin
           }
         }
         if (headerStyle === "antigravity") {
-          const gemini38FlashBackendModel = resolveAntigravityGemini38FlashBackendModel(
+          const backend = resolveAntigravityGeminiBackend(
             effectiveModel,
             tierThinkingLevel
           );
-          const gemini37FlashBackendModel = resolveAntigravityGemini37FlashBackendModel(
-            effectiveModel,
-            tierThinkingLevel
-          );
-          const gemini36FlashBackendModel = resolveAntigravityGemini36FlashBackendModel(
-            effectiveModel,
-            tierThinkingLevel
-          );
-          const gemini35FlashBackendModel = resolveAntigravityGemini35FlashBackendModel(
-            effectiveModel,
-            tierThinkingLevel
-          );
-          if (gemini38FlashBackendModel) {
-            effectiveModel = gemini38FlashBackendModel;
-            wrappedBody.model = gemini38FlashBackendModel;
-          } else if (gemini37FlashBackendModel) {
-            effectiveModel = gemini37FlashBackendModel;
-            wrappedBody.model = gemini37FlashBackendModel;
-          } else if (gemini36FlashBackendModel) {
-            effectiveModel = gemini36FlashBackendModel;
-            wrappedBody.model = gemini36FlashBackendModel;
-          } else if (gemini35FlashBackendModel) {
-            effectiveModel = gemini35FlashBackendModel;
-            wrappedBody.model = gemini35FlashBackendModel;
-          } else if (isGemini3ProModel(effectiveModel) && tierThinkingLevel) {
-            const basePro = effectiveModel.replace(/-(low|high)$/i, "");
-            const proModel = `${basePro}-${tierThinkingLevel === "high" ? "high" : "low"}`;
-            effectiveModel = proModel;
-            wrappedBody.model = proModel;
+          if (backend) {
+            effectiveModel = backend.model;
+            tierThinkingLevel = backend.thinkingLevel;
           }
+          wrappedBody.model = toAntigravityWireModel(effectiveModel);
         }
         const conversationKey = resolveConversationKeyFromRequests(requestObjects);
         const modelForCacheKey = effectiveModel.replace(
@@ -8123,33 +8146,13 @@ function prepareAntigravityRequest(input2, init, accessToken, projectId, endpoin
           }
         }
         if (headerStyle === "antigravity") {
-          const gemini38FlashBackendModel = resolveAntigravityGemini38FlashBackendModel(
+          const backend = resolveAntigravityGeminiBackend(
             effectiveModel,
             tierThinkingLevel
           );
-          const gemini37FlashBackendModel = resolveAntigravityGemini37FlashBackendModel(
-            effectiveModel,
-            tierThinkingLevel
-          );
-          const gemini36FlashBackendModel = resolveAntigravityGemini36FlashBackendModel(
-            effectiveModel,
-            tierThinkingLevel
-          );
-          const gemini35FlashBackendModel = resolveAntigravityGemini35FlashBackendModel(
-            effectiveModel,
-            tierThinkingLevel
-          );
-          if (gemini38FlashBackendModel) {
-            effectiveModel = gemini38FlashBackendModel;
-          } else if (gemini37FlashBackendModel) {
-            effectiveModel = gemini37FlashBackendModel;
-          } else if (gemini36FlashBackendModel) {
-            effectiveModel = gemini36FlashBackendModel;
-          } else if (gemini35FlashBackendModel) {
-            effectiveModel = gemini35FlashBackendModel;
-          } else if (isGemini3ProModel(effectiveModel) && tierThinkingLevel) {
-            const basePro = effectiveModel.replace(/-(low|high)$/i, "");
-            effectiveModel = `${basePro}-${tierThinkingLevel === "high" ? "high" : "low"}`;
+          if (backend) {
+            effectiveModel = backend.model;
+            tierThinkingLevel = backend.thinkingLevel;
           }
         }
         if (isClaude) {
@@ -8220,7 +8223,7 @@ function prepareAntigravityRequest(input2, init, accessToken, projectId, endpoin
         } else {
           const finalThinkingConfig = resolveThinkingConfig(
             effectiveUserThinkingConfig,
-            isClaudeSonnetNonThinking ? false : resolved.isThinkingModel ?? isThinkingCapableModel(effectiveModel)
+            isClaudeSonnetNonThinking ? false : resolved.isThinkingModel ?? isThinkingCapableModel2(effectiveModel)
           );
           const normalizedThinking = normalizeThinkingConfig(finalThinkingConfig);
           if (normalizedThinking) {
@@ -8586,7 +8589,7 @@ ${hint}`;
         }
         const wrappedBody = {
           project: effectiveProjectId,
-          model: effectiveModel,
+          model: headerStyle === "antigravity" ? toAntigravityWireModel(effectiveModel) : effectiveModel,
           request: requestPayload
         };
         if (headerStyle === "antigravity") {
@@ -8712,6 +8715,9 @@ async function transformAntigravityResponse(response, streaming, debugContext, r
   const contentType = response.headers.get("content-type") ?? "";
   const isJsonResponse = contentType.includes("application/json");
   const isEventStreamResponse = contentType.includes("text/event-stream");
+  const responseModel = effectiveModel ?? requestedModel;
+  const repairToolArgs = !responseModel || isClaudeModel(responseModel);
+  const transformParts = (body) => transformThinkingParts(body, { repairToolArgs });
   const debugText = isDebugTuiEnabled() && Array.isArray(debugLines) && debugLines.length > 0 ? formatDebugLinesForThinking(debugLines) : getKeepThinking() ? SYNTHETIC_THINKING_PLACEHOLDER : void 0;
   const cacheSignatures = shouldCacheThinkingSignatures(effectiveModel);
   if (!isJsonResponse && !isEventStreamResponse) {
@@ -8731,7 +8737,7 @@ async function transformAntigravityResponse(response, streaming, debugContext, r
         onCacheSignature: cacheSignature,
         onInjectDebug: injectDebugThinking,
         // onInjectSyntheticThinking removed - keep_thinking now uses debugText path
-        transformThinkingParts
+        transformThinkingParts: transformParts
       },
       {
         signatureSessionKey: sessionId,
@@ -8877,7 +8883,7 @@ ${debugText}` : "";
       if (debugText) {
         responseBody = injectDebugThinking(responseBody, debugText);
       }
-      const transformed = transformThinkingParts(responseBody);
+      const transformed = transformParts(responseBody);
       return new Response(JSON.stringify(transformed), init);
     }
     if (patched) {
@@ -9816,7 +9822,7 @@ function sanitizeClearedSetTimes(raw, cleared) {
 }
 function resolveQuotaGroup(family, model) {
   if (model) {
-    return getModelFamily2(model);
+    return getModelFamily(model);
   }
   return family === "claude" ? "claude" : "gemini-pro";
 }
@@ -11169,7 +11175,7 @@ function classifyQuotaGroup(modelName, displayName) {
   if (!isGemini3) {
     return null;
   }
-  const family = getModelFamily2(modelName);
+  const family = getModelFamily(modelName);
   return family === "gemini-flash" ? "gemini-flash" : "gemini-pro";
 }
 function aggregateQuota(models) {

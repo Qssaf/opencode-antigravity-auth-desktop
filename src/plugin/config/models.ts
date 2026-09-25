@@ -1,4 +1,8 @@
 import type { ProviderModel } from "../types";
+import {
+  remapRetiredAntigravityGeminiModel,
+  toAntigravityWireModel,
+} from "../transform/model-resolver";
 
 export type ModelThinkingLevel = "minimal" | "low" | "medium" | "high";
 
@@ -55,15 +59,6 @@ const DEFAULT_MODALITIES: ModelModalities = {
 };
 
 export const OPENCODE_MODEL_DEFINITIONS: OpencodeModelDefinitions = {
-  "antigravity-gemini-3-pro": {
-    name: "Gemini 3 Pro (Antigravity)",
-    limit: { context: 1048576, output: 65535 },
-    modalities: DEFAULT_MODALITIES,
-    variants: {
-      low: { thinkingLevel: "low" },
-      high: { thinkingLevel: "high" },
-    },
-  },
   "antigravity-gemini-3.1-pro": {
     name: "Gemini 3.1 Pro (Antigravity)",
     limit: { context: 1048576, output: 65535 },
@@ -73,9 +68,9 @@ export const OPENCODE_MODEL_DEFINITIONS: OpencodeModelDefinitions = {
       high: { thinkingLevel: "high" },
     },
   },
-  "antigravity-gemini-3-flash": {
-    name: "Gemini 3 Flash (Antigravity)",
-    limit: { context: 1048576, output: 65536 },
+  "antigravity-gemini-3.1-flash-lite": {
+    name: "Gemini 3.1 Flash Lite (Antigravity)",
+    limit: { context: 1048576, output: 65535 },
     modalities: DEFAULT_MODALITIES,
     variants: {
       minimal: { thinkingLevel: "minimal" },
@@ -84,8 +79,8 @@ export const OPENCODE_MODEL_DEFINITIONS: OpencodeModelDefinitions = {
       high: { thinkingLevel: "high" },
     },
   },
-  "antigravity-gemini-3.5-flash": {
-    name: "Gemini 3.5 Flash (Antigravity)",
+  "antigravity-gemini-3-flash": {
+    name: "Gemini 3 Flash (Antigravity)",
     limit: { context: 1048576, output: 65536 },
     modalities: DEFAULT_MODALITIES,
     variants: {
@@ -331,8 +326,19 @@ export function modelsFromAntigravityAvailableModels(
   const definitions: OpencodeModelDefinitions = {};
 
   for (const [sourceId, entry] of Object.entries(models)) {
+    // Unlabeled entries are tab-completion, internal chat and "-tiered" routing
+    // ids, not models the Antigravity IDE offers for chat.
+    if (!entry.displayName) continue;
     const modelId = antigravityModelIdFromEntry(sourceId, entry);
     if (!modelId) continue;
+    // Retired and renamed ids are served under their successor's catalog entry.
+    const backendId = modelId.replace(/^antigravity-/, "");
+    if (
+      remapRetiredAntigravityGeminiModel(backendId) !== backendId ||
+      toAntigravityWireModel(backendId) !== backendId
+    ) {
+      continue;
+    }
 
     const variants = defaultVariantsForModel(modelId);
     const discovered: OpencodeModelDefinition = {

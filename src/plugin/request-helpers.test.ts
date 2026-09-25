@@ -847,6 +847,38 @@ describe("transformThinkingParts", () => {
     const result = transformThinkingParts(response) as any;
     expect(result.candidates[0].content.parts[0].providerMetadata).toBeUndefined();
   });
+
+  it("passes Gemini tool-call args through unchanged when repair is off", () => {
+    const args = {
+      description: "[1] Audit files",
+      command: "printf 'a\\nb'",
+      options: ["{\"a\":1}", "[x] done"],
+      note: "line\\nbreak",
+    };
+    const response = {
+      candidates: [{ content: { parts: [{ functionCall: { name: "shell", args } }] } }],
+    };
+    const result = transformThinkingParts(response, { repairToolArgs: false }) as any;
+    expect(result.candidates[0].content.parts[0].functionCall.args).toEqual(args);
+  });
+
+  it("still repairs stringified tool-call args by default (Claude)", () => {
+    const response = {
+      candidates: [
+        { content: { parts: [{ functionCall: { name: "todo", args: { todos: '[{"id":1}]' } } }] } },
+      ],
+    };
+    const result = transformThinkingParts(response) as any;
+    expect(result.candidates[0].content.parts[0].functionCall.args).toEqual({ todos: [{ id: 1 }] });
+  });
+
+  it("defaults missing tool-call args to an empty object when repair is off", () => {
+    const response = {
+      candidates: [{ content: { parts: [{ functionCall: { name: "list" } }] } }],
+    };
+    const result = transformThinkingParts(response, { repairToolArgs: false }) as any;
+    expect(result.candidates[0].content.parts[0].functionCall.args).toEqual({});
+  });
 });
 
 describe("normalizeThinkingConfig", () => {
