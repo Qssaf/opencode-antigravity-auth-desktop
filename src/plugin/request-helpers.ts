@@ -1924,6 +1924,7 @@ export function isMeaningfulSseLine(line: string): boolean {
           for (const part of parts) {
             if (typeof part?.text === "string" && part.text.length > 0) return true;
             if (part?.functionCall) return true;
+            if (part?.inlineData) return true;
           }
         }
       }
@@ -1938,6 +1939,68 @@ export function isMeaningfulSseLine(line: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Reads a streaming SSE response until its first meaningful event (see
+ * isMeaningfulSseLine) or its end, without losing any bytes.
+ *
+ * Returns `empty: true` when the stream ended without content, so the caller can
+ * retry; otherwise `response` replays everything read so far and then the rest
+ * of the stream, with the original status and headers.
+ */
+export async function peekSseForContent(
+  response: Response,
+): Promise<{ response: Response; empty: boolean }> {
+  if (!response.body) {
+    return { response, empty: true };
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const buffered: Uint8Array[] = [];
+  let pending = "";
+  let done = false;
+  let meaningful = false;
+
+  while (!meaningful) {
+    const chunk = await reader.read();
+    if (chunk.done) {
+      done = true;
+      pending += decoder.decode();
+      meaningful = pending.split("\n").some((line) => isMeaningfulSseLine(line.trimEnd()));
+      break;
+    }
+    buffered.push(chunk.value);
+    pending += decoder.decode(chunk.value, { stream: true });
+    const lines = pending.split("\n");
+    pending = lines.pop() ?? "";
+    meaningful = lines.some((line) => isMeaningfulSseLine(line.trimEnd()));
+  }
+
+  const replay = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of buffered) controller.enqueue(chunk);
+      if (done) controller.close();
+    },
+    async pull(controller) {
+      const chunk = await reader.read();
+      if (chunk.done) controller.close();
+      else controller.enqueue(chunk.value);
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    },
+  });
+
+  return {
+    response: new Response(replay, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    }),
+    empty: !meaningful,
+  };
 }
 
 // ============================================================================

@@ -22,7 +22,7 @@ account again just refreshes the token of the account already in the pool.
 
 - **Sticky account selection** — Sticks to the same account until rate-limited (preserves Anthropic's prompt cache)
 - **Per-model-family limits** — Rate limits tracked separately for Claude and Gemini models
-- **Antigravity-first for Gemini** — Gemini requests use Antigravity quota first, then automatically fall back to Gemini CLI when exhausted across all accounts. Public-only models such as Gemini 3.5 Flash-Lite use the Gemini CLI path directly.
+- **Antigravity-first for Gemini** — Gemini requests use Antigravity quota first, then automatically fall back to Gemini CLI when exhausted across all accounts.
 - **Smart retry threshold** — Short rate limits (≤5s) are retried on same account
 - **Exponential backoff** — Increasing delays for consecutive rate limits
 

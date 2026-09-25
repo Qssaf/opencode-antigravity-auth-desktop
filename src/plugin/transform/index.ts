@@ -32,7 +32,6 @@ export {
   toAntigravityWireModel,
   isGemini3ProModel,
   getDefaultGemini3ThinkingLevel,
-  isGeminiPublicOnlyModel,
   getModelFamily,
   MODEL_ALIASES,
   THINKING_TIER_BUDGETS,

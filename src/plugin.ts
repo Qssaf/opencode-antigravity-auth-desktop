@@ -34,12 +34,12 @@ import {
   transformAntigravityResponse,
 } from "./plugin/request";
 import {
-  isGeminiPublicOnlyModel,
   resolveModelWithTier,
 } from "./plugin/transform/model-resolver";
 import {
   isEmptyResponseBody,
   createSyntheticErrorResponse,
+  peekSseForContent,
 } from "./plugin/request-helpers";
 import { EmptyResponseError } from "./plugin/errors";
 import { AntigravityTokenRefreshError, isRevokedRefreshToken, refreshAccessToken } from "./plugin/token";
@@ -2879,7 +2879,7 @@ export const createAntigravityRuntime = (providerId: string) => async (
                   tokenConsumed = getTokenTracker().consume(account.index);
                 }
 
-                const response = await fetch(prepared.request, prepared.init);
+                let response = await fetch(prepared.request, prepared.init);
                 pushDebug(`status=${response.status} ${response.statusText}`);
 
 
@@ -3327,17 +3327,24 @@ export const createAntigravityRuntime = (providerId: string) => async (
                 }
                 
                 // Empty response retry logic (ported from LLM-API-Key-Proxy)
-                // For non-streaming responses, check if the response body is empty
-                // and retry if so (up to config.empty_response_max_attempts times)
-                if (response.ok && !prepared.streaming) {
+                // Retry an empty answer up to config.empty_response_max_attempts times.
+                // Streaming responses (every OpenCode 2.x request) are read up to their
+                // first content event and handed on intact; other bodies are checked whole.
+                if (response.ok) {
                   const maxAttempts = config.empty_response_max_attempts ?? 4;
                   const retryDelayMs = config.empty_response_retry_delay_ms ?? 2000;
-                  
-                  // Clone to check body without consuming original
-                  const clonedForCheck = response.clone();
-                  const bodyText = await clonedForCheck.text();
-                  
-                  if (isEmptyResponseBody(bodyText)) {
+
+                  let isEmpty: boolean;
+                  if (prepared.streaming) {
+                    const peeked = await peekSseForContent(response);
+                    response = peeked.response;
+                    isEmpty = peeked.empty;
+                  } else {
+                    // Clone to check body without consuming original
+                    isEmpty = isEmptyResponseBody(await response.clone().text());
+                  }
+
+                  if (isEmpty) {
                     // Track empty response attempts per request
                     const emptyAttemptKey = `${prepared.sessionId ?? "none"}:${prepared.effectiveModel ?? "unknown"}`;
                     const currentAttempts = (emptyResponseAttempts.get(emptyAttemptKey) ?? 0) + 1;
@@ -3351,7 +3358,10 @@ export const createAntigravityRuntime = (providerId: string) => async (
                         "warning"
                       );
                       await sleep(retryDelayMs, abortSignal);
-                      continue; // Retry the endpoint loop
+                      // Retry the same endpoint: moving on would end the loop with
+                      // nothing to return when this is the last endpoint.
+                      i--;
+                      continue;
                     }
                     
                     // Clean up and throw after max attempts
@@ -4537,8 +4547,7 @@ function resolveHeaderRoutingDecision(
     explicitQuota,
     allowQuotaFallback:
       family === "gemini" &&
-      resolvedModel?.isImageModel !== true &&
-      !isGeminiPublicOnlyModel(modelWithSuffix ?? ""),
+      resolvedModel?.isImageModel !== true,
   };
 }
 

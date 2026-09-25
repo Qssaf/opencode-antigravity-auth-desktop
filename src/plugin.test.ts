@@ -85,16 +85,16 @@ describe("Gemini Flash-Lite routing", () => {
   const url =
     "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:streamGenerateContent";
 
-  it("uses the public Gemini quota path without Antigravity fallback", () => {
+  it("uses the Antigravity quota path with Gemini CLI fallback, like other Gemini models", () => {
     expect(__testExports.getHeaderStyleFromUrl(url, "gemini")).toBe(
-      "gemini-cli",
+      "antigravity",
     );
     expect(
       __testExports.resolveHeaderRoutingDecision(url, "gemini", DEFAULT_CONFIG),
     ).toMatchObject({
-      preferredHeaderStyle: "gemini-cli",
+      preferredHeaderStyle: "antigravity",
       explicitQuota: false,
-      allowQuotaFallback: false,
+      allowQuotaFallback: true,
     });
   });
 });
@@ -1514,4 +1514,115 @@ describe("background quota refresh", () => {
     // And the next request does not start another refresh straight away.
     expect(fetchMock.mock.calls.length).toBe(callsAfterFirst);
   });
+});
+
+describe("empty streaming response retry", () => {
+  let tmpConfigHome: string;
+  const savedEnv: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    tmpConfigHome = join(tmpdir(), `opencode-antigravity-empty-${process.pid}-${Date.now()}`);
+    mkdirSync(tmpConfigHome, { recursive: true });
+    savedEnv.XDG_CONFIG_HOME = process.env.XDG_CONFIG_HOME;
+    savedEnv.OPENCODE_ANTIGRAVITY_API_KEYS = process.env.OPENCODE_ANTIGRAVITY_API_KEYS;
+    savedEnv.GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+    savedEnv.GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
+    process.env.XDG_CONFIG_HOME = tmpConfigHome;
+    delete process.env.OPENCODE_ANTIGRAVITY_API_KEYS;
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.GOOGLE_API_KEY;
+    vi.mocked(storageModule.loadAccounts).mockReset();
+    resetAgySdkCredentialStateForTests();
+    loopEscapeTestHooks.resetAllInternalState();
+  });
+
+  afterEach(() => {
+    for (const [key, val] of Object.entries(savedEnv)) {
+      if (val === undefined) delete process.env[key];
+      else process.env[key] = val;
+    }
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+    rmSync(tmpConfigHome, { recursive: true, force: true });
+  });
+
+  it("retries an empty stream on the same endpoint and returns the next answer", async () => {
+    const now = Date.now();
+    vi.mocked(storageModule.loadAccounts).mockResolvedValue({
+      version: 4,
+      accounts: [
+        {
+          email: "solo@example.com",
+          refreshToken: "refresh-token",
+          projectId: "project-id",
+          managedProjectId: "managed-project-id",
+          addedAt: now,
+          lastUsed: now,
+          enabled: true,
+        },
+      ],
+      activeIndex: 0,
+    });
+
+    const sse = (parts: unknown[], finishReason?: string) =>
+      `data: ${JSON.stringify({
+        response: { candidates: [{ content: { role: "model", parts }, ...(finishReason ? { finishReason } : {}) }] },
+      })}\n\n`;
+    const contentUrls: string[] = [];
+
+    const fetchMock = vi.fn(async (input: RequestInfo) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url.includes("cloudcode-pa") && url.includes(":streamGenerateContent")) {
+        contentUrls.push(url);
+        const body = contentUrls.length === 1
+          ? sse([], "STOP")
+          : sse([{ text: "answer" }]) + sse([], "STOP");
+        return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+      }
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return new Response(JSON.stringify({ models: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("1.2.3");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const plugin = await createAntigravityPlugin("google")({
+      client,
+      directory: process.cwd(),
+    });
+    const loader = await plugin.auth.loader(
+      async () => ({
+        type: "oauth" as const,
+        refresh: formatRefreshParts({
+          refreshToken: "refresh-token",
+          projectId: "project-id",
+          managedProjectId: "managed-project-id",
+        }),
+        access: "access-token",
+        expires: now + 3_600_000,
+      }),
+      { id: "google", api: "https://generativelanguage.googleapis.com/v1beta", npm: "@ai-sdk/google", models: {} },
+    );
+
+    vi.useFakeTimers();
+    const fetchPromise = (loader as { fetch: typeof fetch }).fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models/antigravity-gemini-3.8-flash:streamGenerateContent?alt=sse",
+      { method: "POST", body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "hello" }] }] }) },
+    );
+    let settled = false;
+    fetchPromise.then(() => { settled = true; }, () => { settled = true; });
+    for (let i = 0; i < 20 && !settled; i++) {
+      await vi.advanceTimersByTimeAsync(5_000);
+    }
+    const response = await fetchPromise;
+    vi.useRealTimers();
+
+    expect(contentUrls).toHaveLength(2);
+    expect(new URL(contentUrls[1]!).host).toBe(new URL(contentUrls[0]!).host);
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("answer");
+  }, 20_000);
 });

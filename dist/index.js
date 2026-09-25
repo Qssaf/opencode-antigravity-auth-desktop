@@ -1946,7 +1946,6 @@ var GEMINI_38_FLASH_MODELS = {
   medium: "gemini-3.8-flash-medium",
   high: "gemini-3.8-flash-high"
 };
-var GEMINI_PUBLIC_ONLY_REGEX = /^(?:gemini-3\.5-flash-lite(?:-(?:minimal|low|medium|high))?|gemini-flash-lite-latest)$/i;
 var GEMINI_DOTTED_MINOR_REGEX = /^gemini-3\.(?:[1-9]\d*)/i;
 var IMAGE_GENERATION_MODELS = /image|imagen/i;
 function supportsThinkingTiers(model) {
@@ -2078,9 +2077,6 @@ function getDefaultGemini3ThinkingLevel(model) {
   }
   return "low";
 }
-function isGeminiPublicOnlyModel(model) {
-  return GEMINI_PUBLIC_ONLY_REGEX.test(model.replace(QUOTA_PREFIX_REGEX, ""));
-}
 function resolveModelWithTier(requestedModel, options = {}) {
   const isAntigravity = QUOTA_PREFIX_REGEX.test(requestedModel);
   const strippedModel = requestedModel.replace(QUOTA_PREFIX_REGEX, "");
@@ -2089,7 +2085,7 @@ function resolveModelWithTier(requestedModel, options = {}) {
   const baseName = tier ? modelWithoutQuota.replace(TIER_REGEX, "") : modelWithoutQuota;
   const isImageModel = IMAGE_GENERATION_MODELS.test(modelWithoutQuota);
   const isClaudeModel2 = modelWithoutQuota.toLowerCase().includes("claude");
-  const preferGeminiCli = !isAntigravity && (isGeminiPublicOnlyModel(modelWithoutQuota) || options.cli_first === true && !isImageModel && !isClaudeModel2);
+  const preferGeminiCli = !isAntigravity && options.cli_first === true && !isImageModel && !isClaudeModel2;
   const quotaPreference = preferGeminiCli ? "gemini-cli" : "antigravity";
   const explicitQuota = isAntigravity || isImageModel;
   const isGemini3 = modelWithoutQuota.toLowerCase().startsWith("gemini-3");
@@ -5439,6 +5435,86 @@ function isEmptyResponseBody(text) {
   } catch {
     return true;
   }
+}
+function isMeaningfulSseLine(line) {
+  if (!line.startsWith("data: ")) {
+    return false;
+  }
+  const data = line.slice(6).trim();
+  if (data === "[DONE]") {
+    return false;
+  }
+  if (!data) {
+    return false;
+  }
+  try {
+    const parsed = JSON.parse(data);
+    if (parsed.candidates && Array.isArray(parsed.candidates)) {
+      for (const candidate of parsed.candidates) {
+        const parts = candidate?.content?.parts;
+        if (Array.isArray(parts) && parts.length > 0) {
+          for (const part of parts) {
+            if (typeof part?.text === "string" && part.text.length > 0) return true;
+            if (part?.functionCall) return true;
+            if (part?.inlineData) return true;
+          }
+        }
+      }
+    }
+    if (parsed.response?.candidates) {
+      return isMeaningfulSseLine(`data: ${JSON.stringify(parsed.response)}`);
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+async function peekSseForContent(response) {
+  if (!response.body) {
+    return { response, empty: true };
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const buffered = [];
+  let pending = "";
+  let done = false;
+  let meaningful = false;
+  while (!meaningful) {
+    const chunk = await reader.read();
+    if (chunk.done) {
+      done = true;
+      pending += decoder.decode();
+      meaningful = pending.split("\n").some((line) => isMeaningfulSseLine(line.trimEnd()));
+      break;
+    }
+    buffered.push(chunk.value);
+    pending += decoder.decode(chunk.value, { stream: true });
+    const lines = pending.split("\n");
+    pending = lines.pop() ?? "";
+    meaningful = lines.some((line) => isMeaningfulSseLine(line.trimEnd()));
+  }
+  const replay = new ReadableStream({
+    start(controller) {
+      for (const chunk of buffered) controller.enqueue(chunk);
+      if (done) controller.close();
+    },
+    async pull(controller) {
+      const chunk = await reader.read();
+      if (chunk.done) controller.close();
+      else controller.enqueue(chunk.value);
+    },
+    cancel(reason) {
+      return reader.cancel(reason);
+    }
+  });
+  return {
+    response: new Response(replay, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers
+    }),
+    empty: !meaningful
+  };
 }
 var SKIP_PARSE_KEYS = /* @__PURE__ */ new Set([
   "oldString",
@@ -14375,7 +14451,7 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                     if (config.account_selection_strategy === "hybrid") {
                       tokenConsumed = getTokenTracker().consume(account.index);
                     }
-                    const response = await fetch(prepared.request, prepared.init);
+                    let response = await fetch(prepared.request, prepared.init);
                     pushDebug(`status=${response.status} ${response.statusText}`);
                     if (response.status === 429 || response.status === 503 || response.status === 529) {
                       if (tokenConsumed) {
@@ -14681,12 +14757,18 @@ Alternatively, you can:
                         }
                       }
                     }
-                    if (response.ok && !prepared.streaming) {
+                    if (response.ok) {
                       const maxAttempts = config.empty_response_max_attempts ?? 4;
                       const retryDelayMs = config.empty_response_retry_delay_ms ?? 2e3;
-                      const clonedForCheck = response.clone();
-                      const bodyText = await clonedForCheck.text();
-                      if (isEmptyResponseBody(bodyText)) {
+                      let isEmpty;
+                      if (prepared.streaming) {
+                        const peeked = await peekSseForContent(response);
+                        response = peeked.response;
+                        isEmpty = peeked.empty;
+                      } else {
+                        isEmpty = isEmptyResponseBody(await response.clone().text());
+                      }
+                      if (isEmpty) {
                         const emptyAttemptKey = `${prepared.sessionId ?? "none"}:${prepared.effectiveModel ?? "unknown"}`;
                         const currentAttempts = (emptyResponseAttempts.get(emptyAttemptKey) ?? 0) + 1;
                         emptyResponseAttempts.set(emptyAttemptKey, currentAttempts);
@@ -14697,6 +14779,7 @@ Alternatively, you can:
                             "warning"
                           );
                           await sleep(retryDelayMs, abortSignal);
+                          i--;
                           continue;
                         }
                         emptyResponseAttempts.delete(emptyAttemptKey);
@@ -15679,7 +15762,7 @@ function resolveHeaderRoutingDecision(urlString, family, config) {
     cliFirst,
     preferredHeaderStyle,
     explicitQuota,
-    allowQuotaFallback: family === "gemini" && resolvedModel?.isImageModel !== true && !isGeminiPublicOnlyModel(modelWithSuffix ?? "")
+    allowQuotaFallback: family === "gemini" && resolvedModel?.isImageModel !== true
   };
 }
 function getCliFirst(config) {

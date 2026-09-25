@@ -50,22 +50,23 @@ The plugin accepts different variant formats depending on the model family:
 
 Gemini 3 models use string-based thinking levels. Available levels differ by model:
 
-| Level | 3/3.5 Flash | 3.6 Flash | 3.5 Flash-Lite | Pro | Description |
-|-------|-------------|-----------|----------------|-----|-------------|
-| `minimal` | ✅ | ❌ | ✅ | ❌ | Minimal thinking, lowest latency |
-| `low` | ✅ | Antigravity only | ✅ | ✅ | Light thinking |
-| `medium` | ✅ | ✅ | ✅ | ❌ | Balanced thinking |
-| `high` | ✅ | ✅ | ✅ | ✅ | Maximum thinking |
+| Level | 3 Flash | 3.6 Flash | 3.7/3.8 Flash | Flash-Lite | Pro | Description |
+|-------|---------|-----------|---------------|------------|-----|-------------|
+| `minimal` | ✅ | ❌ | sent as `low` | ✅ | sent as `low` | Minimal thinking, lowest latency |
+| `low` | ✅ | Antigravity only | ✅ | ✅ | ✅ | Light thinking |
+| `medium` | ✅ | ✅ | ✅ | ✅ | sent as `high` | Balanced thinking |
+| `high` | ✅ | ✅ | ✅ | ✅ | ✅ | Maximum thinking |
 
-> **Note:** The API rejects invalid levels (e.g., `"minimal"` on Pro). Configure variants accordingly.
-> Defaults are model-specific: Gemini 3.6 Flash uses `medium`, Gemini 3.5 Flash-Lite uses `minimal`, and existing plugin models retain their current defaults.
+> **Note:** Antigravity rejects `"minimal"` on Gemini 3.1 Pro and 3.7/3.8 Flash, so the plugin sends `low` there. Gemini 3.1 Pro has only a low and a high tier.
+> Defaults are model-specific: Gemini 3.1 Pro uses `high`, Gemini 3.6–3.8 Flash use `medium`, Flash-Lite uses `minimal`, and Gemini 3 Flash uses `low`.
+> Gemini 3 Pro and 3.5 Flash are retired; their ids are served by Gemini 3.1 Pro and 3.7 Flash at the same tier.
 
-### Gemini 3 Pro Example
+### Gemini 3.1 Pro Example
 
 ```json
 {
-  "antigravity-gemini-3-pro": {
-    "name": "Gemini 3 Pro (Antigravity)",
+  "antigravity-gemini-3.1-pro": {
+    "name": "Gemini 3.1 Pro (Antigravity)",
     "limit": { "context": 1048576, "output": 65535 },
     "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
     "variants": {
@@ -158,9 +159,9 @@ Tier-suffixed model names are still accepted:
 - `antigravity-claude-opus-4-6-thinking-low`
 - `antigravity-claude-opus-4-6-thinking-medium`
 - `antigravity-claude-opus-4-6-thinking-high`
-- `antigravity-gemini-3-pro-low`
-- `antigravity-gemini-3-pro-high`
-- `gemini-3-pro-low`
+- `antigravity-gemini-3.1-pro-low`
+- `antigravity-gemini-3.1-pro-high`
+- `gemini-3.1-pro-low`
 - `gemini-3-flash-medium`
 
 However, **we recommend using simplified model names with variants** for:

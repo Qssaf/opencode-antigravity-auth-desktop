@@ -64,7 +64,7 @@ describe("resolveModelWithTier", () => {
       const result = resolveModelWithTier("gemini-flash-lite-latest");
       expect(result.actualModel).toBe("gemini-3.5-flash-lite");
       expect(result.thinkingLevel).toBe("minimal");
-      expect(result.quotaPreference).toBe("gemini-cli");
+      expect(result.quotaPreference).toBe("antigravity");
     });
 
     it("gemini-3.6-flash defaults to medium thinking", () => {
@@ -92,7 +92,7 @@ describe("resolveModelWithTier", () => {
       const result = resolveModelWithTier("gemini-3.5-flash-lite");
       expect(result.actualModel).toBe("gemini-3.5-flash-lite");
       expect(result.thinkingLevel).toBe("minimal");
-      expect(result.quotaPreference).toBe("gemini-cli");
+      expect(result.quotaPreference).toBe("antigravity");
     });
   });
 
@@ -166,11 +166,11 @@ describe("resolveModelWithTier", () => {
     it.each([
       "gemini-3.5-flash-lite",
       "gemini-flash-lite-latest",
-    ])("routes public-only %s through gemini-cli by default", (model) => {
+    ])("routes %s through Antigravity by default, like other Gemini models", (model) => {
       const result = resolveModelWithTier(model);
 
       expect(result.actualModel).toBe("gemini-3.5-flash-lite");
-      expect(result.quotaPreference).toBe("gemini-cli");
+      expect(result.quotaPreference).toBe("antigravity");
       expect(result.explicitQuota).toBe(false);
     });
 

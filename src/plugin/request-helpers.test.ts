@@ -24,6 +24,7 @@ import {
   createSyntheticErrorResponse,
   recursivelyParseJsonStrings,
   getThinkingText,
+  peekSseForContent,
 } from "./request-helpers";
 import { deduplicateThinkingText, createThoughtBuffer } from "./core/streaming/transformer";
 
@@ -2078,5 +2079,60 @@ describe("cleanJSONSchemaForAntigravity memoization", () => {
     // Second call for the identical shape should be served from cache.
     const cached = cleanJSONSchemaForAntigravity(structuredClone(schema));
     expect(cached).toEqual(uncached);
+  });
+});
+
+describe("peekSseForContent", () => {
+  const encoder = new TextEncoder();
+  const sse = (response: unknown) => `data: ${JSON.stringify({ response })}\n\n`;
+  const streamOf = (chunks: Array<string | Uint8Array>) =>
+    new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          for (const chunk of chunks) {
+            controller.enqueue(typeof chunk === "string" ? encoder.encode(chunk) : chunk);
+          }
+          controller.close();
+        },
+      }),
+      { status: 200, headers: { "content-type": "text/event-stream", "x-test": "1" } },
+    );
+  const textEvent = sse({ candidates: [{ content: { role: "model", parts: [{ text: "héllo" }] } }] });
+  const finishEvent = sse({ candidates: [{ content: { role: "model", parts: [] }, finishReason: "STOP" }] });
+
+  it("replays every byte of a stream with content, split anywhere", async () => {
+    const full = sse({ candidates: [{ content: { role: "model", parts: [] } }] }) + textEvent + finishEvent;
+    const bytes = encoder.encode(full);
+    // 0xC3 is the first byte of "é": cutting after it splits the character.
+    const insideChar = bytes.indexOf(0xc3) + 1;
+    for (const cut of [1, 7, 20, insideChar, bytes.length - 3]) {
+      const response = streamOf([bytes.slice(0, cut), bytes.slice(cut)]);
+      const peeked = await peekSseForContent(response);
+      expect(peeked.empty).toBe(false);
+      expect(await peeked.response.text()).toBe(full);
+    }
+  });
+
+  it("keeps status and headers on the replayed response", async () => {
+    const peeked = await peekSseForContent(streamOf([textEvent]));
+    expect(peeked.response.status).toBe(200);
+    expect(peeked.response.headers.get("x-test")).toBe("1");
+  });
+
+  it("reports a stream with no text, function call or inline data as empty", async () => {
+    const peeked = await peekSseForContent(streamOf([finishEvent, "data: [DONE]\n\n"]));
+    expect(peeked.empty).toBe(true);
+  });
+
+  it("finds content in a final line without a trailing newline", async () => {
+    const peeked = await peekSseForContent(streamOf([textEvent.trimEnd()]));
+    expect(peeked.empty).toBe(false);
+  });
+
+  it("counts a function call and inline data as content", async () => {
+    const call = sse({ candidates: [{ content: { parts: [{ functionCall: { name: "read", args: {} } }] } }] });
+    const image = sse({ candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: "AA==" } }] } }] });
+    expect((await peekSseForContent(streamOf([call]))).empty).toBe(false);
+    expect((await peekSseForContent(streamOf([image]))).empty).toBe(false);
   });
 });
