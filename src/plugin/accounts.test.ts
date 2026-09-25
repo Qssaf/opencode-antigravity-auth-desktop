@@ -16,6 +16,15 @@ vi.mock("./storage", async (importOriginal) => {
   };
 });
 
+/** Promise.withResolvers stand-in: that API needs Node 22, and CI runs Node 20. */
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 describe("AccountManager", () => {
   beforeEach(() => {
     vi.useRealTimers();
@@ -1177,7 +1186,7 @@ describe("AccountManager", () => {
     });
 
     it("waits for an in-flight save before persisting a revoked-account removal", async () => {
-      const staleSave = Promise.withResolvers<void>();
+      const staleSave = deferred();
       vi.mocked(storageModule.saveAccounts).mockImplementationOnce(async () => staleSave.promise);
       vi.mocked(storageModule.removeAccountFromStorage).mockClear();
       const stored: AccountStorageV4 = {
