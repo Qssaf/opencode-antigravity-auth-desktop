@@ -242,6 +242,14 @@ export function toGeminiSchema(schema: unknown): unknown {
       continue;
     }
 
+    if (
+      key === "enum" &&
+      Array.isArray(value) &&
+      value.some((item) => typeof item !== "string")
+    ) {
+      continue;
+    }
+
     if (key === "type" && typeof value === "string") {
       // Convert type to uppercase for Gemini API
       result[key] = value.toUpperCase();
@@ -471,6 +479,17 @@ export function normalizeGeminiTools(payload: RequestPayload): {
     return { toolDebugMissing, toolDebugSummaries };
   }
 
+  const placeholderSchema: Record<string, unknown> = {
+    type: "OBJECT",
+    properties: {
+      _placeholder: {
+        type: "BOOLEAN",
+        description: "Placeholder. Always pass true.",
+      },
+    },
+    required: ["_placeholder"],
+  };
+
   payload.tools = (payload.tools as unknown[]).map(
     (tool: unknown, toolIndex: number) => {
       const t = tool as Record<string, unknown>;
@@ -478,6 +497,56 @@ export function normalizeGeminiTools(payload: RequestPayload): {
       // Skip normalization for Google Search tools (both old and new API)
       if (t.googleSearch || t.googleSearchRetrieval) {
         return t;
+      }
+
+      // Handle pre-wrapped functionDeclarations format (e.g. from @ai-sdk/google)
+      if (Array.isArray(t.functionDeclarations)) {
+        const normalizedDeclarations = t.functionDeclarations.map(
+          (decl: unknown, declIndex: number) => {
+            const d = decl as Record<string, unknown>;
+            const schemaCandidates = [
+              d.parameters,
+              d.parametersJsonSchema,
+              d.input_schema,
+              d.inputSchema,
+            ].filter(Boolean);
+
+            let schema = schemaCandidates[0] as
+              | Record<string, unknown>
+              | undefined;
+            const schemaObjectOk =
+              schema && typeof schema === "object" && !Array.isArray(schema);
+            if (!schemaObjectOk) {
+              schema = placeholderSchema;
+              toolDebugMissing += 1;
+            } else {
+              schema = toGeminiSchemaMemoized(schema) as Record<string, unknown>;
+            }
+
+            const name = String(d.name || `tool-${toolIndex}-${declIndex}`);
+            toolDebugSummaries.push(
+              `decl=${name},src=functionDeclarations,hasSchema=${schemaObjectOk ? "y" : "n"}`,
+            );
+
+            return {
+              ...d,
+              name,
+              description: String(d.description || ""),
+              parameters: schema,
+            };
+          },
+        );
+
+        const newTool: Record<string, unknown> = {
+          ...t,
+          functionDeclarations: normalizedDeclarations,
+        };
+        delete newTool.parameters;
+        delete newTool.input_schema;
+        delete newTool.inputSchema;
+        delete newTool.custom;
+        delete newTool.function;
+        return newTool;
       }
 
       const newTool = { ...t };
@@ -492,17 +561,6 @@ export function normalizeGeminiTools(payload: RequestPayload): {
         newTool.input_schema,
         newTool.inputSchema,
       ].filter(Boolean);
-
-      const placeholderSchema: Record<string, unknown> = {
-        type: "OBJECT",
-        properties: {
-          _placeholder: {
-            type: "BOOLEAN",
-            description: "Placeholder. Always pass true.",
-          },
-        },
-        required: ["_placeholder"],
-      };
 
       let schema = schemaCandidates[0] as Record<string, unknown> | undefined;
       const schemaObjectOk =

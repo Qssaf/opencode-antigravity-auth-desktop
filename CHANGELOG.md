@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **Tool schemas with non-string enums were rejected** - Gemini accepts string enums only, so a tool whose schema held a numeric or boolean `enum` made the request fail, and a union of numeric constants was merged into a string enum, so the model sent `"1"` where the tool expects `1`. Non-string enums are now dropped from the schema and such unions are left as they are. Tools that arrive already wrapped as `functionDeclarations` (how OpenCode 2.x sends them) also have each declaration's schema converted, instead of the group gaining a stray placeholder schema. Ported from upstream.
+
 - **Gemini 3.1 Pro High failed every request** - The plugin sent the high tier as `gemini-3.1-pro-high`, which Antigravity renamed to `gemini-pro-agent` (its model registry lists the old id under `deprecatedModelIds`); the old id now answers HTTP 400 "Request contains an invalid argument" whatever the request holds. Every path that picks the high tier (the `high` variant, the `-high` model id, a large legacy thinking budget, the Gemini CLI fallback) now sends `gemini-pro-agent`. Inside the plugin the model keeps its `gemini-3.1-pro-high` name, so the Gemini 3 handling keyed on it (thinking level, thought signatures) is unchanged.
 
 - **Gemini Pro defaulted to its weakest tier** - Picking Gemini 3/3.1 Pro without a variant selected `gemini-3.1-pro-low`, whose thinking is capped near 1,000 tokens. The default is now the high tier, the one the Antigravity IDE recommends; an explicit `low` variant still selects the low tier. High thinking uses more of the shared Gemini quota and answers more slowly.

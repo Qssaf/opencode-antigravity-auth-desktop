@@ -4506,17 +4506,23 @@ function tryMergeEnumFromUnion(options) {
     if (!option || typeof option !== "object") {
       return null;
     }
+    if (option.type && option.type !== "string") {
+      return null;
+    }
     if (option.const !== void 0) {
-      enumValues.push(String(option.const));
+      if (typeof option.const !== "string") return null;
+      enumValues.push(option.const);
       continue;
     }
     if (Array.isArray(option.enum) && option.enum.length === 1) {
-      enumValues.push(String(option.enum[0]));
+      if (typeof option.enum[0] !== "string") return null;
+      enumValues.push(option.enum[0]);
       continue;
     }
     if (Array.isArray(option.enum) && option.enum.length > 0) {
       for (const val of option.enum) {
-        enumValues.push(String(val));
+        if (typeof val !== "string") return null;
+        enumValues.push(val);
       }
       continue;
     }
@@ -4528,6 +4534,20 @@ function tryMergeEnumFromUnion(options) {
     }
   }
   return enumValues.length > 0 ? enumValues : null;
+}
+function removeNonStringEnums(schema) {
+  if (!schema || typeof schema !== "object") return schema;
+  if (Array.isArray(schema)) return schema.map(removeNonStringEnums);
+  const result = { ...schema };
+  if (Array.isArray(result.enum) && result.enum.some((value) => typeof value !== "string")) {
+    delete result.enum;
+  }
+  for (const [key, value] of Object.entries(result)) {
+    if (key !== "enum" && value && typeof value === "object") {
+      result[key] = removeNonStringEnums(value);
+    }
+  }
+  return result;
 }
 function flattenAnyOfOneOf(schema) {
   if (!schema || typeof schema !== "object") {
@@ -4755,6 +4775,7 @@ function cleanJSONSchemaForAntigravity(schema) {
   result = flattenTypeArrays(result);
   result = removeUnsupportedKeywords(result);
   result = cleanupRequiredFields(result);
+  result = removeNonStringEnums(result);
   result = addEmptySchemaPlaceholder(result);
   if (cacheKey !== void 0) {
     schemaCleanCache.set(cacheKey, structuredClone(result));
@@ -6445,6 +6466,9 @@ function toGeminiSchema(schema) {
     if (UNSUPPORTED_SCHEMA_FIELDS.has(key)) {
       continue;
     }
+    if (key === "enum" && Array.isArray(value) && value.some((item) => typeof item !== "string")) {
+      continue;
+    }
     if (key === "type" && typeof value === "string") {
       result[key] = value.toUpperCase();
     } else if (key === "properties" && typeof value === "object" && value !== null) {
@@ -6564,11 +6588,62 @@ function normalizeGeminiTools(payload) {
   if (!Array.isArray(payload.tools)) {
     return { toolDebugMissing, toolDebugSummaries };
   }
+  const placeholderSchema = {
+    type: "OBJECT",
+    properties: {
+      _placeholder: {
+        type: "BOOLEAN",
+        description: "Placeholder. Always pass true."
+      }
+    },
+    required: ["_placeholder"]
+  };
   payload.tools = payload.tools.map(
     (tool2, toolIndex) => {
       const t = tool2;
       if (t.googleSearch || t.googleSearchRetrieval) {
         return t;
+      }
+      if (Array.isArray(t.functionDeclarations)) {
+        const normalizedDeclarations = t.functionDeclarations.map(
+          (decl, declIndex) => {
+            const d = decl;
+            const schemaCandidates2 = [
+              d.parameters,
+              d.parametersJsonSchema,
+              d.input_schema,
+              d.inputSchema
+            ].filter(Boolean);
+            let schema2 = schemaCandidates2[0];
+            const schemaObjectOk2 = schema2 && typeof schema2 === "object" && !Array.isArray(schema2);
+            if (!schemaObjectOk2) {
+              schema2 = placeholderSchema;
+              toolDebugMissing += 1;
+            } else {
+              schema2 = toGeminiSchemaMemoized(schema2);
+            }
+            const name = String(d.name || `tool-${toolIndex}-${declIndex}`);
+            toolDebugSummaries.push(
+              `decl=${name},src=functionDeclarations,hasSchema=${schemaObjectOk2 ? "y" : "n"}`
+            );
+            return {
+              ...d,
+              name,
+              description: String(d.description || ""),
+              parameters: schema2
+            };
+          }
+        );
+        const newTool2 = {
+          ...t,
+          functionDeclarations: normalizedDeclarations
+        };
+        delete newTool2.parameters;
+        delete newTool2.input_schema;
+        delete newTool2.inputSchema;
+        delete newTool2.custom;
+        delete newTool2.function;
+        return newTool2;
       }
       const newTool = { ...t };
       const schemaCandidates = [
@@ -6581,16 +6656,6 @@ function normalizeGeminiTools(payload) {
         newTool.input_schema,
         newTool.inputSchema
       ].filter(Boolean);
-      const placeholderSchema = {
-        type: "OBJECT",
-        properties: {
-          _placeholder: {
-            type: "BOOLEAN",
-            description: "Placeholder. Always pass true."
-          }
-        },
-        required: ["_placeholder"]
-      };
       let schema = schemaCandidates[0];
       const schemaObjectOk = schema && typeof schema === "object" && !Array.isArray(schema);
       if (!schemaObjectOk) {

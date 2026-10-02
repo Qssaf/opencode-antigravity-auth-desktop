@@ -331,6 +331,28 @@ describe("transform/gemini", () => {
       expect(result.toolDebugMissing).toBe(0);
     });
 
+    it("removes invalid enums from pre-wrapped function declaration schemas", () => {
+      const payload: RequestPayload = {
+        contents: [],
+        tools: [{
+          functionDeclarations: [{
+            name: "marketplace_manage",
+            parameters: {
+              type: "object",
+              properties: {
+                acknowledge_other_projects: { type: "boolean", enum: [true] },
+              },
+            },
+          }],
+        }],
+      };
+
+      normalizeGeminiTools(payload);
+
+      const declaration = (payload.tools as Array<{ functionDeclarations: Array<{ parameters: { properties: Record<string, Record<string, unknown>> } }> }>)[0]!.functionDeclarations[0]!;
+      expect(declaration.parameters.properties.acknowledge_other_projects).toEqual({ type: "BOOLEAN" });
+    });
+
     it("creates custom from function and strips it for Gemini", () => {
       const payload: RequestPayload = {
         contents: [],
@@ -434,6 +456,62 @@ describe("transform/gemini", () => {
       };
       normalizeGeminiTools(payload);
       expect((payload.tools as unknown[])[0]).not.toHaveProperty("custom");
+    });
+
+    it("normalizes pre-wrapped functionDeclarations format without counting as missing schema", () => {
+      const payload: RequestPayload = {
+        contents: [],
+        tools: [
+          {
+            functionDeclarations: [
+              {
+                name: "bash",
+                description: "Run shell command",
+                parameters: {
+                  type: "object",
+                  properties: { command: { type: "string" } },
+                  required: ["command"],
+                },
+              },
+              {
+                name: "read",
+                description: "Read file",
+                parameters: {
+                  type: "object",
+                  properties: { filePath: { type: "string" } },
+                  required: ["filePath"],
+                },
+              },
+            ],
+          },
+        ],
+      };
+      const result = normalizeGeminiTools(payload);
+      expect(result.toolDebugMissing).toBe(0);
+      expect(result.toolDebugSummaries).toHaveLength(2);
+      expect(result.toolDebugSummaries[0]).toBe("decl=bash,src=functionDeclarations,hasSchema=y");
+      expect(result.toolDebugSummaries[1]).toBe("decl=read,src=functionDeclarations,hasSchema=y");
+
+      const wrapper = (payload.tools as any[])[0];
+      expect(wrapper.functionDeclarations[0].parameters.type).toBe("OBJECT");
+      expect(wrapper).not.toHaveProperty("parameters");
+      expect(wrapper).not.toHaveProperty("custom");
+    });
+
+    it("detects missing schemas inside functionDeclarations wrapper", () => {
+      const payload: RequestPayload = {
+        contents: [],
+        tools: [
+          {
+            functionDeclarations: [
+              { name: "tool_without_schema" },
+            ],
+          },
+        ],
+      };
+      const result = normalizeGeminiTools(payload);
+      expect(result.toolDebugMissing).toBe(1);
+      expect(result.toolDebugSummaries[0]).toBe("decl=tool_without_schema,src=functionDeclarations,hasSchema=n");
     });
   });
 
@@ -782,6 +860,16 @@ describe("transform/gemini", () => {
       expect(toGeminiSchema({ type: "array" })).toEqual({
         type: "ARRAY",
         items: { type: "STRING" },
+      });
+    });
+
+    it("omits non-string enums while preserving types and valid string enums", () => {
+      expect(toGeminiSchema({ type: "boolean", enum: [true] })).toEqual({ type: "BOOLEAN" });
+      expect(toGeminiSchema({ type: "number", enum: [1, 2] })).toEqual({ type: "NUMBER" });
+      expect(toGeminiSchema({ enum: [true] })).toEqual({});
+      expect(toGeminiSchema({ type: "string", enum: ["yes", "no"] })).toEqual({
+        type: "STRING",
+        enum: ["yes", "no"],
       });
     });
 

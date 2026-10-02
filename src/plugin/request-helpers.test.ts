@@ -1583,6 +1583,33 @@ describe("cleanJSONSchemaForAntigravity", () => {
 
     expect(result.properties.level.enum).toEqual(["low", "medium", "high"]);
   });
+
+  it("removes non-string enums from schemas and preserves string enums", () => {
+    const result = cleanJSONSchemaForAntigravity({
+      type: "object",
+      properties: {
+        direct: { type: "boolean", enum: [true] },
+        constant: { type: "boolean", const: true },
+        union: { type: "boolean", anyOf: [{ const: true }, { const: false }] },
+        untypedEnum: { enum: [true] },
+        untypedConst: { const: true },
+        numeric: { type: "number", enum: [1, 2] },
+        text: { type: "string", enum: ["yes", "no"] },
+      },
+    });
+
+    expect(result.properties.direct).toMatchObject({ type: "boolean" });
+    expect(result.properties.direct.enum).toBeUndefined();
+    expect(result.properties.constant).toMatchObject({ type: "boolean" });
+    expect(result.properties.constant.enum).toBeUndefined();
+    expect(result.properties.union.type).toBe("boolean");
+    expect(result.properties.union.enum).toBeUndefined();
+    expect(result.properties.untypedEnum.enum).toBeUndefined();
+    expect(result.properties.untypedConst.enum).toBeUndefined();
+    expect(result.properties.numeric.type).toBe("number");
+    expect(result.properties.numeric.enum).toBeUndefined();
+    expect(result.properties.text.enum).toEqual(["yes", "no"]);
+  });
 });
 
 describe("createSyntheticErrorResponse", () => {

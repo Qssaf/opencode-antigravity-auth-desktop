@@ -323,22 +323,29 @@ function tryMergeEnumFromUnion(options: any[]): string[] | null {
       return null;
     }
 
+    if (option.type && option.type !== "string") {
+      return null;
+    }
+
     // Check for const value
     if (option.const !== undefined) {
-      enumValues.push(String(option.const));
+      if (typeof option.const !== "string") return null;
+      enumValues.push(option.const);
       continue;
     }
 
     // Check for single-value enum
     if (Array.isArray(option.enum) && option.enum.length === 1) {
-      enumValues.push(String(option.enum[0]));
+      if (typeof option.enum[0] !== "string") return null;
+      enumValues.push(option.enum[0]);
       continue;
     }
 
     // Check for multi-value enum (merge all values)
     if (Array.isArray(option.enum) && option.enum.length > 0) {
       for (const val of option.enum) {
-        enumValues.push(String(val));
+        if (typeof val !== "string") return null;
+        enumValues.push(val);
       }
       continue;
     }
@@ -356,6 +363,22 @@ function tryMergeEnumFromUnion(options: any[]): string[] | null {
 
   // Only return if we found actual enum values
   return enumValues.length > 0 ? enumValues : null;
+}
+
+function removeNonStringEnums(schema: any): any {
+  if (!schema || typeof schema !== "object") return schema;
+  if (Array.isArray(schema)) return schema.map(removeNonStringEnums);
+
+  const result = { ...schema };
+  if (Array.isArray(result.enum) && result.enum.some((value: any) => typeof value !== "string")) {
+    delete result.enum;
+  }
+  for (const [key, value] of Object.entries(result)) {
+    if (key !== "enum" && value && typeof value === "object") {
+      result[key] = removeNonStringEnums(value);
+    }
+  }
+  return result;
 }
 
 /**
@@ -707,6 +730,8 @@ export function cleanJSONSchemaForAntigravity(schema: any): any {
   // Phase 3: Cleanup
   result = removeUnsupportedKeywords(result);
   result = cleanupRequiredFields(result);
+
+  result = removeNonStringEnums(result);
 
   // Phase 4: Add placeholder for empty object schemas
   result = addEmptySchemaPlaceholder(result);
