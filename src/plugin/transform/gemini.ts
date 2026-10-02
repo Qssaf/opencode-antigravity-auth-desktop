@@ -113,7 +113,11 @@ const geminiSchemaCache = new WeakMap<object, unknown>();
  * own object and cannot mutate another caller's cached schema.
  */
 const geminiSchemaContentCache = new Map<string, string>();
-const MAX_SCHEMA_CONTENT_ENTRIES = 128;
+// Each tool takes two entries (normalizeGeminiTools converts it, then the wrap
+// step converts the result), and the FIFO evicts everything once a request's
+// keys exceed the cap. 512 keeps a 200-tool setup (OpenCode plus several MCP
+// servers) cached across requests.
+const MAX_SCHEMA_CONTENT_ENTRIES = 512;
 /** Beyond this the serialize/parse round-trip stops paying for itself. */
 const MAX_SCHEMA_CONTENT_BYTES = 64 * 1024;
 

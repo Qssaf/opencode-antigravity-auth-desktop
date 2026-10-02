@@ -6367,7 +6367,7 @@ function singleOptionUnionSchema(schema) {
 }
 var geminiSchemaCache = /* @__PURE__ */ new WeakMap();
 var geminiSchemaContentCache = /* @__PURE__ */ new Map();
-var MAX_SCHEMA_CONTENT_ENTRIES = 128;
+var MAX_SCHEMA_CONTENT_ENTRIES = 512;
 var MAX_SCHEMA_CONTENT_BYTES = 64 * 1024;
 function toGeminiSchemaMemoized(schema) {
   if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
