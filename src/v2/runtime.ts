@@ -23,6 +23,7 @@ import { catalogFromDefinitions, mergeCatalog } from "./models";
 import { accountOptions } from "./login-menu";
 import { createOAuthMethod } from "./oauth";
 import { registerProxyRoute } from "./proxy";
+import { applyRequestKind, REQUEST_KIND_HEADER } from "./request-kind";
 import type { ProxyRoute } from "./proxy";
 import type {
   Context,
@@ -249,9 +250,9 @@ export class V2Runtime {
     if (!loaded) {
       // The login changed to something the pipeline does not handle while the
       // request was on its way. Behave as OpenCode 1.x did without a loader.
-      return fetch(url, init);
+      return fetch(url, applyRequestKind(url, init));
     }
-    return loaded.fetch(url, init);
+    return loaded.fetch(url, applyRequestKind(url, init));
   }
 
   private ensureRoute(): Promise<ProxyRoute> {
@@ -287,6 +288,8 @@ export class V2Runtime {
 
     const route = await this.ensureRoute();
     event.baseURL = route.baseURL;
+    // Read back (and removed) in dispatch; see request-kind.ts.
+    event.headers[REQUEST_KIND_HEADER] = event.kind;
   }
 
   /** Adds the plugin's models to the `google` provider. */

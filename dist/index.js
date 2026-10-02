@@ -16973,6 +16973,35 @@ async function registerProxyRoute(upstream) {
   };
 }
 
+// src/v2/request-kind.ts
+var REQUEST_KIND_HEADER = "x-antigravity-request-kind";
+var TITLE_THINKING = { thinkingLevel: "low", includeThoughts: false };
+function isRecord3(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function applyRequestKind(url, init) {
+  const headers = new Headers(init.headers);
+  const kind = headers.get(REQUEST_KIND_HEADER);
+  if (kind === null) return init;
+  headers.delete(REQUEST_KIND_HEADER);
+  const untagged = { ...init, headers };
+  if (kind !== "title" || !/\/models\/[^/:]*gemini-3/i.test(url) || typeof init.body !== "string") {
+    return untagged;
+  }
+  let body;
+  try {
+    body = JSON.parse(init.body);
+  } catch {
+    return untagged;
+  }
+  if (!isRecord3(body)) return untagged;
+  const generationConfig = isRecord3(body.generationConfig) ? body.generationConfig : {};
+  const thinkingConfig = isRecord3(generationConfig.thinkingConfig) ? generationConfig.thinkingConfig : {};
+  const { thinkingBudget: _budget, thinking_budget: _snakeBudget, ...rest } = thinkingConfig;
+  body.generationConfig = { ...generationConfig, thinkingConfig: { ...rest, ...TITLE_THINKING } };
+  return { ...untagged, body: JSON.stringify(body) };
+}
+
 // src/v2/runtime.ts
 var log14 = createLogger("v2-runtime");
 var PROVIDER_ID = ANTIGRAVITY_PROVIDER_ID;
@@ -17112,9 +17141,9 @@ var V2Runtime = class _V2Runtime {
   async dispatch(url, init) {
     const loaded = await this.loaderResult();
     if (!loaded) {
-      return fetch(url, init);
+      return fetch(url, applyRequestKind(url, init));
     }
-    return loaded.fetch(url, init);
+    return loaded.fetch(url, applyRequestKind(url, init));
   }
   ensureRoute() {
     this.route ??= registerProxyRoute((url, init) => this.dispatch(url, init)).catch((error) => {
@@ -17138,6 +17167,7 @@ var V2Runtime = class _V2Runtime {
     }
     const route = await this.ensureRoute();
     event.baseURL = route.baseURL;
+    event.headers[REQUEST_KIND_HEADER] = event.kind;
   }
   /** Adds the plugin's models to the `google` provider. */
   applyModels(editor) {

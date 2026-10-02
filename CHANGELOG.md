@@ -4,6 +4,8 @@
 
 ### Changed
 
+- **Session titles use low thinking on OpenCode 2.x** - OpenCode 2.x writes a session's title with the session's own model and variant, so a Gemini 3 model on high thinking spent a full high-thinking call on a few words, slowing the first reply's title and using shared quota. Title requests to Gemini 3 models now go out at low thinking with thoughts hidden. Claude titles and every other request are unchanged.
+
 - **Gemini 3.8 Flash defaults to high thinking** - With no variant picked it used `medium` (`gemini-3.8-flash-medium`). It now uses `high`, on both the Antigravity and Gemini CLI routes, for stronger answers in agent work. Answers are slower and use more of the shared Gemini quota; pick the `medium` or `low` variant to go back.
 
 ### Fixed

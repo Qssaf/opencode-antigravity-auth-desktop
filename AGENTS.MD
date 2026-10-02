@@ -119,6 +119,7 @@ src/v2/
 ├── login-menu.ts     # Account menu carried by the OAuth method's form
 ├── runtime.ts        # Process-wide shared runtime (ref-counted across locations)
 ├── proxy.ts          # Loopback listener that runs the pipeline's fetch
+├── request-kind.ts   # Caps thinking for session-title requests (tagged by the model.request hook)
 ├── oauth.ts          # OAuth method for the `google` integration
 ├── credentials.ts    # 2.x credential <-> 1.x auth conversions
 ├── models.ts         # 1.x model definitions -> 2.x Model.Info, variant translation
