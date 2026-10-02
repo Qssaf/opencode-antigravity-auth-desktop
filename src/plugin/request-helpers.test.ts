@@ -210,11 +210,6 @@ describe("extractThinkingConfig", () => {
     expect(result).toEqual({ includeThoughts: true, thinkingBudget: 4000 });
   });
 
-  it("shows thoughts for a config that only picks a thinking level", () => {
-    const result = extractThinkingConfig({}, { thinkingConfig: { thinkingLevel: "high" } }, undefined);
-    expect(result?.includeThoughts).toBe(true);
-  });
-
   it("extracts thinkingConfig from requestPayload directly", () => {
     const result = extractThinkingConfig(
       { thinkingConfig: { includeThoughts: false, thinkingBudget: 2000 } },

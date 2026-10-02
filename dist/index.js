@@ -4789,9 +4789,7 @@ function extractThinkingConfig(requestPayload, rawGenerationConfig, extraBody) {
   if (thinkingConfig && typeof thinkingConfig === "object") {
     const config = thinkingConfig;
     return {
-      // A config that only picks a level or budget (an OpenCode 2.x variant
-      // sends just `thinkingLevel`) still wants to see the thinking.
-      includeThoughts: typeof config.includeThoughts === "boolean" ? config.includeThoughts : true,
+      includeThoughts: Boolean(config.includeThoughts),
       thinkingBudget: typeof config.thinkingBudget === "number" ? config.thinkingBudget : DEFAULT_THINKING_BUDGET
     };
   }
