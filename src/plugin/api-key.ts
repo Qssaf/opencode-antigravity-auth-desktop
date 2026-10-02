@@ -1,4 +1,4 @@
-import { extractVariantThinkingConfig } from "./request-helpers";
+import { extractVariantThinkingConfig, thinkingLevelFromBudget } from "./request-helpers";
 import {
   applyGeminiTransforms,
   isGemini3Model,
@@ -462,12 +462,6 @@ function toThinkingTier(value: string | undefined): ThinkingTier | undefined {
   return undefined;
 }
 
-function thinkingLevelFromBudget(budget: number): string {
-  if (budget <= 8192) return "low";
-  if (budget <= 16384) return "medium";
-  return "high";
-}
-
 function mergeExtraBody(payload: RequestPayload): Record<string, unknown> | undefined {
   const extraBody = isRecord(payload.extra_body)
     ? payload.extra_body
@@ -495,10 +489,13 @@ function mergeExtraBody(payload: RequestPayload): Record<string, unknown> | unde
 }
 
 function applyAgySdkGeminiBodyTransforms(payload: RequestPayload, model: string, thinkingLevel?: string): void {
+  // Read after mergeExtraBody: it creates `payload.generationConfig` when only
+  // `extra_body.generationConfig` was sent, and a copy taken earlier would later
+  // overwrite it and drop those values.
+  const extraBody = mergeExtraBody(payload);
   const generationConfig = isRecord(payload.generationConfig)
     ? payload.generationConfig
     : {};
-  const extraBody = mergeExtraBody(payload);
   sanitizeGeminiGenerationConfigForModel(payload, model);
   const variantConfig = extractVariantThinkingConfig(
     isRecord(payload.providerOptions) ? payload.providerOptions : undefined,

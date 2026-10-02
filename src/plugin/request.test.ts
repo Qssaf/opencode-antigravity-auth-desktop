@@ -1680,6 +1680,25 @@ it("removes API key headers", () => {
       initializeDebug(DEFAULT_CONFIG);
     });
 
+    it("turns the error's RetryInfo into Retry-After headers", async () => {
+      const response = new Response(
+        JSON.stringify({
+          error: {
+            code: 429,
+            message: "Resource has been exhausted",
+            status: "RESOURCE_EXHAUSTED",
+            details: [{ "@type": "type.googleapis.com/google.rpc.RetryInfo", retryDelay: "12.5s" }],
+          },
+        }),
+        { status: 429, headers: { "content-type": "application/json" } },
+      );
+
+      const transformed = await transformAntigravityResponse(response, false);
+
+      expect(transformed.headers.get("retry-after")).toBe("13");
+      expect(transformed.headers.get("retry-after-ms")).toBe("12500");
+    });
+
     it("does not misclassify generic INVALID_ARGUMENT as thinking recovery from debug metadata", async () => {
       const response = new Response(
         JSON.stringify({

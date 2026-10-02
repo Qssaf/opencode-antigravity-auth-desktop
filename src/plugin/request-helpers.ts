@@ -684,7 +684,9 @@ function addEmptySchemaPlaceholder(schema: any): any {
  * request.ts sets `.type`/`.properties`), so we always hand out a fresh clone
  * and never expose the cached copy directly.
  */
-const SCHEMA_CLEAN_CACHE_MAX = 200;
+// Large enough for OpenCode plus several MCP servers; a FIFO smaller than one
+// request's tool set evicts every entry before it is reused.
+const SCHEMA_CLEAN_CACHE_MAX = 512;
 const schemaCleanCache = new Map<string, any>();
 
 /**
@@ -919,6 +921,15 @@ export function extractVariantThinkingConfig(
   }
 
   return Object.keys(result).length > 0 ? result : undefined;
+}
+
+/**
+ * Maps a numeric thinking budget onto the Gemini 3 thinking level it stands for.
+ */
+export function thinkingLevelFromBudget(budget: number): "low" | "medium" | "high" {
+  if (budget <= 8192) return "low";
+  if (budget <= 16384) return "medium";
+  return "high";
 }
 
 /**

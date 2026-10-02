@@ -289,7 +289,9 @@ export async function runAccountsCli(argv: readonly string[]): Promise<number> {
           return 1;
         }
         const results = await checkAccountsQuota(storage.accounts, client, ANTIGRAVITY_PROVIDER_ID);
-        console.log(JSON.stringify({ activeIndex: storage.activeIndex ?? 0, accounts: results }, null, 2));
+        // `updatedAccount` carries the account's refresh token; never print it.
+        const accounts = results.map(({ updatedAccount: _updatedAccount, ...result }) => result);
+        console.log(JSON.stringify({ activeIndex: storage.activeIndex ?? 0, accounts }, null, 2));
         return 0;
       }
       console.log(await renderQuota(client, ANTIGRAVITY_PROVIDER_ID, { detailed: flags.has("--detailed") }));

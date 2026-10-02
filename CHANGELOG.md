@@ -10,6 +10,16 @@
 
 ### Fixed
 
+- **`antigravity-accounts quota --json` printed a refresh token** - For an account whose project id was looked up during the check, the JSON output included the account entry with its refresh token. It no longer does. If you have shared that output, sign that account in again.
+
+- **Requests could reuse an expired access token** - The project lookup cache is keyed by the refresh string, and a hit returned the access token it was stored with. After a token refresh that did not clear that entry, the request path took the old token back and failed with 401. A hit now keeps the caller's current token.
+
+- **Server retry delays were never passed on** - The code that turns Google's `RetryInfo` into `Retry-After` headers sat after a return that every error took, so OpenCode never saw the delay the server asked for.
+
+- **The OAuth listener could crash-log an unhandled rejection** - When the callback port was busy or building the sign-in link failed, the listener's 5-minute timer still fired with nothing waiting on it.
+
+- **Smaller fixes** - Disabled accounts no longer shorten the wait for a rate limit to clear (the request slept, woke and found nothing usable). On the Gemini API-key path a `generationConfig` sent only in `extra_body` is no longer dropped. The synthetic usage event added to a stream that has none now has the same shape as the rest of the stream.
+
 - **The login menu could change the wrong account** - The menu's account numbers are fixed when OpenCode registers the form, but the file can change underneath it (the CLI, another OpenCode, an account dropped for a revoked token). A pick was applied as a bare position, so picking "2. b" after account 1 disappeared removed or disabled the account after it. Picks now name the account the menu showed, matched by token (or email after a re-login); one that is gone is reported and left alone.
 
 - **Deleted accounts came back** - "Remove all" (the CLI's `remove --all` and the 1.x menu) deleted the account file without the lock, so a running OpenCode's next save wrote every account back. The 1.x "start fresh" login saved with a merge, so it kept every old account. Both now replace the pool under the lock and mark the dropped accounts deleted, so no other process can restore them.

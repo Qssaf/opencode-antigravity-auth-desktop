@@ -1102,6 +1102,8 @@ export class AccountManager {
 
     const waitTimes: number[] = [];
     for (const a of this.accounts) {
+      // A disabled account's limit expiring frees nothing the caller can use.
+      if (a.enabled === false) continue;
       if (family === "claude") {
         const t = a.rateLimitResetTimes.claude;
         if (t !== undefined) waitTimes.push(Math.max(0, t - nowMs()));

@@ -33,6 +33,7 @@ import {
   deepFilterThinkingBlocks,
   extractThinkingConfig,
   extractVariantThinkingConfig,
+  thinkingLevelFromBudget,
   extractUsageFromSsePayload,
   extractUsageMetadata,
   fixToolResponseGrouping,
@@ -1332,12 +1333,9 @@ export function prepareAntigravityRequest(
               break;
             }
             if (typeof variantConfig?.thinkingBudget === "number") {
-              tierThinkingLevel =
-                variantConfig.thinkingBudget <= 8192
-                  ? "low"
-                  : variantConfig.thinkingBudget <= 16384
-                    ? "medium"
-                    : "high";
+              tierThinkingLevel = thinkingLevelFromBudget(
+                variantConfig.thinkingBudget,
+              );
               tierThinkingBudget = undefined;
               break;
             }
@@ -1466,12 +1464,9 @@ export function prepareAntigravityRequest(
             log.warn(
               "[Deprecated] Using thinkingBudget for Gemini 3 model. Use thinkingLevel instead.",
             );
-            tierThinkingLevel =
-              variantConfig.thinkingBudget <= 8192
-                ? "low"
-                : variantConfig.thinkingBudget <= 16384
-                  ? "medium"
-                  : "high";
+            tierThinkingLevel = thinkingLevelFromBudget(
+              variantConfig.thinkingBudget,
+            );
             tierThinkingBudget = undefined;
           } else {
             // Claude / Gemini 2.5 - use budget directly
@@ -2485,6 +2480,28 @@ export async function transformAntigravityResponse(
         errorBody = { error: { message: text } };
       }
 
+      // Before the error rewrite below, which returns: OpenCode's retry reads
+      // these headers to pace its own retries of the request.
+      if (errorBody?.error?.details && Array.isArray(errorBody.error.details)) {
+        const retryInfo = errorBody.error.details.find(
+          (detail) =>
+            detail["@type"] === "type.googleapis.com/google.rpc.RetryInfo",
+        );
+
+        if (typeof retryInfo?.retryDelay === "string") {
+          const match = retryInfo.retryDelay.match(/^([\d.]+)s$/);
+          if (match && match[1]) {
+            const retrySeconds = parseFloat(match[1]);
+            if (!isNaN(retrySeconds) && retrySeconds > 0) {
+              const retryAfterSec = Math.ceil(retrySeconds).toString();
+              const retryAfterMs = Math.ceil(retrySeconds * 1000).toString();
+              headers.set("Retry-After", retryAfterSec);
+              headers.set("retry-after-ms", retryAfterMs);
+            }
+          }
+        }
+      }
+
       // Inject Debug Info
       if (errorBody?.error) {
         const rawErrorMessage =
@@ -2538,26 +2555,6 @@ export async function transformAntigravityResponse(
           statusText: response.statusText,
           headers,
         });
-      }
-
-      if (errorBody?.error?.details && Array.isArray(errorBody.error.details)) {
-        const retryInfo = errorBody.error.details.find(
-          (detail) =>
-            detail["@type"] === "type.googleapis.com/google.rpc.RetryInfo",
-        );
-
-        if (typeof retryInfo?.retryDelay === "string") {
-          const match = retryInfo.retryDelay.match(/^([\d.]+)s$/);
-          if (match && match[1]) {
-            const retrySeconds = parseFloat(match[1]);
-            if (!isNaN(retrySeconds) && retrySeconds > 0) {
-              const retryAfterSec = Math.ceil(retrySeconds).toString();
-              const retryAfterMs = Math.ceil(retrySeconds * 1000).toString();
-              headers.set("Retry-After", retryAfterSec);
-              headers.set("retry-after-ms", retryAfterMs);
-            }
-          }
-        }
       }
     }
 

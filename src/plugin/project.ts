@@ -236,15 +236,24 @@ export async function ensureProjectContext(auth: OAuthAuthDetails): Promise<Proj
     return { auth, effectiveProjectId: "" };
   }
 
+  // The cache is keyed by the refresh string alone, so a shared result may hold
+  // an access token older than this caller's (the cached entry outlives a token
+  // refresh whose invalidation used a differently packed refresh string). The
+  // project ids are shared; the access token is always the caller's.
+  const withCallerToken = (result: ProjectContextResult): ProjectContextResult =>
+    result.auth.access === auth.access && result.auth.expires === auth.expires
+      ? result
+      : { ...result, auth: { ...result.auth, access: auth.access, expires: auth.expires } };
+
   const cacheKey = getCacheKey(auth);
   if (cacheKey) {
     const cached = projectContextResultCache.get(cacheKey);
     if (cached) {
-      return cached;
+      return withCallerToken(cached);
     }
     const pending = projectContextPendingCache.get(cacheKey);
     if (pending) {
-      return pending;
+      return pending.then(withCallerToken);
     }
   }
 

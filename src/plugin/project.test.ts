@@ -1,6 +1,23 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { loadManagedProject, onboardManagedProject } from "./project";
+import { ensureProjectContext, invalidateProjectContextCache, loadManagedProject, onboardManagedProject } from "./project";
+
+describe("project context cache", () => {
+  afterEach(() => {
+    invalidateProjectContextCache();
+  });
+
+  it("hands back the caller's access token, not the one cached with the project", async () => {
+    const refresh = "refresh-token|project|managed";
+    await ensureProjectContext({ type: "oauth", refresh, access: "old-access", expires: 1 });
+
+    const result = await ensureProjectContext({ type: "oauth", refresh, access: "new-access", expires: 2 });
+
+    expect(result.effectiveProjectId).toBe("managed");
+    expect(result.auth.access).toBe("new-access");
+    expect(result.auth.expires).toBe(2);
+  });
+});
 
 describe("project resolution requests", () => {
   afterEach(() => {

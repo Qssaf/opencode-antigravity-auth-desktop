@@ -2883,15 +2883,16 @@ async function ensureProjectContext(auth) {
   if (!accessToken) {
     return { auth, effectiveProjectId: "" };
   }
+  const withCallerToken = (result) => result.auth.access === auth.access && result.auth.expires === auth.expires ? result : { ...result, auth: { ...result.auth, access: auth.access, expires: auth.expires } };
   const cacheKey = getCacheKey(auth);
   if (cacheKey) {
     const cached = projectContextResultCache.get(cacheKey);
     if (cached) {
-      return cached;
+      return withCallerToken(cached);
     }
     const pending = projectContextPendingCache.get(cacheKey);
     if (pending) {
-      return pending;
+      return pending.then(withCallerToken);
     }
   }
   const resolveContext = async () => {
@@ -4264,12 +4265,10 @@ function createStreamingTransformer(signatureStore, callbacks, options = {}) {
       }
       if (!hasSeenUsageMetadata) {
         const syntheticUsage = {
-          response: {
-            usageMetadata: {
-              promptTokenCount: 0,
-              candidatesTokenCount: 0,
-              totalTokenCount: 0
-            }
+          usageMetadata: {
+            promptTokenCount: 0,
+            candidatesTokenCount: 0,
+            totalTokenCount: 0
           }
         };
         controller.enqueue(encoder.encode(`
@@ -4743,7 +4742,7 @@ function addEmptySchemaPlaceholder(schema) {
   }
   return result;
 }
-var SCHEMA_CLEAN_CACHE_MAX = 200;
+var SCHEMA_CLEAN_CACHE_MAX = 512;
 var schemaCleanCache = /* @__PURE__ */ new Map();
 function cleanJSONSchemaForAntigravity(schema) {
   if (!schema || typeof schema !== "object") {
@@ -4844,6 +4843,11 @@ function extractVariantThinkingConfig(providerOptions, generationConfig) {
     }
   }
   return Object.keys(result).length > 0 ? result : void 0;
+}
+function thinkingLevelFromBudget(budget) {
+  if (budget <= 8192) return "low";
+  if (budget <= 16384) return "medium";
+  return "high";
 }
 function resolveThinkingConfig(userConfig, isThinkingModel) {
   if (isThinkingModel && !userConfig) {
@@ -8304,7 +8308,9 @@ function prepareAntigravityRequest(input3, init, accessToken, projectId, endpoin
               break;
             }
             if (typeof variantConfig?.thinkingBudget === "number") {
-              tierThinkingLevel = variantConfig.thinkingBudget <= 8192 ? "low" : variantConfig.thinkingBudget <= 16384 ? "medium" : "high";
+              tierThinkingLevel = thinkingLevelFromBudget(
+                variantConfig.thinkingBudget
+              );
               tierThinkingBudget = void 0;
               break;
             }
@@ -8398,7 +8404,9 @@ function prepareAntigravityRequest(input3, init, accessToken, projectId, endpoin
             log7.warn(
               "[Deprecated] Using thinkingBudget for Gemini 3 model. Use thinkingLevel instead."
             );
-            tierThinkingLevel = variantConfig.thinkingBudget <= 8192 ? "low" : variantConfig.thinkingBudget <= 16384 ? "medium" : "high";
+            tierThinkingLevel = thinkingLevelFromBudget(
+              variantConfig.thinkingBudget
+            );
             tierThinkingBudget = void 0;
           } else {
             tierThinkingBudget = variantConfig.thinkingBudget;
@@ -9024,6 +9032,23 @@ async function transformAntigravityResponse(response, streaming, debugContext, r
       } catch {
         errorBody = { error: { message: text } };
       }
+      if (errorBody?.error?.details && Array.isArray(errorBody.error.details)) {
+        const retryInfo = errorBody.error.details.find(
+          (detail) => detail["@type"] === "type.googleapis.com/google.rpc.RetryInfo"
+        );
+        if (typeof retryInfo?.retryDelay === "string") {
+          const match = retryInfo.retryDelay.match(/^([\d.]+)s$/);
+          if (match && match[1]) {
+            const retrySeconds = parseFloat(match[1]);
+            if (!isNaN(retrySeconds) && retrySeconds > 0) {
+              const retryAfterSec = Math.ceil(retrySeconds).toString();
+              const retryAfterMs = Math.ceil(retrySeconds * 1e3).toString();
+              headers.set("Retry-After", retryAfterSec);
+              headers.set("retry-after-ms", retryAfterMs);
+            }
+          }
+        }
+      }
       if (errorBody?.error) {
         const rawErrorMessage = typeof errorBody.error.message === "string" && errorBody.error.message.length > 0 ? errorBody.error.message : "Unknown error";
         const quotaMessage = rewriteQuotaExhaustedError(rawErrorMessage);
@@ -9064,23 +9089,6 @@ ${debugText}` : "";
           statusText: response.statusText,
           headers
         });
-      }
-      if (errorBody?.error?.details && Array.isArray(errorBody.error.details)) {
-        const retryInfo = errorBody.error.details.find(
-          (detail) => detail["@type"] === "type.googleapis.com/google.rpc.RetryInfo"
-        );
-        if (typeof retryInfo?.retryDelay === "string") {
-          const match = retryInfo.retryDelay.match(/^([\d.]+)s$/);
-          if (match && match[1]) {
-            const retrySeconds = parseFloat(match[1]);
-            if (!isNaN(retrySeconds) && retrySeconds > 0) {
-              const retryAfterSec = Math.ceil(retrySeconds).toString();
-              const retryAfterMs = Math.ceil(retrySeconds * 1e3).toString();
-              headers.set("Retry-After", retryAfterSec);
-              headers.set("retry-after-ms", retryAfterMs);
-            }
-          }
-        }
       }
     }
     const init = {
@@ -9435,6 +9443,8 @@ async function startOAuthListener({ timeoutMs = 5 * 60 * 1e3 } = {}) {
       reject(error);
     };
   });
+  callbackPromise.catch(() => {
+  });
   const successResponse = `<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -9602,6 +9612,7 @@ async function startOAuthListener({ timeoutMs = 5 * 60 * 1e3 } = {}) {
   await new Promise((resolve, reject) => {
     const handleError = (error) => {
       server.off("error", handleError);
+      clearTimeout(timeoutHandle);
       if (error.code === "EADDRINUSE") {
         reject(new Error(
           `Port ${port} is already in use. Another process is occupying this port. Please terminate the process or try again later.`
@@ -10628,6 +10639,7 @@ var AccountManager = class _AccountManager {
     }
     const waitTimes = [];
     for (const a of this.accounts) {
+      if (a.enabled === false) continue;
       if (family === "claude") {
         const t = a.rateLimitResetTimes.claude;
         if (t !== void 0) waitTimes.push(Math.max(0, t - nowMs()));
@@ -12501,11 +12513,6 @@ function toThinkingTier(value) {
   if (value === "low" || value === "medium" || value === "high") return value;
   return void 0;
 }
-function thinkingLevelFromBudget(budget) {
-  if (budget <= 8192) return "low";
-  if (budget <= 16384) return "medium";
-  return "high";
-}
 function mergeExtraBody(payload) {
   const extraBody = isRecord(payload.extra_body) ? payload.extra_body : isRecord(payload.extraBody) ? payload.extraBody : void 0;
   if (!extraBody) return void 0;
@@ -12526,8 +12533,8 @@ function mergeExtraBody(payload) {
   return extraBody;
 }
 function applyAgySdkGeminiBodyTransforms(payload, model, thinkingLevel) {
-  const generationConfig = isRecord(payload.generationConfig) ? payload.generationConfig : {};
   const extraBody = mergeExtraBody(payload);
+  const generationConfig = isRecord(payload.generationConfig) ? payload.generationConfig : {};
   sanitizeGeminiGenerationConfigForModel(payload, model);
   const variantConfig = extractVariantThinkingConfig(
     isRecord(payload.providerOptions) ? payload.providerOptions : void 0,
@@ -16587,7 +16594,8 @@ async function runAccountsCli(argv) {
           return 1;
         }
         const results = await checkAccountsQuota(storage.accounts, client, ANTIGRAVITY_PROVIDER_ID);
-        console.log(JSON.stringify({ activeIndex: storage.activeIndex ?? 0, accounts: results }, null, 2));
+        const accounts = results.map(({ updatedAccount: _updatedAccount, ...result }) => result);
+        console.log(JSON.stringify({ activeIndex: storage.activeIndex ?? 0, accounts }, null, 2));
         return 0;
       }
       console.log(await renderQuota(client, ANTIGRAVITY_PROVIDER_ID, { detailed: flags.has("--detailed") }));

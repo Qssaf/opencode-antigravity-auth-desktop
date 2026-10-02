@@ -165,6 +165,11 @@ export async function startOAuthListener(
       reject(error);
     };
   });
+  // The promise can reject (timeout, `close()`) before any caller has asked for
+  // it — the listener failed to bind, or building the authorization URL threw.
+  // Callers still see the rejection through `waitForCallback()`; this only keeps
+  // it from surfacing as an unhandled rejection in the long-lived host process.
+  callbackPromise.catch(() => {});
 
 const successResponse = `<!DOCTYPE html>
 <html lang="en">
@@ -346,6 +351,8 @@ const successResponse = `<!DOCTYPE html>
   await new Promise<void>((resolve, reject) => {
     const handleError = (error: NodeJS.ErrnoException) => {
       server.off("error", handleError);
+      // No listener is returned, so nothing will ever wait on or close this one.
+      clearTimeout(timeoutHandle);
       if (error.code === "EADDRINUSE") {
         reject(new Error(
           `Port ${port} is already in use. ` +
