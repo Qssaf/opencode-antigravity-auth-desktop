@@ -980,14 +980,15 @@ describe("transform/gemini", () => {
       expect(anyOf[1]!.type).toBe("NUMBER");
     });
 
-    it("transforms oneOf schemas", () => {
+    it("rewrites oneOf as anyOf, which is the union Gemini accepts", () => {
       const schema = {
         oneOf: [{ type: "boolean" }, { type: "string" }],
       };
       const result = toGeminiSchema(schema) as Record<string, unknown>;
-      const oneOf = result.oneOf as Array<Record<string, string>>;
-      expect(oneOf[0]!.type).toBe("BOOLEAN");
-      expect(oneOf[1]!.type).toBe("STRING");
+      expect(result).not.toHaveProperty("oneOf");
+      const anyOf = result.anyOf as Array<Record<string, string>>;
+      expect(anyOf[0]!.type).toBe("BOOLEAN");
+      expect(anyOf[1]!.type).toBe("STRING");
     });
 
     it("flattens nullable array unions for AGY protobuf validation", () => {
@@ -1066,26 +1067,145 @@ describe("transform/gemini", () => {
       });
     });
 
-    it("transforms allOf schemas", () => {
+    it("merges allOf parts into one object schema", () => {
       const schema = {
         allOf: [
-          { type: "object", properties: { a: { type: "string" } } },
-          { properties: { b: { type: "number" } } },
+          { type: "object", properties: { a: { type: "string" } }, required: ["a"] },
+          { properties: { b: { type: "number" } }, required: ["b"] },
         ],
       };
-      const result = toGeminiSchema(schema) as Record<string, unknown>;
-      const allOf = result.allOf as Array<Record<string, unknown>>;
-      expect(allOf[0]!.type).toBe("OBJECT");
-      const props0 = allOf[0]!.properties as Record<
-        string,
-        Record<string, string>
-      >;
-      expect(props0["a"]!.type).toBe("STRING");
-      const props1 = allOf[1]!.properties as Record<
-        string,
-        Record<string, string>
-      >;
-      expect(props1["b"]!.type).toBe("NUMBER");
+      expect(toGeminiSchema(schema)).toEqual({
+        type: "OBJECT",
+        properties: { a: { type: "STRING" }, b: { type: "NUMBER" } },
+        required: ["a", "b"],
+      });
+    });
+
+    // Antigravity parses schemas as protobuf JSON: an unknown key fails the
+    // whole request with HTTP 400, so only Gemini Schema fields may remain.
+    it("keeps only Gemini Schema fields and hints the useful constraints", () => {
+      const schema = {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          count: { type: "integer", exclusiveMinimum: 0, multipleOf: 2, readOnly: true, deprecated: true },
+          tags: { type: "array", items: { type: "string" }, uniqueItems: true, minItems: 1 },
+          name: { type: "string", examples: ["alice", "bob"], minLength: 1, pattern: "^[a-z]+$" },
+        },
+      };
+      expect(toGeminiSchema(schema)).toEqual({
+        type: "OBJECT",
+        properties: {
+          count: { type: "INTEGER", description: "exclusiveMinimum: 0, multipleOf: 2" },
+          tags: { type: "ARRAY", items: { type: "STRING" }, minItems: 1, description: "uniqueItems: true" },
+          name: { type: "STRING", example: "alice", minLength: 1, pattern: "^[a-z]+$" },
+        },
+      });
+    });
+
+    it("keeps formats Gemini accepts and hints the rest", () => {
+      const schema = {
+        type: "object",
+        properties: {
+          url: { type: "string", format: "uri", description: "Page to fetch" },
+          when: { type: "string", format: "date-time" },
+          ratio: { type: "number", format: "double" },
+        },
+      };
+      expect(toGeminiSchema(schema)).toEqual({
+        type: "OBJECT",
+        properties: {
+          url: { type: "STRING", description: "Page to fetch (format: uri)" },
+          when: { type: "STRING", format: "date-time" },
+          ratio: { type: "NUMBER", format: "double" },
+        },
+      });
+    });
+
+    it("resolves type arrays and const values", () => {
+      const schema = {
+        type: "object",
+        properties: {
+          limit: { type: ["integer", "null"], description: "Max rows" },
+          id: { type: ["string", "number"] },
+          kind: { const: "file" },
+          version: { const: 2 },
+        },
+      };
+      expect(toGeminiSchema(schema)).toEqual({
+        type: "OBJECT",
+        properties: {
+          limit: { type: "INTEGER", description: "Max rows (nullable)" },
+          id: { type: "STRING", description: "one of: string, number" },
+          kind: { enum: ["file"] },
+          version: { description: "must be 2" },
+        },
+      });
+    });
+
+    it("inlines local $ref definitions so the model sees their shape", () => {
+      const schema = {
+        type: "object",
+        properties: {
+          todos: { type: "array", items: { $ref: "#/$defs/Todo" } },
+          owner: { $ref: "#/definitions/User", description: "Who owns it" },
+        },
+        $defs: {
+          Todo: {
+            type: "object",
+            properties: { content: { type: "string" }, status: { type: "string", enum: ["pending", "done"] } },
+            required: ["content"],
+          },
+        },
+        definitions: { User: { type: "object", properties: { email: { type: "string" } } } },
+      };
+      expect(toGeminiSchema(schema)).toEqual({
+        type: "OBJECT",
+        properties: {
+          todos: {
+            type: "ARRAY",
+            items: {
+              type: "OBJECT",
+              properties: { content: { type: "STRING" }, status: { type: "STRING", enum: ["pending", "done"] } },
+              required: ["content"],
+            },
+          },
+          owner: { type: "OBJECT", properties: { email: { type: "STRING" } }, description: "Who owns it" },
+        },
+      });
+    });
+
+    it("gives the same result when converting an already converted schema", () => {
+      // The tool path converts twice (normalizeGeminiTools, then the wrap step).
+      const schema = {
+        type: "object",
+        properties: {
+          url: { type: "string", format: "uri" },
+          n: { type: ["integer", "null"], exclusiveMinimum: 0 },
+          mode: { oneOf: [{ const: "a" }, { const: "b" }] },
+          todos: { type: "array", items: { $ref: "#/$defs/T" } },
+        },
+        $defs: { T: { type: "object", properties: { x: { type: "string", examples: ["y"] } } } },
+      };
+      const once = toGeminiSchema(schema);
+      expect(toGeminiSchema(structuredClone(once))).toEqual(once);
+    });
+
+    it("stops at recursive and unresolvable $refs with a hint", () => {
+      const schema = {
+        type: "object",
+        properties: {
+          tree: { $ref: "#/$defs/Node" },
+          remote: { $ref: "https://example.com/schema.json" },
+        },
+        $defs: {
+          Node: { type: "object", properties: { children: { type: "array", items: { $ref: "#/$defs/Node" } } } },
+        },
+      };
+      const result = toGeminiSchema(schema) as { properties: Record<string, any> };
+      expect(result.properties.tree.properties.children.items).toEqual({ type: "OBJECT", description: "See: Node" });
+      expect(result.properties.remote).toEqual({ type: "OBJECT", description: "See: schema.json" });
+      expect(JSON.stringify(result)).not.toContain("$ref");
     });
 
     it("preserves enum values", () => {

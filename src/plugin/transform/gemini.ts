@@ -14,46 +14,6 @@ import type {
   GoogleSearchConfig,
 } from "./types";
 
-/**
- * Transform a JSON Schema to Gemini-compatible format.
- * Based on @google/genai SDK's processJsonSchema() function.
- *
- * Key transformations:
- * - Converts type values to uppercase (object -> OBJECT)
- * - Removes unsupported fields like additionalProperties, $schema
- * - Recursively processes nested schemas (properties, items, anyOf, etc.)
- *
- * @param schema - A JSON Schema object or primitive value
- * @returns Gemini-compatible schema
- *
- * Fields that Gemini API rejects and must be removed from schemas.
- * Antigravity uses strict protobuf-backed JSON validation.
- */
-const UNSUPPORTED_SCHEMA_FIELDS = new Set([
-  "additionalProperties",
-  "$schema",
-  "$id",
-  "$comment",
-  "$ref",
-  "$defs",
-  "definitions",
-  "const",
-  "contentMediaType",
-  "contentEncoding",
-  "if",
-  "then",
-  "else",
-  "not",
-  "patternProperties",
-  "unevaluatedProperties",
-  "unevaluatedItems",
-  "dependentRequired",
-  "dependentSchemas",
-  "propertyNames",
-  "minContains",
-  "maxContains",
-]);
-
 function isNullSchema(schema: unknown): boolean {
   if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
     return false;
@@ -198,9 +158,167 @@ export function toGeminiSchemaMemoized(schema: unknown): unknown {
   return converted;
 }
 
+/**
+ * The fields of Gemini's `Schema` message. Antigravity parses requests as
+ * protobuf JSON, so any other key is rejected with HTTP 400 ("Unknown name"),
+ * failing the whole request rather than one tool. MCP tool schemas routinely
+ * carry such keys (`exclusiveMinimum`, `examples`, `uniqueItems`, ...), so the
+ * converter keeps only these and turns useful constraints into description
+ * hints, as the Claude path does.
+ */
+const GEMINI_SCHEMA_FIELDS = new Set([
+  "type",
+  "format",
+  "title",
+  "description",
+  "nullable",
+  "enum",
+  "maxItems",
+  "minItems",
+  "properties",
+  "required",
+  "minProperties",
+  "maxProperties",
+  "minLength",
+  "maxLength",
+  "pattern",
+  "example",
+  "anyOf",
+  "propertyOrdering",
+  "default",
+  "items",
+  "minimum",
+  "maximum",
+]);
+
+/** Gemini accepts `format` only with these values, per type. */
+const GEMINI_FORMATS: Record<string, ReadonlySet<string>> = {
+  STRING: new Set(["enum", "date-time"]),
+  NUMBER: new Set(["float", "double"]),
+  INTEGER: new Set(["int32", "int64"]),
+};
+
+/** Constraints Gemini has no field for, kept for the model as a description hint. */
+const HINTED_CONSTRAINTS = [
+  "exclusiveMinimum",
+  "exclusiveMaximum",
+  "multipleOf",
+  "uniqueItems",
+] as const;
+
+/** How deep `$ref`s are inlined; deeper (or recursive) references become a hint. */
+const MAX_REF_DEPTH = 8;
+
+type SchemaRecord = Record<string, unknown>;
+
+function isSchemaRecord(value: unknown): value is SchemaRecord {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function refName(ref: string): string {
+  return ref.split("/").pop() || ref;
+}
+
+/**
+ * Replaces local `$ref`s (`#/$defs/X`, `#/definitions/X`) with the schema they
+ * name, so the model still sees the shape (a todo list's items, say) instead
+ * of an empty schema. Sibling keys on the referencing schema win.
+ */
+function inlineLocalRefs(
+  schema: unknown,
+  defs: SchemaRecord,
+  depth: number,
+  seen: ReadonlySet<string>,
+): unknown {
+  if (Array.isArray(schema)) {
+    return schema.map((item) => inlineLocalRefs(item, defs, depth, seen));
+  }
+  if (!isSchemaRecord(schema)) return schema;
+
+  let current: SchemaRecord = schema;
+  let nextSeen = seen;
+  const ref = current.$ref;
+  if (typeof ref === "string") {
+    const match = /^#\/(?:\$defs|definitions)\/(.+)$/.exec(ref);
+    const target = match ? defs[match[1]!] : undefined;
+    const { $ref: _ref, ...siblings } = current;
+    if (isSchemaRecord(target) && depth < MAX_REF_DEPTH && !seen.has(ref)) {
+      current = { ...target, ...siblings };
+      nextSeen = new Set([...seen, ref]);
+    } else {
+      current = {
+        type: "object",
+        ...siblings,
+        description: appendHint(siblings.description, `See: ${refName(ref)}`),
+      };
+    }
+  }
+
+  const out: SchemaRecord = {};
+  for (const [key, value] of Object.entries(current)) {
+    if (key === "$defs" || key === "definitions") continue;
+    if (key === "properties" && isSchemaRecord(value)) {
+      const props: SchemaRecord = {};
+      for (const [name, prop] of Object.entries(value)) {
+        props[name] = inlineLocalRefs(prop, defs, depth + 1, nextSeen);
+      }
+      out[key] = props;
+    } else if (
+      key === "items" ||
+      key === "anyOf" ||
+      key === "oneOf" ||
+      key === "allOf" ||
+      key === "additionalProperties"
+    ) {
+      out[key] = inlineLocalRefs(value, defs, depth + 1, nextSeen);
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+function appendHint(description: unknown, hint: string): string {
+  return typeof description === "string" && description.length > 0
+    ? `${description} (${hint})`
+    : hint;
+}
+
+/** Folds `allOf` parts into one schema: properties and required are unioned. */
+function mergeAllOf(schema: SchemaRecord): SchemaRecord | undefined {
+  const parts = schema.allOf;
+  if (!Array.isArray(parts)) return undefined;
+  const { allOf: _allOf, ...rest } = schema;
+  const merged: SchemaRecord = {};
+  const properties: SchemaRecord = {};
+  const required = new Set<string>();
+  for (const part of [...parts, rest]) {
+    if (!isSchemaRecord(part)) continue;
+    for (const [key, value] of Object.entries(part)) {
+      if (key === "properties" && isSchemaRecord(value)) {
+        Object.assign(properties, value);
+      } else if (key === "required" && Array.isArray(value)) {
+        for (const name of value) if (typeof name === "string") required.add(name);
+      } else {
+        merged[key] = value;
+      }
+    }
+  }
+  if (Object.keys(properties).length > 0) {
+    merged.properties = properties;
+    merged.type ??= "object";
+  }
+  if (required.size > 0) merged.required = [...required];
+  return merged;
+}
+
+/**
+ * Converts a JSON Schema to Gemini's `Schema` dialect: upper-case types, local
+ * `$ref`s inlined, `oneOf`/`allOf` rewritten, `type` arrays and `const`
+ * resolved, and every key outside {@link GEMINI_SCHEMA_FIELDS} removed.
+ */
 export function toGeminiSchema(schema: unknown): unknown {
-  // Return primitives and arrays as-is
-  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+  if (!isSchemaRecord(schema)) {
     return schema;
   }
 
@@ -209,78 +327,78 @@ export function toGeminiSchema(schema: unknown): unknown {
     return cached;
   }
 
-  const inputSchema = schema as Record<string, unknown>;
+  const defs: SchemaRecord = {
+    ...(isSchemaRecord(schema.definitions) ? schema.definitions : {}),
+    ...(isSchemaRecord(schema.$defs) ? schema.$defs : {}),
+  };
+  const hasRefs = Object.keys(defs).length > 0 || JSON.stringify(schema).includes('"$ref"');
+  const prepared = hasRefs ? inlineLocalRefs(schema, defs, 0, new Set()) : schema;
+  const result = convertSchema(prepared as SchemaRecord);
+  geminiSchemaCache.set(schema, result);
+  return result;
+}
+
+function convertSchema(inputSchema: SchemaRecord): unknown {
   const singleOptionSchema = singleOptionUnionSchema(inputSchema);
   if (singleOptionSchema) {
-    const result = toGeminiSchema(singleOptionSchema);
-    geminiSchemaCache.set(schema, result);
-    return result;
+    return convertSchema(singleOptionSchema);
   }
 
   const nullableSchema = nullableUnionSchema(inputSchema);
   if (nullableSchema) {
-    const result = toGeminiSchema(nullableSchema);
-    geminiSchemaCache.set(schema, result);
-    return result;
+    return convertSchema(nullableSchema);
   }
 
-  const result: Record<string, unknown> = {};
+  const mergedSchema = mergeAllOf(inputSchema);
+  if (mergedSchema) {
+    return convertSchema(mergedSchema);
+  }
+
+  const result: SchemaRecord = {};
+  const hints: string[] = [];
 
   // First pass: collect all property names for required validation
   const propertyNames = new Set<string>();
-  if (inputSchema.properties && typeof inputSchema.properties === "object") {
-    for (const propName of Object.keys(
-      inputSchema.properties as Record<string, unknown>,
-    )) {
+  if (isSchemaRecord(inputSchema.properties)) {
+    for (const propName of Object.keys(inputSchema.properties)) {
       propertyNames.add(propName);
     }
   }
 
   for (const [key, value] of Object.entries(inputSchema)) {
-    // Skip unsupported fields that Gemini API rejects
-    if (UNSUPPORTED_SCHEMA_FIELDS.has(key)) {
-      continue;
-    }
-
-    if (
-      key === "enum" &&
-      Array.isArray(value) &&
-      value.some((item) => typeof item !== "string")
-    ) {
-      continue;
-    }
-
-    if (key === "type" && typeof value === "string") {
-      // Convert type to uppercase for Gemini API
-      result[key] = value.toUpperCase();
-    } else if (
-      key === "properties" &&
-      typeof value === "object" &&
-      value !== null
-    ) {
-      // Recursively transform nested property schemas
-      const props: Record<string, unknown> = {};
-      for (const [propName, propSchema] of Object.entries(
-        value as Record<string, unknown>,
-      )) {
-        props[propName] = toGeminiSchema(propSchema);
+    if (key === "type") {
+      if (typeof value === "string") {
+        result.type = value.toUpperCase();
+      } else if (Array.isArray(value)) {
+        // ["string", "null"] -> STRING, noted as nullable like the union case.
+        const types = value.filter((item): item is string => typeof item === "string");
+        const nonNull = types.filter((item) => item !== "null");
+        if (nonNull.length > 0) result.type = nonNull[0]!.toUpperCase();
+        if (nonNull.length > 1) hints.push(`one of: ${nonNull.join(", ")}`);
+        if (nonNull.length < types.length) hints.push("nullable");
       }
-      result[key] = props;
-    } else if (key === "items" && typeof value === "object") {
-      // Transform array items schema
-      result[key] = toGeminiSchema(value);
-    } else if (
-      (key === "anyOf" || key === "oneOf" || key === "allOf") &&
-      Array.isArray(value)
-    ) {
-      // Transform union type schemas
-      result[key] = value.map((item) => toGeminiSchema(item));
+    } else if (key === "properties" && isSchemaRecord(value)) {
+      const props: SchemaRecord = {};
+      for (const [propName, propSchema] of Object.entries(value)) {
+        props[propName] = isSchemaRecord(propSchema) ? convertSchema(propSchema) : propSchema;
+      }
+      result.properties = props;
+    } else if (key === "items" && isSchemaRecord(value)) {
+      result.items = convertSchema(value);
+    } else if ((key === "anyOf" || key === "oneOf") && Array.isArray(value)) {
+      // Gemini has no oneOf; anyOf is the closest it accepts.
+      result.anyOf = value.map((item) => (isSchemaRecord(item) ? convertSchema(item) : item));
     } else if (key === "enum" && Array.isArray(value)) {
-      // Keep enum values as-is
-      result[key] = value;
-    } else if (key === "default" || key === "examples") {
-      // Keep default and examples as-is
-      result[key] = value;
+      // Gemini accepts string enums only; others are dropped (see pieliesdie 068919f).
+      if (value.every((item) => typeof item === "string")) result.enum = value;
+    } else if (key === "const") {
+      if (typeof value === "string") {
+        result.enum = [value];
+      } else {
+        hints.push(`must be ${JSON.stringify(value)}`);
+      }
+    } else if (key === "examples" && Array.isArray(value)) {
+      if (value.length > 0 && result.example === undefined) result.example = value[0];
     } else if (key === "required" && Array.isArray(value)) {
       // Filter required array to only include properties that exist
       // This fixes: "parameters.required[X]: property is not defined"
@@ -289,16 +407,29 @@ export function toGeminiSchema(schema: unknown): unknown {
           (prop) => typeof prop === "string" && propertyNames.has(prop),
         );
         if (validRequired.length > 0) {
-          result[key] = validRequired;
+          result.required = validRequired;
         }
-        // If no valid required properties, omit the required field entirely
       } else {
-        // If there are no properties, keep required as-is (might be a schema without properties)
-        result[key] = value;
+        result.required = value;
       }
-    } else {
+    } else if ((HINTED_CONSTRAINTS as readonly string[]).includes(key)) {
+      if (value !== false && value !== undefined) hints.push(`${key}: ${JSON.stringify(value)}`);
+    } else if (GEMINI_SCHEMA_FIELDS.has(key)) {
       result[key] = value;
     }
+    // Anything else ($schema, additionalProperties, readOnly, ...) is dropped.
+  }
+
+  if (typeof result.format === "string") {
+    const allowed = typeof result.type === "string" ? GEMINI_FORMATS[result.type] : undefined;
+    if (!allowed?.has(result.format)) {
+      hints.push(`format: ${result.format}`);
+      delete result.format;
+    }
+  }
+
+  if (hints.length > 0) {
+    result.description = appendHint(result.description, hints.join(", "));
   }
 
   // Issue #80: Ensure array schemas have an 'items' field
@@ -307,7 +438,6 @@ export function toGeminiSchema(schema: unknown): unknown {
     result.items = { type: "STRING" };
   }
 
-  geminiSchemaCache.set(schema, result);
   return result;
 }
 

@@ -6304,30 +6304,6 @@ function isClaudeThinkingModel(model) {
 }
 
 // src/plugin/transform/gemini.ts
-var UNSUPPORTED_SCHEMA_FIELDS = /* @__PURE__ */ new Set([
-  "additionalProperties",
-  "$schema",
-  "$id",
-  "$comment",
-  "$ref",
-  "$defs",
-  "definitions",
-  "const",
-  "contentMediaType",
-  "contentEncoding",
-  "if",
-  "then",
-  "else",
-  "not",
-  "patternProperties",
-  "unevaluatedProperties",
-  "unevaluatedItems",
-  "dependentRequired",
-  "dependentSchemas",
-  "propertyNames",
-  "minContains",
-  "maxContains"
-]);
 function isNullSchema(schema) {
   if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
     return false;
@@ -6419,80 +6395,217 @@ function toGeminiSchemaMemoized(schema) {
   geminiSchemaContentCache.set(key, serialized);
   return converted;
 }
+var GEMINI_SCHEMA_FIELDS = /* @__PURE__ */ new Set([
+  "type",
+  "format",
+  "title",
+  "description",
+  "nullable",
+  "enum",
+  "maxItems",
+  "minItems",
+  "properties",
+  "required",
+  "minProperties",
+  "maxProperties",
+  "minLength",
+  "maxLength",
+  "pattern",
+  "example",
+  "anyOf",
+  "propertyOrdering",
+  "default",
+  "items",
+  "minimum",
+  "maximum"
+]);
+var GEMINI_FORMATS = {
+  STRING: /* @__PURE__ */ new Set(["enum", "date-time"]),
+  NUMBER: /* @__PURE__ */ new Set(["float", "double"]),
+  INTEGER: /* @__PURE__ */ new Set(["int32", "int64"])
+};
+var HINTED_CONSTRAINTS = [
+  "exclusiveMinimum",
+  "exclusiveMaximum",
+  "multipleOf",
+  "uniqueItems"
+];
+var MAX_REF_DEPTH = 8;
+function isSchemaRecord(value) {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+function refName(ref) {
+  return ref.split("/").pop() || ref;
+}
+function inlineLocalRefs(schema, defs, depth, seen) {
+  if (Array.isArray(schema)) {
+    return schema.map((item) => inlineLocalRefs(item, defs, depth, seen));
+  }
+  if (!isSchemaRecord(schema)) return schema;
+  let current = schema;
+  let nextSeen = seen;
+  const ref = current.$ref;
+  if (typeof ref === "string") {
+    const match = /^#\/(?:\$defs|definitions)\/(.+)$/.exec(ref);
+    const target = match ? defs[match[1]] : void 0;
+    const { $ref: _ref, ...siblings } = current;
+    if (isSchemaRecord(target) && depth < MAX_REF_DEPTH && !seen.has(ref)) {
+      current = { ...target, ...siblings };
+      nextSeen = /* @__PURE__ */ new Set([...seen, ref]);
+    } else {
+      current = {
+        type: "object",
+        ...siblings,
+        description: appendHint(siblings.description, `See: ${refName(ref)}`)
+      };
+    }
+  }
+  const out = {};
+  for (const [key, value] of Object.entries(current)) {
+    if (key === "$defs" || key === "definitions") continue;
+    if (key === "properties" && isSchemaRecord(value)) {
+      const props = {};
+      for (const [name, prop] of Object.entries(value)) {
+        props[name] = inlineLocalRefs(prop, defs, depth + 1, nextSeen);
+      }
+      out[key] = props;
+    } else if (key === "items" || key === "anyOf" || key === "oneOf" || key === "allOf" || key === "additionalProperties") {
+      out[key] = inlineLocalRefs(value, defs, depth + 1, nextSeen);
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+function appendHint(description, hint) {
+  return typeof description === "string" && description.length > 0 ? `${description} (${hint})` : hint;
+}
+function mergeAllOf2(schema) {
+  const parts = schema.allOf;
+  if (!Array.isArray(parts)) return void 0;
+  const { allOf: _allOf, ...rest } = schema;
+  const merged = {};
+  const properties = {};
+  const required = /* @__PURE__ */ new Set();
+  for (const part of [...parts, rest]) {
+    if (!isSchemaRecord(part)) continue;
+    for (const [key, value] of Object.entries(part)) {
+      if (key === "properties" && isSchemaRecord(value)) {
+        Object.assign(properties, value);
+      } else if (key === "required" && Array.isArray(value)) {
+        for (const name of value) if (typeof name === "string") required.add(name);
+      } else {
+        merged[key] = value;
+      }
+    }
+  }
+  if (Object.keys(properties).length > 0) {
+    merged.properties = properties;
+    merged.type ??= "object";
+  }
+  if (required.size > 0) merged.required = [...required];
+  return merged;
+}
 function toGeminiSchema(schema) {
-  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+  if (!isSchemaRecord(schema)) {
     return schema;
   }
   const cached = geminiSchemaCache.get(schema);
   if (cached !== void 0) {
     return cached;
   }
-  const inputSchema = schema;
+  const defs = {
+    ...isSchemaRecord(schema.definitions) ? schema.definitions : {},
+    ...isSchemaRecord(schema.$defs) ? schema.$defs : {}
+  };
+  const hasRefs = Object.keys(defs).length > 0 || JSON.stringify(schema).includes('"$ref"');
+  const prepared = hasRefs ? inlineLocalRefs(schema, defs, 0, /* @__PURE__ */ new Set()) : schema;
+  const result = convertSchema(prepared);
+  geminiSchemaCache.set(schema, result);
+  return result;
+}
+function convertSchema(inputSchema) {
   const singleOptionSchema = singleOptionUnionSchema(inputSchema);
   if (singleOptionSchema) {
-    const result2 = toGeminiSchema(singleOptionSchema);
-    geminiSchemaCache.set(schema, result2);
-    return result2;
+    return convertSchema(singleOptionSchema);
   }
   const nullableSchema = nullableUnionSchema(inputSchema);
   if (nullableSchema) {
-    const result2 = toGeminiSchema(nullableSchema);
-    geminiSchemaCache.set(schema, result2);
-    return result2;
+    return convertSchema(nullableSchema);
+  }
+  const mergedSchema = mergeAllOf2(inputSchema);
+  if (mergedSchema) {
+    return convertSchema(mergedSchema);
   }
   const result = {};
+  const hints = [];
   const propertyNames = /* @__PURE__ */ new Set();
-  if (inputSchema.properties && typeof inputSchema.properties === "object") {
-    for (const propName of Object.keys(
-      inputSchema.properties
-    )) {
+  if (isSchemaRecord(inputSchema.properties)) {
+    for (const propName of Object.keys(inputSchema.properties)) {
       propertyNames.add(propName);
     }
   }
   for (const [key, value] of Object.entries(inputSchema)) {
-    if (UNSUPPORTED_SCHEMA_FIELDS.has(key)) {
-      continue;
-    }
-    if (key === "enum" && Array.isArray(value) && value.some((item) => typeof item !== "string")) {
-      continue;
-    }
-    if (key === "type" && typeof value === "string") {
-      result[key] = value.toUpperCase();
-    } else if (key === "properties" && typeof value === "object" && value !== null) {
-      const props = {};
-      for (const [propName, propSchema] of Object.entries(
-        value
-      )) {
-        props[propName] = toGeminiSchema(propSchema);
+    if (key === "type") {
+      if (typeof value === "string") {
+        result.type = value.toUpperCase();
+      } else if (Array.isArray(value)) {
+        const types = value.filter((item) => typeof item === "string");
+        const nonNull = types.filter((item) => item !== "null");
+        if (nonNull.length > 0) result.type = nonNull[0].toUpperCase();
+        if (nonNull.length > 1) hints.push(`one of: ${nonNull.join(", ")}`);
+        if (nonNull.length < types.length) hints.push("nullable");
       }
-      result[key] = props;
-    } else if (key === "items" && typeof value === "object") {
-      result[key] = toGeminiSchema(value);
-    } else if ((key === "anyOf" || key === "oneOf" || key === "allOf") && Array.isArray(value)) {
-      result[key] = value.map((item) => toGeminiSchema(item));
+    } else if (key === "properties" && isSchemaRecord(value)) {
+      const props = {};
+      for (const [propName, propSchema] of Object.entries(value)) {
+        props[propName] = isSchemaRecord(propSchema) ? convertSchema(propSchema) : propSchema;
+      }
+      result.properties = props;
+    } else if (key === "items" && isSchemaRecord(value)) {
+      result.items = convertSchema(value);
+    } else if ((key === "anyOf" || key === "oneOf") && Array.isArray(value)) {
+      result.anyOf = value.map((item) => isSchemaRecord(item) ? convertSchema(item) : item);
     } else if (key === "enum" && Array.isArray(value)) {
-      result[key] = value;
-    } else if (key === "default" || key === "examples") {
-      result[key] = value;
+      if (value.every((item) => typeof item === "string")) result.enum = value;
+    } else if (key === "const") {
+      if (typeof value === "string") {
+        result.enum = [value];
+      } else {
+        hints.push(`must be ${JSON.stringify(value)}`);
+      }
+    } else if (key === "examples" && Array.isArray(value)) {
+      if (value.length > 0 && result.example === void 0) result.example = value[0];
     } else if (key === "required" && Array.isArray(value)) {
       if (propertyNames.size > 0) {
         const validRequired = value.filter(
           (prop) => typeof prop === "string" && propertyNames.has(prop)
         );
         if (validRequired.length > 0) {
-          result[key] = validRequired;
+          result.required = validRequired;
         }
       } else {
-        result[key] = value;
+        result.required = value;
       }
-    } else {
+    } else if (HINTED_CONSTRAINTS.includes(key)) {
+      if (value !== false && value !== void 0) hints.push(`${key}: ${JSON.stringify(value)}`);
+    } else if (GEMINI_SCHEMA_FIELDS.has(key)) {
       result[key] = value;
     }
+  }
+  if (typeof result.format === "string") {
+    const allowed = typeof result.type === "string" ? GEMINI_FORMATS[result.type] : void 0;
+    if (!allowed?.has(result.format)) {
+      hints.push(`format: ${result.format}`);
+      delete result.format;
+    }
+  }
+  if (hints.length > 0) {
+    result.description = appendHint(result.description, hints.join(", "));
   }
   if (result.type === "ARRAY" && !result.items) {
     result.items = { type: "STRING" };
   }
-  geminiSchemaCache.set(schema, result);
   return result;
 }
 function isGeminiModel(model) {
