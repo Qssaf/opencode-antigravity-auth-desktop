@@ -10,6 +10,20 @@
 
 ### Fixed
 
+- **The login menu could change the wrong account** - The menu's account numbers are fixed when OpenCode registers the form, but the file can change underneath it (the CLI, another OpenCode, an account dropped for a revoked token). A pick was applied as a bare position, so picking "2. b" after account 1 disappeared removed or disabled the account after it. Picks now name the account the menu showed, matched by token (or email after a re-login); one that is gone is reported and left alone.
+
+- **Deleted accounts came back** - "Remove all" (the CLI's `remove --all` and the 1.x menu) deleted the account file without the lock, so a running OpenCode's next save wrote every account back. The 1.x "start fresh" login saved with a merge, so it kept every old account. Both now replace the pool under the lock and mark the dropped accounts deleted, so no other process can restore them.
+
+- **1.x re-login reset the account's device fingerprint** - Signing in again to an existing account rebuilt its entry without the fingerprint, changing the device identity the backend sees. A failed save there was also silently ignored; it is now logged.
+
+- **Empty-answer retries were shared between requests** - The retry count was kept per session and model across requests, so concurrent requests (such as a title and the reply) spent each other's retries, and a request aborted mid-retry left the count behind for the next one. Each request now has its own count.
+
+- **No-credential requests went to the public Gemini API** - On OpenCode 2.x, a request with no usable account (the last one removed while it was on its way, or none signed in) was sent to Google without a key and came back as "API key not valid". It now gets the plugin's "no usable Google credential" message; a request carrying your own Gemini API key is still forwarded.
+
+- **Some tool definitions lost their name or schema** - A tool given only in the `custom` form lost its name, description and arguments, and a schema at the tool's top level was sent unconverted (failing the request). Chains of `$ref` definitions that point at another `$ref` were also left unresolved.
+
+- **The login could end on a disabled account** - After the active account was disabled, a management action could hand OpenCode that same account. An enabled one is now preferred.
+
 - **MCP and custom tool schemas could fail every Gemini request** - Gemini tool schemas were cleaned with a list of keys to remove, so any other JSON Schema keyword reached Antigravity, which parses requests strictly and answers an unknown key with HTTP 400, failing the whole request rather than one tool. MCP servers commonly send such keys (`exclusiveMinimum`, `examples`, `uniqueItems`, `readOnly`, `oneOf`, `allOf`, `format: "uri"`, `type: ["string", "null"]`). The cleaner now keeps only the fields of Gemini's schema: `oneOf` becomes `anyOf`, `allOf` parts are merged, type arrays, `const` and `null` options in unions are resolved, local `$ref`s are inlined (so a referenced item shape is no longer lost), and constraints Gemini cannot express are kept as description hints. OpenCode's own tools are unaffected.
 
 - **Gemini's visible thinking lost pieces** - The step that hides repeated thinking was written for streams that resend the whole thought, but Gemini sends only new text each time. It compared each piece with the previous piece, so a piece that started the same way lost its first words; it hid any piece already seen in the session, so blank lines and headings went missing and a later turn could show no thinking at all; and it hashed only a sample of long pieces, so two different ones could collide. Pieces are now compared with everything already shown, only whole thoughts of 64 characters or more are hidden as replays, and the hash covers every character. Display only: what reaches the model is unchanged.

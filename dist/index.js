@@ -965,12 +965,22 @@ function remapDeduplicatedStorage(storage) {
 async function clearAccounts() {
   try {
     const path4 = getStoragePath();
-    await fs.unlink(path4);
+    await withFileLock(path4, async () => {
+      const existing = await loadAccountsUnsafe();
+      if (!existing) return;
+      const deletedRefreshTokenHashes = new Set(existing.deletedRefreshTokenHashes ?? []);
+      for (const account of existing.accounts) {
+        if (account.refreshToken) deletedRefreshTokenHashes.add(hashRefreshToken(account.refreshToken));
+      }
+      await writeAccountsAtomically(path4, {
+        version: 4,
+        accounts: [],
+        activeIndex: 0,
+        deletedRefreshTokenHashes: deletedRefreshTokenHashes.size > 0 ? Array.from(deletedRefreshTokenHashes) : void 0
+      });
+    });
   } catch (error) {
-    const code = error.code;
-    if (code !== "ENOENT") {
-      log.error("Failed to clear account storage", { error: String(error) });
-    }
+    log.error("Failed to clear account storage", { error: String(error) });
   }
 }
 
@@ -6439,20 +6449,22 @@ function inlineLocalRefs(schema, defs, depth, seen) {
   if (!isSchemaRecord(schema)) return schema;
   let current = schema;
   let nextSeen = seen;
-  const ref = current.$ref;
-  if (typeof ref === "string") {
+  let ref = current.$ref;
+  while (typeof ref === "string") {
     const match = /^#\/(?:\$defs|definitions)\/(.+)$/.exec(ref);
     const target = match ? defs[match[1]] : void 0;
     const { $ref: _ref, ...siblings } = current;
-    if (isSchemaRecord(target) && depth < MAX_REF_DEPTH && !seen.has(ref)) {
+    if (isSchemaRecord(target) && depth < MAX_REF_DEPTH && !nextSeen.has(ref)) {
       current = { ...target, ...siblings };
-      nextSeen = /* @__PURE__ */ new Set([...seen, ref]);
+      nextSeen = /* @__PURE__ */ new Set([...nextSeen, ref]);
+      ref = current.$ref;
     } else {
       current = {
         type: "object",
         ...siblings,
         description: appendHint(siblings.description, `See: ${refName(ref)}`)
       };
+      break;
     }
   }
   const out = {};
@@ -6782,9 +6794,6 @@ function normalizeGeminiTools(payload) {
           description: newTool.description,
           input_schema: schema
         };
-        if (!newTool.parameters && !newTool.input_schema && !newTool.inputSchema) {
-          newTool.parameters = schema;
-        }
       }
       if (newTool.custom && !newTool.custom.input_schema) {
         newTool.custom.input_schema = {
@@ -6797,6 +6806,14 @@ function normalizeGeminiTools(payload) {
         `idx=${toolIndex}, hasCustom=${!!newTool.custom}, customSchema=${!!newTool.custom?.input_schema}, hasFunction=${!!newTool.function}, functionSchema=${!!newTool.function?.input_schema}`
       );
       if (newTool.custom) {
+        if (!newTool.function) {
+          const custom = newTool.custom;
+          newTool.name = nameCandidate;
+          newTool.description ??= custom.description;
+          newTool.parameters = custom.input_schema;
+          delete newTool.input_schema;
+          delete newTool.inputSchema;
+        }
         delete newTool.custom;
       }
       return newTool;
@@ -13434,7 +13451,17 @@ async function persistAccountPool(results, replaceAll = false) {
     return;
   }
   const activeIndex = replaceAll ? 0 : typeof stored?.activeIndex === "number" && Number.isFinite(stored.activeIndex) ? stored.activeIndex : 0;
-  await saveAccounts({
+  if (replaceAll) {
+    const kept = new Set(accounts.map((account) => account.refreshToken));
+    const previous = await loadAccounts();
+    for (const account of previous?.accounts ?? []) {
+      if (account.refreshToken && !kept.has(account.refreshToken)) {
+        replacedRefreshTokens.push(account.refreshToken);
+      }
+    }
+  }
+  const save = replaceAll ? saveAccountsReplace : saveAccounts;
+  await save({
     version: 4,
     accounts,
     activeIndex: clampInt(activeIndex, 0, accounts.length - 1),
@@ -13639,7 +13666,6 @@ var INVALID_GRANT_RECHECK_COOLDOWN_MS = 15e3;
 var RATE_LIMIT_DEDUP_WINDOW_MS = 2e3;
 var RATE_LIMIT_STATE_RESET_MS = 12e4;
 var rateLimitStateByAccountQuota = /* @__PURE__ */ new Map();
-var emptyResponseAttempts = /* @__PURE__ */ new Map();
 function getRateLimitBackoff(accountIndex, quotaKey, serverRetryAfterMs, maxBackoffMs = 6e4) {
   const now = Date.now();
   const stateKey = `${accountIndex}:${quotaKey}`;
@@ -14083,6 +14109,7 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
             let lastError = null;
             const abortSignal = init?.signal ?? void 0;
             const triedSwitchIndices = /* @__PURE__ */ new Set();
+            let emptyResponseAttempts = 0;
             let loopGuard = 0;
             const checkAborted = () => {
               if (abortSignal?.aborted) {
@@ -14931,9 +14958,8 @@ Alternatively, you can:
                         isEmpty = isEmptyResponseBody(await response.clone().text());
                       }
                       if (isEmpty) {
-                        const emptyAttemptKey = `${prepared.sessionId ?? "none"}:${prepared.effectiveModel ?? "unknown"}`;
-                        const currentAttempts = (emptyResponseAttempts.get(emptyAttemptKey) ?? 0) + 1;
-                        emptyResponseAttempts.set(emptyAttemptKey, currentAttempts);
+                        emptyResponseAttempts += 1;
+                        const currentAttempts = emptyResponseAttempts;
                         pushDebug(`empty-response: attempt ${currentAttempts}/${maxAttempts}`);
                         if (currentAttempts < maxAttempts) {
                           await showToast(
@@ -14944,15 +14970,12 @@ Alternatively, you can:
                           i--;
                           continue;
                         }
-                        emptyResponseAttempts.delete(emptyAttemptKey);
                         throw new EmptyResponseError(
                           "antigravity",
                           prepared.effectiveModel ?? "unknown",
                           currentAttempts
                         );
                       }
-                      const emptyAttemptKeyClean = `${prepared.sessionId ?? "none"}:${prepared.effectiveModel ?? "unknown"}`;
-                      emptyResponseAttempts.delete(emptyAttemptKeyClean);
                     }
                     const transformedResponse = await transformAntigravityResponse(
                       response,
@@ -15616,6 +15639,10 @@ Re-authenticating ${refreshEmail || "account"}...
                       if (parts.refreshToken) {
                         const replacedToken = updatedAccounts[refreshAccountIndex]?.refreshToken;
                         updatedAccounts[refreshAccountIndex] = {
+                          // The device identity belongs to the account, not the
+                          // token; a re-login must not reset it.
+                          fingerprint: updatedAccounts[refreshAccountIndex]?.fingerprint,
+                          fingerprintHistory: updatedAccounts[refreshAccountIndex]?.fingerprintHistory,
                           email: result.email ?? updatedAccounts[refreshAccountIndex]?.email,
                           refreshToken: parts.refreshToken,
                           projectId: parts.projectId ?? updatedAccounts[refreshAccountIndex]?.projectId,
@@ -15638,7 +15665,8 @@ Re-authenticating ${refreshEmail || "account"}...
                     const isFirstAccount = accounts.length === 1;
                     await persistAccountPool([result], isFirstAccount && startFresh);
                   }
-                } catch {
+                } catch (error) {
+                  log11.error("Failed to save the signed-in account to the account pool", { error: String(error) });
                 }
                 if (refreshAccountIndex !== void 0) {
                   break;
@@ -16412,8 +16440,14 @@ var ALL_ACCOUNTS_VALUE = "all";
 function isLoginAction(value) {
   return typeof value === "string" && ACTION_OPTIONS.some((option) => option.value === value);
 }
+var menuAccounts = [];
 async function accountOptions() {
   const storage = await loadAccountPool();
+  menuAccounts = (storage?.accounts ?? []).map((account, index) => ({
+    refreshToken: account.refreshToken,
+    email: account.email,
+    label: accountLabel(account, index)
+  }));
   if (!storage) return [];
   const now = Date.now();
   const options = storage.accounts.map((account, index) => {
@@ -16495,6 +16529,30 @@ function answeredAccounts(answer) {
   const indices = picked.map((entry) => Number.parseInt(String(entry), 10)).filter((parsed) => Number.isInteger(parsed) && parsed >= 1).map((parsed) => parsed - 1);
   return indices.length > 0 ? indices : null;
 }
+async function resolveMenuPicks(indices) {
+  const snapshot = menuAccounts;
+  if (snapshot.length === 0) return { indices: [...indices], gone: [] };
+  const current = (await loadAccountPool())?.accounts ?? [];
+  const resolved = [];
+  const gone = [];
+  for (const index of indices) {
+    const picked = snapshot[index];
+    if (!picked) {
+      resolved.push(index);
+      continue;
+    }
+    let at = current.findIndex((account) => account.refreshToken === picked.refreshToken);
+    if (at === -1 && picked.email) {
+      at = current.findIndex((account) => account.email === picked.email);
+    }
+    if (at === -1) {
+      gone.push(picked.label);
+    } else {
+      resolved.push(at);
+    }
+  }
+  return { indices: resolved, gone };
+}
 var KEEP_OPEN_HINT = "One action per login. For a menu that stays open, run `antigravity-accounts` in a terminal.";
 async function runManagementAction(action, target, deps) {
   const list = async () => renderAccountList(await loadAccountPool());
@@ -16504,13 +16562,27 @@ async function runManagementAction(action, target, deps) {
   if (action === "quota") {
     return { text: await renderQuota(deps.client, deps.integrationID), changed: false };
   }
+  let goneNote = "";
+  if (Array.isArray(target)) {
+    const picks = await resolveMenuPicks(target);
+    if (picks.gone.length > 0) {
+      goneNote = `${picks.gone.join(", ")} ${picks.gone.length === 1 ? "is" : "are"} no longer stored (the pool changed after this menu was built), so ${picks.gone.length === 1 ? "it was" : "they were"} left alone.`;
+      if (picks.indices.length === 0) {
+        return { text: `${goneNote}
+
+${await list()}`, changed: false };
+      }
+    }
+    target = picks.indices;
+  }
+  const withNote = (text) => goneNote ? `${goneNote} ${text}` : text;
   if (action === "verify") {
     const indices2 = target === "all" || target === null ? await allAccountIndices() : target;
     if (indices2.length === 0) {
       return { text: await list(), changed: false };
     }
     return {
-      text: await renderVerification(indices2, deps.verify, deps.client, deps.integrationID),
+      text: withNote(await renderVerification(indices2, deps.verify, deps.client, deps.integrationID)),
       changed: false
     };
   }
@@ -16540,7 +16612,7 @@ ${await list()}`,
       deps.live.remove(refreshToken);
     }
     if (result2.ok) deps.invalidate();
-    return { text: `${result2.message}
+    return { text: `${withNote(result2.message)}
 
 ${await list()}`, changed: result2.ok };
   }
@@ -16550,7 +16622,7 @@ ${await list()}`, changed: result2.ok };
     deps.live.setEnabled(refreshToken, enabled);
   }
   if (result.ok) deps.invalidate();
-  return { text: `${result.message}
+  return { text: `${withNote(result.message)}
 
 ${await list()}`, changed: result.ok };
 }
@@ -16563,7 +16635,11 @@ async function activeAccountCredential() {
   const storage = await loadAccountPool();
   if (!storage) return null;
   const index = storage.activeIndex ?? 0;
-  const account = storage.accounts[index]?.refreshToken && storage.accounts[index]?.enabled !== false ? storage.accounts[index] : storage.accounts.find((candidate) => candidate?.refreshToken);
+  const account = storage.accounts[index]?.refreshToken && storage.accounts[index]?.enabled !== false ? storage.accounts[index] : (
+    // An enabled account first, so disabling the active one does not end
+    // the login on it; a disabled one only when nothing else is left.
+    storage.accounts.find((candidate) => candidate?.refreshToken && candidate.enabled !== false) ?? storage.accounts.find((candidate) => candidate?.refreshToken)
+  );
   if (!account?.refreshToken) return null;
   return {
     type: "oauth",
@@ -17049,6 +17125,16 @@ function isDefaultGeminiBaseURL(baseURL) {
     return false;
   }
 }
+async function respondWithoutPipeline(url, init, send = fetch) {
+  const untagged = applyRequestKind(url, init);
+  if (new Headers(untagged.headers).get("x-goog-api-key")?.trim()) {
+    return send(url, untagged);
+  }
+  return createNoUsableCredentialsResponse(
+    url,
+    "The signed-in accounts changed while this request was on its way, and none is left to serve it."
+  );
+}
 var V2Runtime = class _V2Runtime {
   constructor(legacy) {
     this.legacy = legacy;
@@ -17143,7 +17229,7 @@ var V2Runtime = class _V2Runtime {
   async dispatch(url, init) {
     const loaded = await this.loaderResult();
     if (!loaded) {
-      return fetch(url, applyRequestKind(url, init));
+      return respondWithoutPipeline(url, init);
     }
     return loaded.fetch(url, applyRequestKind(url, init));
   }
@@ -17162,10 +17248,7 @@ var V2Runtime = class _V2Runtime {
     if (this.disposed || !isDefaultGeminiBaseURL(event.baseURL)) return;
     const loaded = await this.loaderResult();
     if (!loaded) {
-      log14.warn(
-        "No Antigravity credential for this request; leaving it on OpenCode's Google provider. Run `opencode auth login` if you expected the plugin to serve it."
-      );
-      return;
+      log14.debug("No Antigravity credential for this request; it is answered without the pipeline.");
     }
     const route = await this.ensureRoute();
     event.baseURL = route.baseURL;

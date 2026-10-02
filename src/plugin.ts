@@ -44,7 +44,7 @@ import {
 import { EmptyResponseError } from "./plugin/errors";
 import { AntigravityTokenRefreshError, isRevokedRefreshToken, refreshAccessToken } from "./plugin/token";
 import { startOAuthListener, type OAuthListener } from "./plugin/server";
-import { clearAccounts, hashRefreshToken, loadAccounts, removeAccountFromStorage, saveAccounts } from "./plugin/storage";
+import { clearAccounts, hashRefreshToken, loadAccounts, removeAccountFromStorage, saveAccounts, saveAccountsReplace } from "./plugin/storage";
 import { AccountManager, type ModelFamily, parseRateLimitReason, calculateBackoffMs, computeSoftQuotaCacheTtlMs } from "./plugin/accounts";
 import { createAutoUpdateCheckerHook } from "./hooks/auto-update-checker";
 import { loadConfig, initRuntimeConfig, type AntigravityConfig } from "./plugin/config";
@@ -1181,7 +1181,20 @@ async function persistAccountPool(
     ? 0 
     : (typeof stored?.activeIndex === "number" && Number.isFinite(stored.activeIndex) ? stored.activeIndex : 0);
 
-  await saveAccounts({
+  // A fresh login replaces the pool: the merging save would keep every
+  // account already on disk next to the new one. The dropped accounts are
+  // tombstoned too, or a running OpenCode's next merge-on-save restores them.
+  if (replaceAll) {
+    const kept = new Set(accounts.map((account) => account.refreshToken));
+    const previous = await loadAccounts();
+    for (const account of previous?.accounts ?? []) {
+      if (account.refreshToken && !kept.has(account.refreshToken)) {
+        replacedRefreshTokens.push(account.refreshToken);
+      }
+    }
+  }
+  const save = replaceAll ? saveAccountsReplace : saveAccounts;
+  await save({
     version: 4,
     accounts,
     activeIndex: clampInt(activeIndex, 0, accounts.length - 1),
@@ -1404,7 +1417,7 @@ function isModelGenerationRequest(urlString: string): boolean {
  * valid. Please pass a valid API key." — even though the user never configured
  * one. This says what actually happened, and what to do about it.
  */
-function createNoUsableCredentialsResponse(urlString: string, detail: string): Response {
+export function createNoUsableCredentialsResponse(urlString: string, detail: string): Response {
   const requestedModel = extractRequestedGeminiModel(urlString) ?? extractModelFromUrl(urlString) ?? undefined;
   const family: ModelFamily = requestedModel?.toLowerCase().includes("claude") ? "claude" : "gemini";
   const errorMessage = [
@@ -1464,8 +1477,6 @@ interface RateLimitState {
 // Key format: `${accountIndex}:${quotaKey}` for per-account-per-quota tracking
 const rateLimitStateByAccountQuota = new Map<string, RateLimitState>();
 
-// Track empty response retry attempts (ported from LLM-API-Key-Proxy)
-const emptyResponseAttempts = new Map<string, number>();
 
 /**
  * Get rate limit backoff with time-window deduplication.
@@ -2190,6 +2201,9 @@ export const createAntigravityRuntime = (providerId: string) => async (
           // progress instead of re-picking the same account forever. Cleared
           // after a rate-limit/quota wait, since resets may free accounts again.
           const triedSwitchIndices = new Set<number>();
+          // Empty answers retried within THIS request. Per request, so concurrent
+          // requests (and ones aborted mid-retry) do not spend each other's budget.
+          let emptyResponseAttempts = 0;
           // Absolute safety net: bound total loop iterations so the request can
           // never spin the event loop, regardless of account/quota state.
           let loopGuard = 0;
@@ -3345,10 +3359,8 @@ export const createAntigravityRuntime = (providerId: string) => async (
                   }
 
                   if (isEmpty) {
-                    // Track empty response attempts per request
-                    const emptyAttemptKey = `${prepared.sessionId ?? "none"}:${prepared.effectiveModel ?? "unknown"}`;
-                    const currentAttempts = (emptyResponseAttempts.get(emptyAttemptKey) ?? 0) + 1;
-                    emptyResponseAttempts.set(emptyAttemptKey, currentAttempts);
+                    emptyResponseAttempts += 1;
+                    const currentAttempts = emptyResponseAttempts;
                     
                     pushDebug(`empty-response: attempt ${currentAttempts}/${maxAttempts}`);
                     
@@ -3364,18 +3376,12 @@ export const createAntigravityRuntime = (providerId: string) => async (
                       continue;
                     }
                     
-                    // Clean up and throw after max attempts
-                    emptyResponseAttempts.delete(emptyAttemptKey);
                     throw new EmptyResponseError(
                       "antigravity",
                       prepared.effectiveModel ?? "unknown",
                       currentAttempts,
                     );
                   }
-                  
-                  // Clean up successful attempt tracking
-                  const emptyAttemptKeyClean = `${prepared.sessionId ?? "none"}:${prepared.effectiveModel ?? "unknown"}`;
-                  emptyResponseAttempts.delete(emptyAttemptKeyClean);
                 }
                 
                 const transformedResponse = await transformAntigravityResponse(
@@ -4134,6 +4140,10 @@ export const createAntigravityRuntime = (providerId: string) => async (
                     if (parts.refreshToken) {
                       const replacedToken = updatedAccounts[refreshAccountIndex]?.refreshToken;
                       updatedAccounts[refreshAccountIndex] = {
+                        // The device identity belongs to the account, not the
+                        // token; a re-login must not reset it.
+                        fingerprint: updatedAccounts[refreshAccountIndex]?.fingerprint,
+                        fingerprintHistory: updatedAccounts[refreshAccountIndex]?.fingerprintHistory,
                         email: result.email ?? updatedAccounts[refreshAccountIndex]?.email,
                         refreshToken: parts.refreshToken,
                         projectId: parts.projectId ?? updatedAccounts[refreshAccountIndex]?.projectId,
@@ -4158,7 +4168,8 @@ export const createAntigravityRuntime = (providerId: string) => async (
                   const isFirstAccount = accounts.length === 1;
                   await persistAccountPool([result], isFirstAccount && startFresh);
                 }
-              } catch {
+              } catch (error) {
+                log.error("Failed to save the signed-in account to the account pool", { error: String(error) });
               }
 
               if (refreshAccountIndex !== undefined) {

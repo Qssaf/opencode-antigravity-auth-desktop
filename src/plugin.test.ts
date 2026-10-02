@@ -1460,6 +1460,33 @@ describe("persistAccountPool", () => {
 
     expect(vi.mocked(storageModule.saveAccounts).mock.calls.at(-1)?.[0].deletedRefreshTokenHashes).toBeUndefined();
   });
+
+  it("replaces the pool on a fresh login and tombstones the dropped accounts", async () => {
+    vi.mocked(storageModule.loadAccounts).mockResolvedValue({
+      version: 4,
+      accounts: [
+        { email: "old-a@example.com", refreshToken: "token-a", addedAt: 1, lastUsed: 1, enabled: true },
+        { email: "old-b@example.com", refreshToken: "token-b", addedAt: 1, lastUsed: 1, enabled: true },
+      ],
+      activeIndex: 1,
+    });
+    vi.mocked(storageModule.saveAccounts).mockClear();
+    vi.mocked(storageModule.saveAccountsReplace).mockClear();
+
+    await oauthFlowHelpers.persistAccountPool(
+      [{ type: "success", refresh: "token-new|project|managed", access: "a", expires: 1, email: "new@example.com", projectId: "project" }],
+      true,
+    );
+
+    expect(storageModule.saveAccounts).not.toHaveBeenCalled();
+    const saved = vi.mocked(storageModule.saveAccountsReplace).mock.calls.at(-1)?.[0];
+    expect(saved?.accounts.map((account) => account.refreshToken)).toEqual(["token-new"]);
+    expect(saved?.activeIndex).toBe(0);
+    expect(saved?.deletedRefreshTokenHashes).toEqual([
+      storageModule.hashRefreshToken("token-a"),
+      storageModule.hashRefreshToken("token-b"),
+    ]);
+  });
 });
 
 describe("background quota refresh", () => {

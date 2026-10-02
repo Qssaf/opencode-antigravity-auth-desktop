@@ -237,20 +237,24 @@ function inlineLocalRefs(
 
   let current: SchemaRecord = schema;
   let nextSeen = seen;
-  const ref = current.$ref;
-  if (typeof ref === "string") {
+  let ref = current.$ref;
+  // A loop, not an `if`: a definition can itself be a `$ref` (an alias), and
+  // leaving that one unresolved would drop the shape entirely.
+  while (typeof ref === "string") {
     const match = /^#\/(?:\$defs|definitions)\/(.+)$/.exec(ref);
     const target = match ? defs[match[1]!] : undefined;
     const { $ref: _ref, ...siblings } = current;
-    if (isSchemaRecord(target) && depth < MAX_REF_DEPTH && !seen.has(ref)) {
+    if (isSchemaRecord(target) && depth < MAX_REF_DEPTH && !nextSeen.has(ref)) {
       current = { ...target, ...siblings };
-      nextSeen = new Set([...seen, ref]);
+      nextSeen = new Set([...nextSeen, ref]);
+      ref = current.$ref;
     } else {
       current = {
         type: "object",
         ...siblings,
         description: appendHint(siblings.description, `See: ${refName(ref)}`),
       };
+      break;
     }
   }
 
@@ -740,14 +744,6 @@ export function normalizeGeminiTools(payload: RequestPayload): {
           description: newTool.description,
           input_schema: schema,
         };
-
-        if (
-          !newTool.parameters &&
-          !newTool.input_schema &&
-          !newTool.inputSchema
-        ) {
-          newTool.parameters = schema;
-        }
       }
 
       if (
@@ -767,6 +763,18 @@ export function normalizeGeminiTools(payload: RequestPayload): {
 
       // Strip custom wrappers for Gemini; only function-style is accepted.
       if (newTool.custom) {
+        if (!newTool.function) {
+          // wrapToolsAsFunctionDeclarations reads a tool without `function`
+          // from its top level, so the custom wrapper's name, description and
+          // converted schema move there. Left behind, the tool would lose its
+          // name and schema, or a raw top-level schema would be sent as is.
+          const custom = newTool.custom as Record<string, unknown>;
+          newTool.name = nameCandidate;
+          newTool.description ??= custom.description;
+          newTool.parameters = custom.input_schema;
+          delete newTool.input_schema;
+          delete newTool.inputSchema;
+        }
         delete newTool.custom;
       }
 

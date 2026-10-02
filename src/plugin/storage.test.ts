@@ -3,6 +3,7 @@ import {
   deduplicateAccountsByEmail,
   hashRefreshToken,
   migrateV2ToV3,
+  clearAccounts,
   loadAccounts,
   removeAccountFromStorage,
   saveAccounts,
@@ -276,6 +277,36 @@ describe("removeAccountFromStorage", () => {
     expect(saved.activeIndex).toBe(0);
     expect(saved.activeIndexByFamily).toEqual({ claude: 0, gemini: 0 });
     expect(diskContent).not.toContain("revoked");
+  });
+
+  it("does not let a running OpenCode restore accounts after a clear", async () => {
+    const initial: AccountStorageV4 = {
+      version: 4,
+      accounts: [
+        { refreshToken: "token-a", addedAt: 1, lastUsed: 1 },
+        { refreshToken: "token-b", addedAt: 2, lastUsed: 2 },
+      ],
+      activeIndex: 0,
+    };
+    let diskContent = JSON.stringify(initial);
+    vi.mocked(fs.readFile).mockImplementation(async (path) => {
+      if (String(path).endsWith(".gitignore")) return "";
+      return diskContent;
+    });
+    vi.mocked(fs.writeFile).mockImplementation(async (path, data) => {
+      if (String(path).includes(".tmp")) diskContent = String(data);
+    });
+
+    await clearAccounts();
+    // The live pool of another process saves its stale snapshot afterwards.
+    await saveAccounts(initial);
+
+    const saved = JSON.parse(diskContent) as AccountStorageV4;
+    expect(saved.accounts).toEqual([]);
+    expect(diskContent).not.toContain("token-a");
+    expect(saved.deletedRefreshTokenHashes?.sort()).toEqual(
+      [hashRefreshToken("token-a"), hashRefreshToken("token-b")].sort(),
+    );
   });
 
   it("keeps a copy of an unreadable account file before a save replaces it", async () => {

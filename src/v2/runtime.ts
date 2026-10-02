@@ -10,7 +10,13 @@
 
 import { tool } from "@opencode-ai/plugin/tool";
 import { ANTIGRAVITY_PROVIDER_ID } from "../constants";
-import { createAntigravityRuntime, liveAccountPool, oauthFlowHelpers, verifyAccountAccess } from "../plugin";
+import {
+  createAntigravityRuntime,
+  createNoUsableCredentialsResponse,
+  liveAccountPool,
+  oauthFlowHelpers,
+  verifyAccountAccess,
+} from "../plugin";
 import { formatRefreshParts, isOAuthAuth } from "../plugin/auth";
 import type { AntigravityRuntime } from "../plugin";
 import { OPENCODE_MODEL_DEFINITIONS } from "../plugin/config/models";
@@ -141,6 +147,28 @@ export function isDefaultGeminiBaseURL(baseURL: string | undefined): boolean {
   }
 }
 
+/**
+ * Answers a request that reached the loopback proxy when the pipeline can no
+ * longer serve it: the login changed on the way (the last account removed,
+ * say). A request carrying the user's own Gemini API key still goes to Google
+ * directly. Without one Google would only answer "API key not valid", blaming
+ * a key the user never set, so the reply says what happened instead.
+ */
+export async function respondWithoutPipeline(
+  url: string,
+  init: RequestInit,
+  send: (url: string, init: RequestInit) => Promise<Response> = fetch,
+): Promise<Response> {
+  const untagged = applyRequestKind(url, init);
+  if (new Headers(untagged.headers).get("x-goog-api-key")?.trim()) {
+    return send(url, untagged);
+  }
+  return createNoUsableCredentialsResponse(
+    url,
+    "The signed-in accounts changed while this request was on its way, and none is left to serve it.",
+  );
+}
+
 export class V2Runtime {
   private readonly attached = new Set<Context>();
   private readonly catalogListeners = new Set<() => void>();
@@ -248,9 +276,7 @@ export class V2Runtime {
   private async dispatch(url: string, init: RequestInit): Promise<Response> {
     const loaded = await this.loaderResult();
     if (!loaded) {
-      // The login changed to something the pipeline does not handle while the
-      // request was on its way. Behave as OpenCode 1.x did without a loader.
-      return fetch(url, applyRequestKind(url, init));
+      return respondWithoutPipeline(url, init);
     }
     return loaded.fetch(url, applyRequestKind(url, init));
   }
@@ -275,15 +301,12 @@ export class V2Runtime {
     // API with a placeholder key.
     const loaded = await this.loaderResult();
     if (!loaded) {
-      // No OAuth account and no API key the pipeline can use. The request is
-      // left on OpenCode's own Google provider, which is what serves a plain
-      // `GEMINI_API_KEY` setup; with no key at all Google answers "API key not
-      // valid", so say here what actually happened.
-      log.warn(
-        "No Antigravity credential for this request; leaving it on OpenCode's Google provider. " +
-          "Run `opencode auth login` if you expected the plugin to serve it.",
-      );
-      return;
+      // No OAuth account and no API key the pipeline can use. The request
+      // still goes through the proxy: dispatch forwards it to Google when it
+      // carries the user's own key (a plain `GEMINI_API_KEY` setup), and
+      // otherwise answers with what actually happened, instead of Google's
+      // "API key not valid" for a key the user never set.
+      log.debug("No Antigravity credential for this request; it is answered without the pipeline.");
     }
 
     const route = await this.ensureRoute();

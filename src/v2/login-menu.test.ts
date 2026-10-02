@@ -274,6 +274,60 @@ describe("login menu", () => {
     expect(outcome.text).toContain("No account 8");
   });
 
+  it("applies a pick to the account the menu showed, after the file changed", async () => {
+    await writeStorage({
+      version: 4,
+      accounts: [
+        { email: "a@example.com", refreshToken: "token-a", addedAt: 1, lastUsed: 1, enabled: true },
+        { email: "b@example.com", refreshToken: "token-b", addedAt: 1, lastUsed: 1, enabled: true },
+        { email: "c@example.com", refreshToken: "token-c", addedAt: 1, lastUsed: 1, enabled: true },
+      ],
+      activeIndex: 0,
+    });
+    await accountOptions(); // the form shows 1. a, 2. b, 3. c
+    // Another process drops account a; the registered form still shows it.
+    await writeStorage({
+      version: 4,
+      accounts: [
+        { email: "b@example.com", refreshToken: "token-b", addedAt: 1, lastUsed: 1, enabled: true },
+        { email: "c@example.com", refreshToken: "token-c", addedAt: 1, lastUsed: 1, enabled: true },
+      ],
+      activeIndex: 0,
+    });
+
+    // "2. b" picked: b goes, not c (which is now second in the file).
+    const outcome = await runManagementAction("remove", [1], management());
+
+    expect((await readStorage()).accounts.map((account) => account.email)).toEqual(["c@example.com"]);
+    expect(removeCalls).toEqual(["token-b"]);
+    expect(outcome.changed).toBe(true);
+  });
+
+  it("leaves everything alone when the picked account is gone", async () => {
+    await writeStorage(twoAccounts());
+    await accountOptions();
+    await writeStorage({ ...twoAccounts(), accounts: [twoAccounts().accounts[1]!] });
+
+    const outcome = await runManagementAction("remove", [0], management());
+
+    expect((await readStorage()).accounts.map((account) => account.email)).toEqual(["second@example.com"]);
+    expect(removeCalls).toEqual([]);
+    expect(outcome.changed).toBe(false);
+    expect(outcome.text).toContain("first@example.com is no longer stored");
+  });
+
+  it("follows an account whose token a re-login replaced, by email", async () => {
+    await writeStorage(twoAccounts());
+    await accountOptions();
+    const relogged = twoAccounts();
+    relogged.accounts[1]!.refreshToken = "token-2-new";
+    await writeStorage(relogged);
+
+    await runManagementAction("disable", [1], management());
+
+    expect(setEnabledCalls).toEqual([["token-2-new", false]]);
+  });
+
   it("hands back the active account so the login flow can finish", async () => {
     await writeStorage(twoAccounts());
 

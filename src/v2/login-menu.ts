@@ -61,9 +61,29 @@ export function isLoginAction(value: unknown): value is LoginAction {
   );
 }
 
+interface MenuAccount {
+  readonly refreshToken: string;
+  readonly email?: string;
+  readonly label: string;
+}
+
+/**
+ * The accounts behind the numbers on the registered form. The form is fixed
+ * when it is registered, but the file can change underneath it (the CLI,
+ * another OpenCode process, an account dropped for a revoked token), so a pick
+ * is resolved through this to the account it named, never applied as a bare
+ * index to whatever the file holds now.
+ */
+let menuAccounts: readonly MenuAccount[] = [];
+
 /** Reads the pool into the select options the login form offers. */
 export async function accountOptions(): Promise<FormOption[]> {
   const storage = await loadAccountPool();
+  menuAccounts = (storage?.accounts ?? []).map((account, index) => ({
+    refreshToken: account.refreshToken,
+    email: account.email,
+    label: accountLabel(account, index),
+  }));
   if (!storage) return [];
 
   const now = Date.now();
@@ -168,6 +188,40 @@ export function answeredAccounts(answer: FormAnswer): number[] | "all" | null {
   return indices.length > 0 ? indices : null;
 }
 
+/**
+ * Maps picked menu numbers (0-based) to where those accounts are in the file
+ * now, by refresh token, then email (a re-login replaces the token). `gone`
+ * names the picked accounts the file no longer holds. A number the menu never
+ * showed passes through, so the admin layer reports it as missing.
+ */
+export async function resolveMenuPicks(
+  indices: readonly number[],
+): Promise<{ indices: number[]; gone: string[] }> {
+  const snapshot = menuAccounts;
+  if (snapshot.length === 0) return { indices: [...indices], gone: [] };
+
+  const current = (await loadAccountPool())?.accounts ?? [];
+  const resolved: number[] = [];
+  const gone: string[] = [];
+  for (const index of indices) {
+    const picked = snapshot[index];
+    if (!picked) {
+      resolved.push(index);
+      continue;
+    }
+    let at = current.findIndex((account) => account.refreshToken === picked.refreshToken);
+    if (at === -1 && picked.email) {
+      at = current.findIndex((account) => account.email === picked.email);
+    }
+    if (at === -1) {
+      gone.push(picked.label);
+    } else {
+      resolved.push(at);
+    }
+  }
+  return { indices: resolved, gone };
+}
+
 export interface ManagementDeps {
   client: PluginClient;
   integrationID: string;
@@ -213,13 +267,27 @@ export async function runManagementAction(
     return { text: await renderQuota(deps.client, deps.integrationID), changed: false };
   }
 
+  // Picks name accounts as the menu showed them; see resolveMenuPicks.
+  let goneNote = "";
+  if (Array.isArray(target)) {
+    const picks = await resolveMenuPicks(target);
+    if (picks.gone.length > 0) {
+      goneNote = `${picks.gone.join(", ")} ${picks.gone.length === 1 ? "is" : "are"} no longer stored (the pool changed after this menu was built), so ${picks.gone.length === 1 ? "it was" : "they were"} left alone.`;
+      if (picks.indices.length === 0) {
+        return { text: `${goneNote}\n\n${await list()}`, changed: false };
+      }
+    }
+    target = picks.indices;
+  }
+  const withNote = (text: string) => (goneNote ? `${goneNote} ${text}` : text);
+
   if (action === "verify") {
     const indices = target === "all" || target === null ? await allAccountIndices() : target;
     if (indices.length === 0) {
       return { text: await list(), changed: false };
     }
     return {
-      text: await renderVerification(indices, deps.verify, deps.client, deps.integrationID),
+      text: withNote(await renderVerification(indices, deps.verify, deps.client, deps.integrationID)),
       changed: false,
     };
   }
@@ -251,7 +319,7 @@ export async function runManagementAction(
       deps.live.remove(refreshToken);
     }
     if (result.ok) deps.invalidate();
-    return { text: `${result.message}\n\n${await list()}`, changed: result.ok };
+    return { text: `${withNote(result.message)}\n\n${await list()}`, changed: result.ok };
   }
 
   const enabled = action === "enable";
@@ -260,7 +328,7 @@ export async function runManagementAction(
     deps.live.setEnabled(refreshToken, enabled);
   }
   if (result.ok) deps.invalidate();
-  return { text: `${result.message}\n\n${await list()}`, changed: result.ok };
+  return { text: `${withNote(result.message)}\n\n${await list()}`, changed: result.ok };
 }
 
 /** Adds the "this menu is one-shot" note to what the login flow reports back. */
@@ -281,7 +349,10 @@ export async function activeAccountCredential(): Promise<OAuthCredential | null>
   const account =
     storage.accounts[index]?.refreshToken && storage.accounts[index]?.enabled !== false
       ? storage.accounts[index]
-      : storage.accounts.find((candidate) => candidate?.refreshToken);
+      : // An enabled account first, so disabling the active one does not end
+        // the login on it; a disabled one only when nothing else is left.
+        (storage.accounts.find((candidate) => candidate?.refreshToken && candidate.enabled !== false) ??
+        storage.accounts.find((candidate) => candidate?.refreshToken));
   if (!account?.refreshToken) return null;
 
   return {

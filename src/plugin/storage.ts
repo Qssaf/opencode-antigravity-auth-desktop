@@ -1174,14 +1174,32 @@ function remapDeduplicatedStorage(storage: AccountStorageV4): AccountStorageV4 {
   };
 }
 
+/**
+ * Deletes every stored account. The tokens are tombstoned under the file lock
+ * rather than the file being unlinked: a running OpenCode that still holds the
+ * pool in memory merges its next save into whatever is on disk, and without
+ * the tombstones that save would write every deleted account back.
+ */
 export async function clearAccounts(): Promise<void> {
   try {
     const path = getStoragePath();
-    await fs.unlink(path);
+    await withFileLock(path, async () => {
+      const existing = await loadAccountsUnsafe();
+      if (!existing) return;
+      const deletedRefreshTokenHashes = new Set(existing.deletedRefreshTokenHashes ?? []);
+      for (const account of existing.accounts) {
+        if (account.refreshToken) deletedRefreshTokenHashes.add(hashRefreshToken(account.refreshToken));
+      }
+      await writeAccountsAtomically(path, {
+        version: 4,
+        accounts: [],
+        activeIndex: 0,
+        deletedRefreshTokenHashes: deletedRefreshTokenHashes.size > 0
+          ? Array.from(deletedRefreshTokenHashes)
+          : undefined,
+      });
+    });
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT") {
-      log.error("Failed to clear account storage", { error: String(error) });
-    }
+    log.error("Failed to clear account storage", { error: String(error) });
   }
 }
