@@ -33,23 +33,63 @@ function addBoundedThinkingHash(hashes: Set<string>, hash: string): void {
 }
 
 /**
- * Simple string hash for thinking deduplication.
- * Uses DJB2-like algorithm.
+ * Thinking text shorter than this is never suppressed as a replay. A replay is
+ * a whole thought re-sent (hundreds of characters); short pieces such as a
+ * blank line or a heading legitimately repeat within and across turns.
+ */
+const MIN_REPLAY_DEDUP_CHARS = 64;
+
+/**
+ * Simple string hash for thinking deduplication (DJB2 over every character).
+ * Sampling only some characters let two different long thoughts of the same
+ * length collide, which hid the second one.
  */
 function hashString(str: string): string {
-  const len = str.length;
-  let hash = (5381 ^ len) >>> 0;
-  if (len <= 512) {
-    for (let i = 0; i < len; i++) {
-      hash = (((hash << 5) + hash) + str.charCodeAt(i)) >>> 0;
-    }
-  } else {
-    const step = Math.ceil(len / 256);
-    for (let i = 0; i < len; i += step) {
-      hash = (((hash << 5) + hash) + str.charCodeAt(i)) >>> 0;
-    }
+  let hash = (5381 ^ str.length) >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (((hash << 5) + hash) + str.charCodeAt(i)) >>> 0;
   }
   return hash.toString(16);
+}
+
+/**
+ * Decides what to show for one streamed thinking piece.
+ *
+ * Gemini streams thinking as deltas (each event carries only new text), while
+ * some upstreams send the thought accumulated so far, or replay a finished
+ * thought. `shownBuffer` holds everything already shown for this slot, so:
+ * - text that extends what was shown is cumulative, and only the new tail is shown;
+ * - text equal to what was shown is a replay, and is dropped;
+ * - anything else is a delta and is shown as is.
+ * Comparing against everything shown, not just the previous piece, keeps a
+ * delta that happens to start like the previous delta from being cut.
+ *
+ * Returns the text to show, `undefined` to show the part unchanged, or `null`
+ * to drop it.
+ */
+function resolveThinkingText(
+  slot: number,
+  fullText: string,
+  shownBuffer: ThoughtBuffer,
+  displayedThinkingHashes?: Set<string>,
+): string | null | undefined {
+  if (displayedThinkingHashes && fullText.length >= MIN_REPLAY_DEDUP_CHARS) {
+    const hash = hashString(fullText);
+    if (displayedThinkingHashes.has(hash)) {
+      return null;
+    }
+    addBoundedThinkingHash(displayedThinkingHashes, hash);
+  }
+
+  const shown = shownBuffer.get(slot) ?? '';
+  if (shown.trim() && fullText.startsWith(shown)) {
+    shownBuffer.set(slot, fullText);
+    const delta = fullText.slice(shown.length);
+    return delta ? delta : null;
+  }
+
+  shownBuffer.set(slot, shown + fullText);
+  return undefined;
 }
 
 export function createThoughtBuffer(): ThoughtBuffer {
@@ -123,30 +163,10 @@ export function deduplicateThinkingText(
 
         if (p.thought === true || p.type === 'thinking') {
           const fullText = (p.text || p.thinking || '') as string;
-          
-          if (displayedThinkingHashes) {
-            const hash = hashString(fullText);
-            if (displayedThinkingHashes.has(hash)) {
-              sentBuffer.set(index, fullText);
-              return null;
-            }
-            addBoundedThinkingHash(displayedThinkingHashes, hash);
-          }
-
-          const sentText = sentBuffer.get(index) ?? '';
-
-          if (fullText.startsWith(sentText)) {
-            const delta = fullText.slice(sentText.length);
-            sentBuffer.set(index, fullText);
-
-            if (delta) {
-              return { ...p, text: delta, thinking: delta };
-            }
-            return null;
-          }
-
-          sentBuffer.set(index, fullText);
-          return part;
+          const text = resolveThinkingText(index, fullText, sentBuffer, displayedThinkingHashes);
+          if (text === null) return null;
+          if (text === undefined) return part;
+          return { ...p, text, thinking: text };
         }
         return part;
       });
@@ -168,33 +188,11 @@ export function deduplicateThinkingText(
       const b = block as Record<string, unknown> | null;
       if (b?.type === 'thinking') {
         const fullText = (b.thinking || b.text || '') as string;
-        
-        if (displayedThinkingHashes) {
-          const hash = hashString(fullText);
-          if (displayedThinkingHashes.has(hash)) {
-            sentBuffer.set(thinkingIndex, fullText);
-            thinkingIndex++;
-            return null;
-          }
-          addBoundedThinkingHash(displayedThinkingHashes, hash);
-        }
-
-        const sentText = sentBuffer.get(thinkingIndex) ?? '';
-
-        if (fullText.startsWith(sentText)) {
-          const delta = fullText.slice(sentText.length);
-          sentBuffer.set(thinkingIndex, fullText);
-          thinkingIndex++;
-
-          if (delta) {
-            return { ...b, thinking: delta, text: delta };
-          }
-          return null;
-        }
-
-        sentBuffer.set(thinkingIndex, fullText);
+        const text = resolveThinkingText(thinkingIndex, fullText, sentBuffer, displayedThinkingHashes);
         thinkingIndex++;
-        return block;
+        if (text === null) return null;
+        if (text === undefined) return block;
+        return { ...b, thinking: text, text };
       }
       return block;
     });

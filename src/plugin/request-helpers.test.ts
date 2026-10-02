@@ -1947,7 +1947,7 @@ describe("deduplicateThinkingText", () => {
       const chunk = {
         candidates: [{
           content: {
-            parts: [{ thought: true, text: `unique-thought-${i}` }],
+            parts: [{ thought: true, text: `unique-thought-${i} ${"x".repeat(64)}` }],
           },
         }],
       };
@@ -1957,6 +1957,50 @@ describe("deduplicateThinkingText", () => {
     // Never exceeds the 2000-hash cap.
     expect(displayedThinkingHashes.size).toBeLessThanOrEqual(2000);
     expect(displayedThinkingHashes.size).toBeGreaterThan(0);
+  });
+
+  // Gemini streams thinking as deltas. These pin the cases the dedup used to
+  // get wrong on a delta stream.
+  const thought = (text: string) => ({
+    candidates: [{ content: { parts: [{ thought: true, text }] } }],
+  });
+  const shownText = (result: unknown): string[] =>
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (result as any).candidates[0].content.parts.map((part: { text: string }) => part.text);
+
+  it("does not cut a delta that starts like the previous delta", () => {
+    const buffer = createTestBuffer();
+    deduplicateThinkingText(thought("Reading the config. "), buffer);
+    deduplicateThinkingText(thought("Then"), buffer);
+    // Compared with the previous delta ("Then") this looked cumulative and lost
+    // its first word; it does not extend everything shown, so it is a delta.
+    expect(shownText(deduplicateThinkingText(thought("Then the tests."), buffer))).toEqual(["Then the tests."]);
+  });
+
+  it("shows short pieces that repeat within a stream and across turns", () => {
+    const hashes = new Set<string>();
+    const turn1 = createTestBuffer();
+    expect(shownText(deduplicateThinkingText(thought("**Plan**"), turn1, hashes))).toEqual(["**Plan**"]);
+    expect(shownText(deduplicateThinkingText(thought("\n\n"), turn1, hashes))).toEqual(["\n\n"]);
+    expect(shownText(deduplicateThinkingText(thought("\n\n"), turn1, hashes))).toEqual(["\n\n"]);
+    const turn2 = createTestBuffer();
+    expect(shownText(deduplicateThinkingText(thought("**Plan**"), turn2, hashes))).toEqual(["**Plan**"]);
+  });
+
+  it("still drops a long thought replayed later in the session", () => {
+    const hashes = new Set<string>();
+    const long = "I will inspect the failing test, then compare it with the implementation.";
+    expect(shownText(deduplicateThinkingText(thought(long), createTestBuffer(), hashes))).toEqual([long]);
+    expect(shownText(deduplicateThinkingText(thought(long), createTestBuffer(), hashes))).toEqual([]);
+  });
+
+  it("keeps two different long thoughts of the same length", () => {
+    const hashes = new Set<string>();
+    // Same length, and identical except at positions a sampled hash skipped.
+    const first = "a".repeat(1000);
+    const second = "a".repeat(999) + "b";
+    expect(shownText(deduplicateThinkingText(thought(first), createTestBuffer(), hashes))).toEqual([first]);
+    expect(shownText(deduplicateThinkingText(thought(second), createTestBuffer(), hashes))).toEqual([second]);
   });
 
 

@@ -4019,20 +4019,30 @@ function addBoundedThinkingHash(hashes, hash) {
     }
   }
 }
+var MIN_REPLAY_DEDUP_CHARS = 64;
 function hashString(str) {
-  const len = str.length;
-  let hash = (5381 ^ len) >>> 0;
-  if (len <= 512) {
-    for (let i = 0; i < len; i++) {
-      hash = (hash << 5) + hash + str.charCodeAt(i) >>> 0;
-    }
-  } else {
-    const step = Math.ceil(len / 256);
-    for (let i = 0; i < len; i += step) {
-      hash = (hash << 5) + hash + str.charCodeAt(i) >>> 0;
-    }
+  let hash = (5381 ^ str.length) >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) + hash + str.charCodeAt(i) >>> 0;
   }
   return hash.toString(16);
+}
+function resolveThinkingText(slot, fullText, shownBuffer, displayedThinkingHashes) {
+  if (displayedThinkingHashes && fullText.length >= MIN_REPLAY_DEDUP_CHARS) {
+    const hash = hashString(fullText);
+    if (displayedThinkingHashes.has(hash)) {
+      return null;
+    }
+    addBoundedThinkingHash(displayedThinkingHashes, hash);
+  }
+  const shown = shownBuffer.get(slot) ?? "";
+  if (shown.trim() && fullText.startsWith(shown)) {
+    shownBuffer.set(slot, fullText);
+    const delta = fullText.slice(shown.length);
+    return delta ? delta : null;
+  }
+  shownBuffer.set(slot, shown + fullText);
+  return void 0;
 }
 function createThoughtBuffer() {
   const buffer = /* @__PURE__ */ new Map();
@@ -4065,25 +4075,10 @@ function deduplicateThinkingText(response, sentBuffer, displayedThinkingHashes) 
         }
         if (p.thought === true || p.type === "thinking") {
           const fullText = p.text || p.thinking || "";
-          if (displayedThinkingHashes) {
-            const hash = hashString(fullText);
-            if (displayedThinkingHashes.has(hash)) {
-              sentBuffer.set(index, fullText);
-              return null;
-            }
-            addBoundedThinkingHash(displayedThinkingHashes, hash);
-          }
-          const sentText = sentBuffer.get(index) ?? "";
-          if (fullText.startsWith(sentText)) {
-            const delta = fullText.slice(sentText.length);
-            sentBuffer.set(index, fullText);
-            if (delta) {
-              return { ...p, text: delta, thinking: delta };
-            }
-            return null;
-          }
-          sentBuffer.set(index, fullText);
-          return part;
+          const text = resolveThinkingText(index, fullText, sentBuffer, displayedThinkingHashes);
+          if (text === null) return null;
+          if (text === void 0) return part;
+          return { ...p, text, thinking: text };
         }
         return part;
       });
@@ -4101,28 +4096,11 @@ function deduplicateThinkingText(response, sentBuffer, displayedThinkingHashes) 
       const b = block;
       if (b?.type === "thinking") {
         const fullText = b.thinking || b.text || "";
-        if (displayedThinkingHashes) {
-          const hash = hashString(fullText);
-          if (displayedThinkingHashes.has(hash)) {
-            sentBuffer.set(thinkingIndex, fullText);
-            thinkingIndex++;
-            return null;
-          }
-          addBoundedThinkingHash(displayedThinkingHashes, hash);
-        }
-        const sentText = sentBuffer.get(thinkingIndex) ?? "";
-        if (fullText.startsWith(sentText)) {
-          const delta = fullText.slice(sentText.length);
-          sentBuffer.set(thinkingIndex, fullText);
-          thinkingIndex++;
-          if (delta) {
-            return { ...b, thinking: delta, text: delta };
-          }
-          return null;
-        }
-        sentBuffer.set(thinkingIndex, fullText);
+        const text = resolveThinkingText(thinkingIndex, fullText, sentBuffer, displayedThinkingHashes);
         thinkingIndex++;
-        return block;
+        if (text === null) return null;
+        if (text === void 0) return block;
+        return { ...b, thinking: text, text };
       }
       return block;
     });
