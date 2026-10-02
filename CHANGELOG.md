@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Gemini 3.8 Flash defaults to high thinking** - With no variant picked it used `medium` (`gemini-3.8-flash-medium`). It now uses `high`, on both the Antigravity and Gemini CLI routes, for stronger answers in agent work. Answers are slower and use more of the shared Gemini quota; pick the `medium` or `low` variant to go back.
+
 ### Fixed
 
 - **Tool schemas with non-string enums were rejected** - Gemini accepts string enums only, so a tool whose schema held a numeric or boolean `enum` made the request fail, and a union of numeric constants was merged into a string enum, so the model sent `"1"` where the tool expects `1`. Non-string enums are now dropped from the schema and such unions are left as they are. Tools that arrive already wrapped as `functionDeclarations` (how OpenCode 2.x sends them) also have each declaration's schema converted, instead of the group gaining a stray placeholder schema. Ported from upstream.

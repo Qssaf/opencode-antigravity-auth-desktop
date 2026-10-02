@@ -146,7 +146,7 @@ opencode run "Hello" --model=google/antigravity-claude-opus-4-6-thinking --varia
 | `antigravity-gemini-3.1-flash-lite` | minimal, low, medium, high | Gemini 3.1 Flash Lite with thinking |
 | `antigravity-gemini-3.6-flash` | low, medium, high | Gemini 3.6 Flash with thinking (medium default) |
 | `antigravity-gemini-3.7-flash` | low, medium, high | Gemini 3.7 Flash with thinking (medium default) |
-| `antigravity-gemini-3.8-flash` | low, medium, high | **Newest.** Gemini 3.8 Flash with thinking (medium default) |
+| `antigravity-gemini-3.8-flash` | low, medium, high | **Newest.** Gemini 3.8 Flash with thinking (high default) |
 | `antigravity-claude-sonnet-4-6` | — | Claude Sonnet 4.6 |
 | `antigravity-claude-opus-4-6-thinking` | low, max | Claude Opus 4.6 with extended thinking |
 
@@ -167,7 +167,7 @@ The official Antigravity SDK uses `GEMINI_API_KEY` for local Gemini access. This
 | `gemini-3.5-flash-lite` | Gemini 3.5 Flash-Lite (minimal default) |
 | `gemini-3.6-flash` | Gemini 3.6 Flash (medium default) |
 | `gemini-3.7-flash` | Gemini 3.7 Flash (medium default) |
-| `gemini-3.8-flash` | **Newest.** Gemini 3.8 Flash (medium default) |
+| `gemini-3.8-flash` | **Newest.** Gemini 3.8 Flash (high default) |
 | `gemini-3-pro-preview` | Gemini 3 Pro (preview) |
 | `gemini-3.1-pro` | Gemini 3.1 Pro |
 | `gemini-3.1-pro-preview-customtools` | Gemini 3.1 Pro Preview Custom Tools |

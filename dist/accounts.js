@@ -2044,7 +2044,7 @@ function resolveAntigravityGemini38FlashBackendModel(model, thinkingLevel) {
   if (!match) {
     return void 0;
   }
-  const rawLevel = (thinkingLevel ?? match[1] ?? "medium").toLowerCase();
+  const rawLevel = (thinkingLevel ?? match[1] ?? "high").toLowerCase();
   const level = rawLevel === "minimal" ? "low" : rawLevel;
   if (level !== "low" && level !== "medium" && level !== "high") {
     return void 0;
@@ -2071,7 +2071,11 @@ function resolveAntigravityGeminiBackend(model, thinkingLevel) {
 }
 function getDefaultGemini3ThinkingLevel(model) {
   const normalized = model.toLowerCase().replace(QUOTA_PREFIX_REGEX, "");
-  if (/^gemini-3\.[678]-flash(?:-|$)/.test(normalized)) {
+  const flash38 = /^gemini-3\.8-flash(?:-(low|medium|high))?$/.exec(normalized);
+  if (flash38) {
+    return flash38[1] ?? "high";
+  }
+  if (/^gemini-3\.[67]-flash(?:-|$)/.test(normalized)) {
     return "medium";
   }
   if (/^gemini-3\.5-flash-lite(?:-|$)/.test(normalized)) {

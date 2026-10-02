@@ -81,10 +81,10 @@ describe("resolveModelWithTier", () => {
       expect(result.quotaPreference).toBe("antigravity");
     });
 
-    it("gemini-3.8-flash defaults to medium thinking", () => {
+    it("gemini-3.8-flash defaults to high thinking", () => {
       const result = resolveModelWithTier("gemini-3.8-flash");
       expect(result.actualModel).toBe("gemini-3.8-flash");
-      expect(result.thinkingLevel).toBe("medium");
+      expect(result.thinkingLevel).toBe("high");
       expect(result.quotaPreference).toBe("antigravity");
     });
 
@@ -296,7 +296,7 @@ describe("resolveModelWithTier", () => {
     });
 
     it.each([
-      ["antigravity-gemini-3.8-flash", "gemini-3.8-flash-medium", "medium"],
+      ["antigravity-gemini-3.8-flash", "gemini-3.8-flash-high", "high"],
       ["antigravity-gemini-3.8-flash-low", "gemini-3.8-flash-low", "low"],
       ["antigravity-gemini-3.8-flash-medium", "gemini-3.8-flash-medium", "medium"],
       ["antigravity-gemini-3.8-flash-high", "gemini-3.8-flash-high", "high"],
@@ -535,13 +535,13 @@ describe("Issue #103: resolveModelForHeaderStyle", () => {
       expect(result.quotaPreference).toBe("antigravity");
     });
 
-    it("transforms gemini-3.8-flash to the Antigravity medium backend id", () => {
+    it("transforms gemini-3.8-flash to the Antigravity high backend id", () => {
       const result = resolveModelForHeaderStyle(
         "gemini-3.8-flash",
         "antigravity",
       );
-      expect(result.actualModel).toBe("gemini-3.8-flash-medium");
-      expect(result.thinkingLevel).toBe("medium");
+      expect(result.actualModel).toBe("gemini-3.8-flash-high");
+      expect(result.thinkingLevel).toBe("high");
       expect(result.quotaPreference).toBe("antigravity");
     });
   });
@@ -619,7 +619,7 @@ describe("Issue #103: resolveModelForHeaderStyle", () => {
     it.each([
       ["gemini-3.6-flash", "medium"],
       ["gemini-3.7-flash", "medium"],
-      ["gemini-3.8-flash", "medium"],
+      ["gemini-3.8-flash", "high"],
       ["gemini-3.5-flash-lite", "minimal"],
     ])("keeps %s bare for gemini-cli", (model, thinkingLevel) => {
       const result = resolveModelForHeaderStyle(model, "gemini-cli");

@@ -58,7 +58,7 @@ Gemini 3 models use string-based thinking levels. Available levels differ by mod
 | `high` | ✅ | ✅ | ✅ | ✅ | ✅ | Maximum thinking |
 
 > **Note:** Antigravity rejects `"minimal"` on Gemini 3.1 Pro and 3.7/3.8 Flash, so the plugin sends `low` there. Gemini 3.1 Pro has only a low and a high tier.
-> Defaults are model-specific: Gemini 3.1 Pro uses `high`, Gemini 3.6–3.8 Flash use `medium`, Flash-Lite uses `minimal`, and Gemini 3 Flash uses `low`.
+> Defaults are model-specific: Gemini 3.1 Pro uses `high`, Gemini 3.8 Flash uses `high`, Gemini 3.6–3.7 Flash use `medium`, Flash-Lite uses `minimal`, and Gemini 3 Flash uses `low`.
 > Gemini 3 Pro and 3.5 Flash are retired; their ids are served by Gemini 3.1 Pro and 3.7 Flash at the same tier.
 
 ### Gemini 3.1 Pro Example

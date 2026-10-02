@@ -295,7 +295,9 @@ export function resolveAntigravityGemini38FlashBackendModel(
     return undefined;
   }
 
-  const rawLevel = (thinkingLevel ?? match[1] ?? "medium").toLowerCase();
+  // High by default: 3.8 Flash is used for agent work, where medium's shorter
+  // thinking showed up as weaker answers. A variant or tier suffix still wins.
+  const rawLevel = (thinkingLevel ?? match[1] ?? "high").toLowerCase();
   const level = rawLevel === "minimal" ? "low" : rawLevel;
   if (level !== "low" && level !== "medium" && level !== "high") {
     return undefined;
@@ -335,7 +337,11 @@ export function resolveAntigravityGeminiBackend(
 
 export function getDefaultGemini3ThinkingLevel(model: string): string {
   const normalized = model.toLowerCase().replace(QUOTA_PREFIX_REGEX, "");
-  if (/^gemini-3\.[678]-flash(?:-|$)/.test(normalized)) {
+  const flash38 = /^gemini-3\.8-flash(?:-(low|medium|high))?$/.exec(normalized);
+  if (flash38) {
+    return flash38[1] ?? "high";
+  }
+  if (/^gemini-3\.[67]-flash(?:-|$)/.test(normalized)) {
     return "medium";
   }
   if (/^gemini-3\.5-flash-lite(?:-|$)/.test(normalized)) {
