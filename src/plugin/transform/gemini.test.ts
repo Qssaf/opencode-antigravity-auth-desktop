@@ -516,6 +516,23 @@ describe("transform/gemini", () => {
   });
 
   describe("applyGeminiTransforms", () => {
+    it("keeps the name, description and converted schema of every tool shape", () => {
+      const payload: RequestPayload = {
+        contents: [],
+        tools: [
+          { custom: { name: "custom_only", description: "From custom", input_schema: { type: "object", properties: { a: { type: "string" } } } } },
+          { name: "top_level", description: "From top level", input_schema: { type: "object", additionalProperties: false, properties: { n: { type: "integer", exclusiveMinimum: 0 } } } },
+        ],
+      };
+      applyGeminiTransforms(payload, { model: "gemini-3.8-flash" });
+      const declarations = (payload.tools as Array<{ functionDeclarations: Array<Record<string, unknown>> }>)
+        .flatMap((tool) => tool.functionDeclarations);
+      expect(declarations).toEqual([
+        { name: "custom_only", description: "From custom", parameters: { type: "OBJECT", properties: { a: { type: "STRING" } } } },
+        { name: "top_level", description: "From top level", parameters: { type: "OBJECT", properties: { n: { type: "INTEGER", description: "exclusiveMinimum: 0" } } } },
+      ]);
+    });
+
     it("applies Gemini 3 thinking config with thinkingLevel", () => {
       const payload: RequestPayload = { contents: [] };
       applyGeminiTransforms(payload, {
@@ -1197,6 +1214,18 @@ describe("transform/gemini", () => {
       };
       const once = toGeminiSchema(schema);
       expect(toGeminiSchema(structuredClone(once))).toEqual(once);
+    });
+
+    it("follows a $ref whose definition is itself a $ref", () => {
+      const schema = {
+        type: "object",
+        properties: { level: { $ref: "#/$defs/Level" } },
+        $defs: { Level: { $ref: "#/$defs/Tier" }, Tier: { type: "string", enum: ["low", "high"] } },
+      };
+      expect(toGeminiSchema(schema)).toEqual({
+        type: "OBJECT",
+        properties: { level: { type: "STRING", enum: ["low", "high"] } },
+      });
     });
 
     it("stops at recursive and unresolvable $refs with a hint", () => {
