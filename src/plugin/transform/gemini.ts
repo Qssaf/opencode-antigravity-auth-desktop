@@ -386,8 +386,12 @@ function convertSchema(inputSchema: SchemaRecord): unknown {
     } else if (key === "items" && isSchemaRecord(value)) {
       result.items = convertSchema(value);
     } else if ((key === "anyOf" || key === "oneOf") && Array.isArray(value)) {
-      // Gemini has no oneOf; anyOf is the closest it accepts.
-      result.anyOf = value.map((item) => (isSchemaRecord(item) ? convertSchema(item) : item));
+      // Gemini has no oneOf; anyOf is the closest it accepts. It has no null
+      // type either, so null options become a hint (two-option unions were
+      // already flattened by nullableUnionSchema).
+      const options = value.filter((item) => !isNullSchema(item));
+      if (options.length < value.length) hints.push("nullable");
+      result.anyOf = options.map((item) => (isSchemaRecord(item) ? convertSchema(item) : item));
     } else if (key === "enum" && Array.isArray(value)) {
       // Gemini accepts string enums only; others are dropped (see pieliesdie 068919f).
       if (value.every((item) => typeof item === "string")) result.enum = value;

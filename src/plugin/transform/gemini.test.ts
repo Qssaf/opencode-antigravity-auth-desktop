@@ -1175,6 +1175,14 @@ describe("transform/gemini", () => {
       });
     });
 
+    it("drops null options from wider unions, noting them as nullable", () => {
+      const schema = { anyOf: [{ type: "string" }, { type: "number" }, { type: "null" }] };
+      expect(toGeminiSchema(schema)).toEqual({
+        anyOf: [{ type: "STRING" }, { type: "NUMBER" }],
+        description: "nullable",
+      });
+    });
+
     it("gives the same result when converting an already converted schema", () => {
       // The tool path converts twice (normalizeGeminiTools, then the wrap step).
       const schema = {

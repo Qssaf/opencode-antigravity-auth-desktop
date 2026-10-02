@@ -6560,7 +6560,9 @@ function convertSchema(inputSchema) {
     } else if (key === "items" && isSchemaRecord(value)) {
       result.items = convertSchema(value);
     } else if ((key === "anyOf" || key === "oneOf") && Array.isArray(value)) {
-      result.anyOf = value.map((item) => isSchemaRecord(item) ? convertSchema(item) : item);
+      const options = value.filter((item) => !isNullSchema(item));
+      if (options.length < value.length) hints.push("nullable");
+      result.anyOf = options.map((item) => isSchemaRecord(item) ? convertSchema(item) : item);
     } else if (key === "enum" && Array.isArray(value)) {
       if (value.every((item) => typeof item === "string")) result.enum = value;
     } else if (key === "const") {
