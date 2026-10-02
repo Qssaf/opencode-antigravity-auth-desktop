@@ -8191,6 +8191,19 @@ function requestInfoUrl(input2) {
   if (typeof input2 === "string") return input2;
   return input2.url || input2.toString();
 }
+var HOST_TRACE_HEADERS = ["b3", "traceparent", "tracestate", "baggage", "x-session-id", "x-session-affinity"];
+function stripHostClientHeaders(headers) {
+  const names = [];
+  headers.forEach((_value, name) => {
+    names.push(name);
+  });
+  for (const name of names) {
+    const lower = name.toLowerCase();
+    if (lower.startsWith("x-opencode-") || lower.startsWith("x-stainless-") || HOST_TRACE_HEADERS.includes(lower)) {
+      headers.delete(name);
+    }
+  }
+}
 function prepareAntigravityRequest(input2, init, accessToken, projectId, endpointOverride, headerStyle = "antigravity", forceThinkingRecovery = false, options) {
   if (typeof input2 !== "string" && init?.body === void 0 && input2.body) {
     const requestInput2 = input2;
@@ -8242,6 +8255,7 @@ function prepareAntigravityRequest(input2, init, accessToken, projectId, endpoin
   headers.set("Authorization", `Bearer ${accessToken}`);
   headers.delete("x-api-key");
   headers.delete("x-goog-api-key");
+  stripHostClientHeaders(headers);
   headers.delete("x-goog-user-project");
   const match = requestUrl.match(/\/models\/([^:]+):(\w+)/);
   if (!match) {
@@ -14925,9 +14939,11 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                         config.quota_refresh_interval_minutes
                       );
                     }
-                    logAntigravityDebugResponse(debugContext, response, {
-                      note: response.ok ? "Success" : `Error ${response.status}`
-                    });
+                    if (!response.ok) {
+                      logAntigravityDebugResponse(debugContext, response, {
+                        note: `Error ${response.status}`
+                      });
+                    }
                     if (response.ok && !prepared.streaming) {
                       await logResponseBody(debugContext, response, response.status);
                     }

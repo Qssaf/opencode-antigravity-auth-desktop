@@ -3316,9 +3316,13 @@ export const createAntigravityRuntime = (providerId: string) => async (
                     config.quota_refresh_interval_minutes,
                   );
                 }
-                logAntigravityDebugResponse(debugContext, response, {
-                  note: response.ok ? "Success" : `Error ${response.status}`,
-                });
+                // A successful response is logged by transformAntigravityResponse;
+                // an error can be handled here without ever reaching it.
+                if (!response.ok) {
+                  logAntigravityDebugResponse(debugContext, response, {
+                    note: `Error ${response.status}`,
+                  });
+                }
                 if (response.ok && !prepared.streaming) {
                   await logResponseBody(debugContext, response, response.status);
                 }

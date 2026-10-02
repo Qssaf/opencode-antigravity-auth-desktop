@@ -1143,6 +1143,29 @@ interface PreparedAntigravityRequest {
   thinkingRecoveryMessage?: string;
 }
 
+/** Tracing headers the host attaches to every outgoing request. */
+const HOST_TRACE_HEADERS = ["b3", "traceparent", "tracestate", "baggage", "x-session-id", "x-session-affinity"];
+
+/**
+ * Removes headers the host app adds for its own bookkeeping. OpenCode 2.x
+ * sends `x-opencode-client`, `x-opencode-project`, `x-opencode-session`,
+ * session-affinity ids and trace context with every model request. Google
+ * needs none of them, and the real Antigravity client sends none of them, so
+ * forwarding them only labels the traffic as coming from another client.
+ */
+export function stripHostClientHeaders(headers: Headers): void {
+  const names: string[] = [];
+  headers.forEach((_value, name) => {
+    names.push(name);
+  });
+  for (const name of names) {
+    const lower = name.toLowerCase();
+    if (lower.startsWith("x-opencode-") || lower.startsWith("x-stainless-") || HOST_TRACE_HEADERS.includes(lower)) {
+      headers.delete(name);
+    }
+  }
+}
+
 export function prepareAntigravityRequest(
   input: string,
   init: RequestInit | undefined,
@@ -1247,6 +1270,7 @@ export function prepareAntigravityRequest(
   headers.set("Authorization", `Bearer ${accessToken}`);
   headers.delete("x-api-key");
   headers.delete("x-goog-api-key");
+  stripHostClientHeaders(headers);
   // Strip x-goog-user-project header to prevent 403 auth/license conflicts.
   // This header is added by OpenCode/AI SDK and can force project-level checks
   // that are not required for Antigravity/Gemini CLI OAuth requests.

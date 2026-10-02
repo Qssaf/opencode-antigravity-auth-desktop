@@ -717,6 +717,40 @@ it("removes API key headers", () => {
       expect(headers.get("x-goog-user-project")).toBeNull();
     });
 
+    // Exactly what OpenCode 2.0.22 (desktop) attached to a real request.
+    it.each(["antigravity", "gemini-cli"] as const)("does not forward OpenCode's own headers to Google (%s)", (style) => {
+      const result = prepareAntigravityRequest(
+        "https://generativelanguage.googleapis.com/v1beta/models/antigravity-gemini-3.8-flash:streamGenerateContent?alt=sse",
+        {
+          method: "POST",
+          body: JSON.stringify({ contents: [] }),
+          headers: {
+            "content-type": "application/json",
+            accept: "text/event-stream",
+            b3: "43f6cd3d3a4272ffd4873bcf18f0cfa8-129addc0ec08ca5a-1-2dd8cf7e4f0dd95f",
+            traceparent: "00-43f6cd3d3a4272ffd4873bcf18f0cfa8-129addc0ec08ca5a-01",
+            "x-opencode-client": "desktop",
+            "x-opencode-project": "e22c0befcd3aab577c593974d56decf884468691",
+            "x-opencode-session": "ses_f01820248ffdUe631RvlmlGfOX",
+            "x-opencode-session-id": "ses_f01820248ffdUe631RvlmlGfOX",
+            "x-session-affinity": "ses_f01820248ffdUe631RvlmlGfOX",
+            "x-session-id": "ses_f01820248ffdUe631RvlmlGfOX",
+          },
+        },
+        mockAccessToken,
+        mockProjectId,
+        undefined,
+        style,
+      );
+      const headers = result.init.headers as Headers;
+      const names: string[] = [];
+      headers.forEach((_value, name) => names.push(name));
+      expect(names.filter((name) => /opencode|session|^b3$|traceparent/.test(name))).toEqual([]);
+      expect(headers.get("content-type")).toBe("application/json");
+      expect(headers.get("accept")).toBe("text/event-stream");
+      expect(headers.get("authorization")).toBe(`Bearer ${mockAccessToken}`);
+    });
+
     it("removes x-goog-user-project header for gemini-cli headerStyle", () => {
       const result = prepareAntigravityRequest(
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
