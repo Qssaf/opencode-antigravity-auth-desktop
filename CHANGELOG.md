@@ -10,6 +10,8 @@
 
 ### Fixed
 
+- **Picking a thinking variant hid the thinking** - An OpenCode 2.x variant (`low`, `medium`, `high`) sends only the thinking level or budget, with no `includeThoughts`. The plugin read the missing flag as "hide thoughts", so with a variant picked the model still thought but the thinking never appeared, on Gemini and Claude alike. Thoughts are now shown unless the request turns them off explicitly. Session titles still hide them.
+
 - **OpenCode's own headers were sent to Google** - Every model request carried the headers OpenCode 2.x adds for itself (`x-opencode-client: desktop`, `x-opencode-project`, `x-opencode-session`, session-affinity ids, `b3`/`traceparent` trace context) through to Antigravity. Google needs none of them and the real Antigravity client sends none, so they only marked the traffic as coming from another client. They are now removed before a request leaves the plugin. Seen in a debug log from OpenCode 2.0.22.
 
 - **`antigravity-accounts quota --json` printed a refresh token** - For an account whose project id was looked up during the check, the JSON output included the account entry with its refresh token. It no longer does. If you have shared that output, sign that account in again.

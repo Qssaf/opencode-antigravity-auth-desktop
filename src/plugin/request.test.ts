@@ -1360,6 +1360,29 @@ it("removes API key headers", () => {
         });
       });
 
+      it("shows thoughts when an OpenCode 2.x variant sends only a thinking level", () => {
+        const result = prepareAntigravityRequest(
+          "https://generativelanguage.googleapis.com/v1beta/models/antigravity-gemini-3.8-flash:streamGenerateContent?alt=sse",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              contents: [],
+              generationConfig: { thinkingConfig: { thinkingLevel: "medium" } },
+            }),
+          },
+          mockAccessToken,
+          mockProjectId,
+          undefined,
+          "antigravity"
+        );
+        const wrapped = JSON.parse(result.init.body as string);
+        expect(wrapped.model).toBe("gemini-3.8-flash-medium");
+        expect(wrapped.request.generationConfig.thinkingConfig).toMatchObject({
+          thinkingLevel: "medium",
+          includeThoughts: true,
+        });
+      });
+
       it("maps explicit high thinkingLevel for retired gemini-3.5-flash to gemini-3.7-flash-high", () => {
         const result = prepareAntigravityRequest(
           "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent",
