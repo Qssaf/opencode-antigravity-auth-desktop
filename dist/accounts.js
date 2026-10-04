@@ -15874,6 +15874,10 @@ Re-authenticating ${refreshEmail || "account"}...
       ]
     }
   };
+  const flush = async () => {
+    await activeLoaderAccountManager?.flushSaveToDisk().catch(() => {
+    });
+  };
   const dispose = async () => {
     activeRefreshQueue?.stop();
     activeRefreshQueue = null;
@@ -15888,7 +15892,7 @@ Re-authenticating ${refreshEmail || "account"}...
       });
     }
   };
-  return { hooks, dispose };
+  return { hooks, flush, dispose };
 };
 var createAntigravityPlugin = (providerId) => async (context) => {
   const runtime = await createAntigravityRuntime(providerId)(context);

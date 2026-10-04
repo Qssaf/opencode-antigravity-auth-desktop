@@ -1734,6 +1734,8 @@ function sleep(ms: number, signal?: AbortSignal | null): Promise<void> {
  */
 export interface AntigravityRuntime {
   hooks: PluginResult;
+  /** Writes unsaved account state to disk without releasing anything. */
+  flush(): Promise<void>;
   dispose(): Promise<void>;
 }
 
@@ -4397,6 +4399,10 @@ export const createAntigravityRuntime = (providerId: string) => async (
   },
   };
 
+  const flush = async (): Promise<void> => {
+    await activeLoaderAccountManager?.flushSaveToDisk().catch(() => {});
+  };
+
   const dispose = async (): Promise<void> => {
     activeRefreshQueue?.stop();
     activeRefreshQueue = null;
@@ -4411,7 +4417,7 @@ export const createAntigravityRuntime = (providerId: string) => async (
     }
   };
 
-  return { hooks, dispose };
+  return { hooks, flush, dispose };
 };
 
 /**

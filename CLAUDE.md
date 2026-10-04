@@ -78,6 +78,7 @@ Do not spend time rediscovering these:
 - `ctx.ui.dialog` (a looping menu) exists only in the **TUI plugin** context (`@opencode/plugin/tui`), which the desktop app does not run.
 - OAuth: the authorization URL must ask for `prompt=select_account consent`. With `consent` alone Google silently reuses the browser session and a second login returns the account already stored.
 - Token refresh is **single-flight per refresh token** (`src/plugin/token.ts`). Concurrent refreshes of one token make Google answer `invalid_grant`, which used to look like revocation. An account is dropped only after `INVALID_GRANT_STRIKES_BEFORE_REMOVAL` confirmed failures.
+- Changing the plugin list (adding or reordering a plugin, replacing a config file) makes OpenCode dispose and re-run `setup` in every location at once. Between the old registrations' disposal and the new ones, the provider has no Antigravity models, and a session step that starts then fails with "Model unavailable". That is why `acquireRuntime` keeps the runtime for `RUNTIME_LINGER_MS` after the last release: building one takes about half a second. Keep `setup` fast on the reuse path, and never await slow work (such as a save that may wait on the file lock) in cleanup.
 - Never let a request fall through to the public Gemini API when no credential is usable: the provider is registered with an empty `apiKey`, so Google answers "API key not valid" and blames a key the user never configured. Return a synthetic error instead.
 
 ## Testing notes

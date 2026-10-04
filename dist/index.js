@@ -15869,6 +15869,10 @@ Re-authenticating ${refreshEmail || "account"}...
       ]
     }
   };
+  const flush = async () => {
+    await activeLoaderAccountManager?.flushSaveToDisk().catch(() => {
+    });
+  };
   const dispose = async () => {
     activeRefreshQueue?.stop();
     activeRefreshQueue = null;
@@ -15883,7 +15887,7 @@ Re-authenticating ${refreshEmail || "account"}...
       });
     }
   };
-  return { hooks, dispose };
+  return { hooks, flush, dispose };
 };
 var createAntigravityPlugin = (providerId) => async (context) => {
   const runtime = await createAntigravityRuntime(providerId)(context);
@@ -17407,6 +17411,10 @@ var V2Runtime = class _V2Runtime {
       }
     });
   }
+  /** Saves unsaved account state, keeping the runtime usable. */
+  flush() {
+    return this.legacy.flush();
+  }
   async dispose() {
     if (this.disposed) return;
     this.disposed = true;
@@ -17422,12 +17430,17 @@ var V2Runtime = class _V2Runtime {
     await this.legacy.dispose();
   }
 };
+var RUNTIME_LINGER_MS = 1e4;
 var shared;
 var disposing;
 async function acquireRuntime(ctx) {
   await disposing;
   const entry = shared ??= { runtime: V2Runtime.create(ctx), refs: 0 };
   entry.refs += 1;
+  if (entry.linger) {
+    clearTimeout(entry.linger);
+    entry.linger = void 0;
+  }
   let runtime;
   try {
     runtime = await entry.runtime;
@@ -17445,14 +17458,18 @@ async function acquireRuntime(ctx) {
       released = true;
       runtime.detach(ctx);
       entry.refs -= 1;
-      if (entry.refs === 0 && shared === entry) {
+      if (entry.refs !== 0 || shared !== entry) return;
+      void runtime.flush();
+      entry.linger = setTimeout(() => {
+        entry.linger = void 0;
+        if (entry.refs !== 0 || shared !== entry) return;
         shared = void 0;
         const shutdown = runtime.dispose().finally(() => {
           if (disposing === shutdown) disposing = void 0;
         });
         disposing = shutdown;
-        await shutdown;
-      }
+      }, RUNTIME_LINGER_MS);
+      entry.linger.unref?.();
     }
   };
 }

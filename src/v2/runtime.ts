@@ -466,6 +466,11 @@ export class V2Runtime {
     });
   }
 
+  /** Saves unsaved account state, keeping the runtime usable. */
+  flush(): Promise<void> {
+    return this.legacy.flush();
+  }
+
   async dispose(): Promise<void> {
     if (this.disposed) return;
     this.disposed = true;
@@ -483,12 +488,27 @@ export class V2Runtime {
 
 // -- shared instance ---------------------------------------------------------
 
-let shared: { runtime: Promise<V2Runtime>; refs: number } | undefined;
+/**
+ * How long the runtime outlives its last location.
+ *
+ * OpenCode unloads and reloads every plugin when the plugin list changes (one
+ * added or reordered, a config file replaced), in every open location at once,
+ * so the count of attached locations briefly reaches zero. Building a runtime
+ * takes about half a second, and until the new one registers, the Antigravity
+ * models are missing from OpenCode's model list: a session step that starts
+ * then fails with "Model unavailable". Keeping the old runtime for a moment
+ * lets the reload pick it up instead.
+ */
+export const RUNTIME_LINGER_MS = 10_000;
+
+let shared: { runtime: Promise<V2Runtime>; refs: number; linger?: ReturnType<typeof setTimeout> } | undefined;
 let disposing: Promise<void> | undefined;
 
 /**
- * Attaches a location to the shared runtime, creating it if this is the first.
- * `release` detaches the location and disposes the runtime with the last one.
+ * Attaches a location to the shared runtime, creating it if none is alive.
+ * `release` detaches the location; the last one saves the account pool and
+ * disposes the runtime after `RUNTIME_LINGER_MS` unless a location attaches
+ * again first.
  */
 export async function acquireRuntime(ctx: Context): Promise<RuntimeHandle> {
   // A previous generation may still be shutting down.
@@ -496,6 +516,10 @@ export async function acquireRuntime(ctx: Context): Promise<RuntimeHandle> {
 
   const entry = (shared ??= { runtime: V2Runtime.create(ctx), refs: 0 });
   entry.refs += 1;
+  if (entry.linger) {
+    clearTimeout(entry.linger);
+    entry.linger = undefined;
+  }
 
   let runtime: V2Runtime;
   try {
@@ -515,14 +539,22 @@ export async function acquireRuntime(ctx: Context): Promise<RuntimeHandle> {
       released = true;
       runtime.detach(ctx);
       entry.refs -= 1;
-      if (entry.refs === 0 && shared === entry) {
+      if (entry.refs !== 0 || shared !== entry) return;
+      // The process may exit before the runtime is disposed, so the account
+      // pool is saved now. Not awaited: a save waiting on the file lock would
+      // hold up the reload this lingering is meant to keep short.
+      void runtime.flush();
+      entry.linger = setTimeout(() => {
+        entry.linger = undefined;
+        if (entry.refs !== 0 || shared !== entry) return;
         shared = undefined;
         const shutdown = runtime.dispose().finally(() => {
           if (disposing === shutdown) disposing = undefined;
         });
         disposing = shutdown;
-        await shutdown;
-      }
+      }, RUNTIME_LINGER_MS);
+      // A lingering runtime must not keep the process alive.
+      entry.linger.unref?.();
     },
   };
 }
