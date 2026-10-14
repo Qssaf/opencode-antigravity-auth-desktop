@@ -19,24 +19,17 @@ describe("OPENCODE_MODEL_DEFINITIONS", () => {
     const modelNames = Object.keys(OPENCODE_MODEL_DEFINITIONS).sort();
 
     expect(modelNames).toEqual([
-      "antigravity-claude-opus-4-6-thinking",
-      "antigravity-claude-sonnet-4-6",
       "antigravity-gemini-3-flash",
       "antigravity-gemini-3.1-flash-lite",
       "antigravity-gemini-3.1-pro",
-      "antigravity-gemini-3.6-flash",
-      "antigravity-gemini-3.7-flash",
       "antigravity-gemini-3.8-flash",
+      "antigravity-gemini-4-argon",
       "gemini-2.5-flash",
       "gemini-2.5-pro",
       "gemini-3-flash-preview",
       "gemini-3-pro-preview",
       "gemini-3.1-pro",
       "gemini-3.1-pro-preview-customtools",
-      "gemini-3.5-flash",
-      "gemini-3.5-flash-lite",
-      "gemini-3.6-flash",
-      "gemini-3.7-flash",
       "gemini-3.8-flash",
     ]);
   });
@@ -61,26 +54,6 @@ describe("OPENCODE_MODEL_DEFINITIONS", () => {
       high: { thinkingLevel: "high" },
     });
 
-    expect(getModel("antigravity-gemini-3.6-flash").variants).toEqual({
-      low: { thinkingLevel: "low" },
-      medium: { thinkingLevel: "medium" },
-      high: { thinkingLevel: "high" },
-    });
-
-    expect(getModel("antigravity-gemini-3.7-flash").variants).toEqual({
-      low: { thinkingLevel: "low" },
-      medium: { thinkingLevel: "medium" },
-      high: { thinkingLevel: "high" },
-    });
-    expect(getModel("antigravity-gemini-3.7-flash").temperature).toBe(false);
-    expect(getModel("gemini-3.7-flash").temperature).toBe(false);
-    expect(getModel("gemini-3.7-flash").variants).toEqual({
-      minimal: { thinkingLevel: "minimal" },
-      low: { thinkingLevel: "low" },
-      medium: { thinkingLevel: "medium" },
-      high: { thinkingLevel: "high" },
-    });
-
     expect(getModel("antigravity-gemini-3.8-flash").variants).toEqual({
       low: { thinkingLevel: "low" },
       medium: { thinkingLevel: "medium" },
@@ -94,19 +67,17 @@ describe("OPENCODE_MODEL_DEFINITIONS", () => {
       medium: { thinkingLevel: "medium" },
       high: { thinkingLevel: "high" },
     });
-    expect(getModel("gemini-3.5-flash-lite").variants).toEqual({
-      minimal: { thinkingLevel: "minimal" },
+  });
+
+  it("offers Gemini 4 Argon with low, medium and high thinking and no temperature", () => {
+    const argon = getModel("antigravity-gemini-4-argon");
+    expect(argon.variants).toEqual({
       low: { thinkingLevel: "low" },
       medium: { thinkingLevel: "medium" },
       high: { thinkingLevel: "high" },
     });
-  });
-
-  it("defines thinking budget variants for Claude thinking models", () => {
-    expect(getModel("antigravity-claude-opus-4-6-thinking").variants).toEqual({
-      low: { thinkingConfig: { thinkingBudget: 8192 } },
-      max: { thinkingConfig: { thinkingBudget: 32768 } },
-    });
+    expect(argon.temperature).toBe(false);
+    expect(argon.name).toContain("Ultra");
   });
 });
 
@@ -192,16 +163,9 @@ describe("dynamic model discovery helpers", () => {
       medium: { thinkingLevel: "medium" },
       high: { thinkingLevel: "high" },
     });
-    expect(models["antigravity-gemini-3.6-flash"]?.variants).toEqual({
-      low: { thinkingLevel: "low" },
-      medium: { thinkingLevel: "medium" },
-      high: { thinkingLevel: "high" },
-    });
-    expect(models["antigravity-gemini-3.7-flash"]?.variants).toEqual({
-      low: { thinkingLevel: "low" },
-      medium: { thinkingLevel: "medium" },
-      high: { thinkingLevel: "high" },
-    });
+    // Dropped models are left out even when the registry still lists them.
+    expect(models["antigravity-gemini-3.6-flash"]).toBeUndefined();
+    expect(models["antigravity-gemini-3.7-flash"]).toBeUndefined();
     expect(models["antigravity-gemini-3.8-flash"]?.variants).toEqual({
       low: { thinkingLevel: "low" },
       medium: { thinkingLevel: "medium" },

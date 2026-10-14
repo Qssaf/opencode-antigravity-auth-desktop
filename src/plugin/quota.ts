@@ -9,7 +9,7 @@ import { accessTokenExpired, formatRefreshParts, parseRefreshParts } from "./aut
 import { logQuotaFetch, logQuotaStatus } from "./debug";
 import { ensureProjectContext } from "./project";
 import { refreshAccessToken } from "./token";
-import { getModelFamily } from "./transform/model-resolver";
+import { getModelFamily, isGemini3OrLaterModel } from "./transform/model-resolver";
 import { recordAntigravityAvailableModels } from "./model-catalog";
 import type { PluginClient, OAuthAuthDetails } from "./types";
 import type { AccountMetadataV3 } from "./storage";
@@ -164,7 +164,7 @@ function classifyQuotaGroup(modelName: string, displayName?: string): QuotaGroup
   if (combined.includes("claude")) {
     return "claude";
   }
-  const isGemini3 = combined.includes("gemini-3") || combined.includes("gemini 3");
+  const isGemini3 = isGemini3OrLaterModel(combined) || /gemini (?:[3-9]|[1-9]\d+)\b/.test(combined);
   if (!isGemini3) {
     return null;
   }
@@ -332,10 +332,10 @@ function aggregateGeminiCliQuota(response: RetrieveUserQuotaResponse): GeminiCli
     }
     
     // Filter out models we don't care about for Gemini CLI quotas
-    // Only show gemini-3* and gemini-2.5-pro models (the premium ones)
+    // Only show Gemini 3+ and gemini-2.5-pro models (the premium ones)
     const modelId = bucket.modelId;
     const isRelevantModel = 
-      modelId.startsWith("gemini-3") || 
+      isGemini3OrLaterModel(modelId) || 
       modelId === "gemini-2.5-pro";
     
     if (!isRelevantModel) {

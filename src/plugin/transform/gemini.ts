@@ -7,6 +7,7 @@
  * - Schema transformation (JSON Schema -> Gemini Schema format)
  */
 
+import { isGemini3OrLaterModel } from "./model-resolver";
 import type {
   RequestPayload,
   ThinkingConfig,
@@ -462,14 +463,14 @@ export function isGeminiModel(model: string): boolean {
 }
 
 /**
- * Check if a model is Gemini 3 (uses thinkingLevel string).
+ * Check if a model is Gemini 3 or later (uses thinkingLevel string).
  */
 export function isGemini3Model(model: string): boolean {
-  return model.toLowerCase().includes("gemini-3");
+  return isGemini3OrLaterModel(model);
 }
 
 const STRICT_SAMPLING_MODEL_REGEX =
-  /^gemini-(?:3\.[678]-flash(?:-(?:low|medium|high|tiered))?|3\.5-flash-lite)$/i;
+  /^gemini-(?:3\.8-flash(?:-(?:low|medium|high|tiered))?|4-argon(?:-(?:low|medium|high))?)$/i;
 const DEPRECATED_SAMPLING_FIELDS = [
   "temperature",
   "topP",
@@ -481,8 +482,10 @@ const DEPRECATED_SAMPLING_FIELDS = [
 ] as const;
 
 /**
- * Gemini 3.6/3.7/3.8 Flash and 3.5 Flash-Lite ignore deprecated sampling controls and
- * reject candidate count. Remove them without affecting older Gemini models.
+ * Gemini 3.8 Flash ignores deprecated sampling controls and rejects candidate
+ * count, as 3.6/3.7 Flash and 3.5 Flash-Lite (since dropped) did. Gemini 4 Argon
+ * is assumed to follow them. Remove the controls without affecting older Gemini
+ * models.
  */
 export function sanitizeGeminiGenerationConfigForModel(
   payload: RequestPayload,

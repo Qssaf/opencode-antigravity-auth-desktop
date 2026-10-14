@@ -8,7 +8,7 @@
 
 ## Overview
 
-Antigravity is Google's **Unified Gateway API** for accessing multiple AI models (Claude, Gemini, GPT-OSS) through a single, consistent Gemini-style interface. It is NOT the same as Vertex AI's direct model APIs.
+Antigravity is Google's **Unified Gateway API** for accessing multiple AI models (Gemini; formerly also Claude and GPT-OSS) through a single, consistent Gemini-style interface. It is NOT the same as Vertex AI's direct model APIs.
 
 ### Key Characteristics
 
@@ -78,12 +78,15 @@ Accept: text/event-stream
 
 | Model Name | Model ID | Type | Status |
 |------------|----------|------|--------|
-| Claude Sonnet 4.6 | `claude-sonnet-4-6` | Anthropic | ✅ Verified |
-| Claude Opus 4.6 Thinking | `claude-opus-4-6-thinking` | Anthropic | ✅ Verified |
+| Gemini 4 Argon Low / Medium / High | `gemini-4-argon-low` / `-medium` / `-high` | Google | ⚠️ Google AI Ultra only; ids from a community analysis of Antigravity 2.23.0, not yet verified live |
+| Gemini 3.8 Flash Low / Medium / High | `gemini-3.8-flash-low` / `-medium` / `-high` | Google | ✅ Verified |
 | Gemini 3.1 Pro High | `gemini-pro-agent` | Google | ✅ Verified (`gemini-3.1-pro-high` is deprecated and returns 400) |
 | Gemini 3.1 Pro Low | `gemini-3.1-pro-low` | Google | ✅ Verified |
 | Gemini 3 Pro High / Low | `gemini-3-pro-high` / `gemini-3-pro-low` | Google | ❌ Retired (answers "no longer available") |
-| GPT-OSS 120B Medium | `gpt-oss-120b-medium` | Other | ✅ Verified |
+| Gemini 3.5 / 3.6 / 3.7 Flash | `gemini-3.x-flash-*` | Google | ❌ Dropped |
+| Claude Sonnet 4.6 | `claude-sonnet-4-6` | Anthropic | ❌ Dropped |
+| Claude Opus 4.6 Thinking | `claude-opus-4-6-thinking` | Anthropic | ❌ Dropped |
+| GPT-OSS 120B Medium | `gpt-oss-120b-medium` | Other | ❌ Dropped |
 
 ---
 

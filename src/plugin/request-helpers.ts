@@ -9,6 +9,7 @@ import {
 } from "../constants";
 import { processImageData } from "./image-saver";
 import type { GoogleSearchConfig } from "./transform/types";
+import { isGemini3OrLaterModel } from "./transform/model-resolver";
 
 const log = createLogger("request-helpers");
 
@@ -800,12 +801,12 @@ export const DEFAULT_THINKING_BUDGET = 16000;
 
 /**
  * Checks if a model name indicates thinking/reasoning capability.
- * Models with "thinking", "gemini-3", or "opus" in their name support extended thinking.
+ * Models with "thinking" or "opus" in their name, and Gemini 3 or later, support extended thinking.
  */
 export function isThinkingCapableModel(modelName: string): boolean {
   const lowerModel = modelName.toLowerCase();
   return lowerModel.includes("thinking")
-    || lowerModel.includes("gemini-3")
+    || isGemini3OrLaterModel(lowerModel)
     || lowerModel.includes("opus");
 }
 

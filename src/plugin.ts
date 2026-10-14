@@ -34,8 +34,15 @@ import {
   transformAntigravityResponse,
 } from "./plugin/request";
 import {
+  isGemini4ArgonModel,
   resolveModelWithTier,
 } from "./plugin/transform/model-resolver";
+import {
+  isUltraEntitlementRefusal,
+  isUltraModelRefused,
+  markUltraModelRefused,
+  ultraRequiredMessage,
+} from "./plugin/ultra-gate";
 import {
   isEmptyResponseBody,
   createSyntheticErrorResponse,
@@ -1431,6 +1438,19 @@ export function createNoUsableCredentialsResponse(urlString: string, detail: str
   return createSyntheticErrorResponse(errorMessage, requestedModel, family);
 }
 
+/**
+ * Answers a request for an Ultra-only model (Gemini 4 Argon) once Google has
+ * refused it for every signed-in account. See ultra-gate.ts.
+ */
+export function createUltraRequiredResponse(urlString: string, accountCount: number): Response {
+  const requestedModel = extractRequestedGeminiModel(urlString) ?? extractModelFromUrl(urlString) ?? undefined;
+  return createSyntheticErrorResponse(
+    ultraRequiredMessage("Gemini 4 Argon", accountCount),
+    requestedModel,
+    "gemini",
+  );
+}
+
 function createSoftQuotaBlockedResponse(input: {
   accountCount: number;
   family: ModelFamily;
@@ -2206,6 +2226,19 @@ export const createAntigravityRuntime = (providerId: string) => async (
           // Empty answers retried within THIS request. Per request, so concurrent
           // requests (and ones aborted mid-retry) do not spend each other's budget.
           let emptyResponseAttempts = 0;
+          // Gemini 4 Argon is Ultra-only: accounts Google refused it for are
+          // skipped, and when none is left the request gets the Ultra message.
+          const isUltraOnlyRequest = isGemini4ArgonModel(model ?? "");
+          const allAccountsRefusedUltra = (): boolean => {
+            const enabled = accountManager.getEnabledAccounts();
+            return enabled.length > 0 && enabled.every((acc) => isUltraModelRefused(acc.parts.refreshToken));
+          };
+          const respondUltraRequired = async (): Promise<Response> => {
+            // A configured API key may still serve the model through the public API.
+            const fallback = await tryAgySdkFallbackForRequest(input, init, config, agySdkCredentials, urlString);
+            if (fallback?.ok) return fallback;
+            return createUltraRequiredResponse(urlString, accountManager.getAccountCount());
+          };
           // Absolute safety net: bound total loop iterations so the request can
           // never spin the event loop, regardless of account/quota state.
           let loopGuard = 0;
@@ -2308,6 +2341,15 @@ export const createAntigravityRuntime = (providerId: string) => async (
               const response = await tryAgySdkFallbackForRequest(input, init, config, agySdkCredentials, urlString);
               if (response) return response;
               throw new Error("No Antigravity accounts available. Run `opencode auth login`.");
+            }
+
+            if (isUltraOnlyRequest) {
+              if (allAccountsRefusedUltra()) {
+                return respondUltraRequired();
+              }
+              for (const acc of accountManager.getEnabledAccounts()) {
+                if (isUltraModelRefused(acc.parts.refreshToken)) triedSwitchIndices.add(acc.index);
+              }
             }
 
             const softQuotaCacheTtlMs = computeSoftQuotaCacheTtlMs(
@@ -3242,6 +3284,20 @@ export const createAntigravityRuntime = (providerId: string) => async (
                   continue;
                 }
 
+                if (isUltraOnlyRequest && !response.ok) {
+                  const refusalBody = response.status === 400
+                    ? await response.clone().text().catch(() => "")
+                    : "";
+                  if (isUltraEntitlementRefusal(response.status, refusalBody)) {
+                    markUltraModelRefused(account.parts.refreshToken);
+                    pushDebug(`ultra-refused: account ${account.index} status=${response.status}`);
+                    await logResponseBody(debugContext, response, response.status);
+                    lastFailure = createFailureContext(response);
+                    shouldSwitchAccount = true;
+                    break;
+                  }
+                }
+
                 // Non-retryable model-availability failure from the Antigravity backend.
                 // A 404 NOT_FOUND means this model isn't served for this account here
                 // (e.g. a Gemini id the Antigravity Code Assist backend doesn't expose).
@@ -3482,6 +3538,9 @@ export const createAntigravityRuntime = (providerId: string) => async (
               // left). Without this, hybrid selection can re-pick the same
               // account and the loop spins forever (no fetch, 100% CPU).
               triedSwitchIndices.add(account.index);
+              if (isUltraOnlyRequest && allAccountsRefusedUltra()) {
+                return respondUltraRequired();
+              }
               // Avoid tight retry loops when there's only one account.
               if (accountCount <= 1) {
                 if (lastFailure) {

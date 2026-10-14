@@ -31,7 +31,7 @@ export function applyRequestKind(url: string, init: RequestInit): RequestInit {
   const untagged: RequestInit = { ...init, headers };
 
   // Claude takes a thinking budget, not a level; its titles are left alone.
-  if (kind !== "title" || !/\/models\/[^/:]*gemini-3/i.test(url) || typeof init.body !== "string") {
+  if (kind !== "title" || !/\/models\/[^/:]*gemini-(?:[3-9]|[1-9]\d+)(?=[.-]|[:/]|$)/i.test(url) || typeof init.body !== "string") {
     return untagged;
   }
 

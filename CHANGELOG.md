@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Gemini 4 Argon** (`antigravity-gemini-4-argon`, variants `low`, `medium`, `high`, `high` by default) - Google's new model, served on Antigravity only to Google AI Ultra subscribers. It goes out as `gemini-4-argon-<level>`, the tier-specific backend ids a community analysis of Antigravity 2.23.0 found; they have not been checked against a live Ultra account yet. The plugin cannot read an account's subscription, so it learns it from Google: an account Google refuses Argon for (404, 403, or a 400 about the subscription) is skipped for an hour and the next account is tried. When no signed-in account has Ultra, the request is answered with a message saying Argon needs Google AI Ultra, after trying the API-key fallback if one is configured. The context window is set to 256K tokens, Antigravity's reported default for Argon, so OpenCode compacts before the backend refuses a long session.
+
+### Removed
+
+- **Gemini 3.5, 3.6 and 3.7 Flash, Claude Sonnet 4.6, Claude Opus 4.6 and GPT-OSS** - Google dropped them. They are gone from the model list, including when the Antigravity registry still lists them. Requests for the dropped Flash models, with or without a tier suffix, go to Gemini 3.8 Flash at the same tier (minimal becomes low), and Gemini 3.5 Flash-Lite goes to Gemini 3.1 Flash-Lite, on the Antigravity, Gemini CLI and API-key routes alike, so a session still set to one of them keeps working. `gemini-flash-latest` now means Gemini 3.8 Flash and `gemini-flash-lite-latest` Gemini 3.1 Flash-Lite. Claude handling stays in the plugin for any Claude model you configure yourself.
+
 ### Changed
 
 - **Session titles use low thinking on OpenCode 2.x** - OpenCode 2.x writes a session's title with the session's own model and variant, so a Gemini 3 model on high thinking spent a full high-thinking call on a few words, slowing the first reply's title and using shared quota. Title requests to Gemini 3 models now go out at low thinking with thoughts hidden. Claude titles and every other request are unchanged.

@@ -81,6 +81,14 @@ describe("applyRequestKind", () => {
     expect(sent.request.generationConfig.thinkingConfig).toMatchObject({ thinkingLevel: "low", includeThoughts: false });
   });
 
+  it("caps a Gemini 4 Argon title at the low backend tier", async () => {
+    const argonUrl =
+      "https://generativelanguage.googleapis.com/v1beta/models/antigravity-gemini-4-argon:streamGenerateContent?alt=sse";
+    const out = applyRequestKind(argonUrl, titleInit("title", { thinkingConfig: { thinkingLevel: "high", includeThoughts: true } }));
+    const prepared = await prepareAntigravityRequest(argonUrl, out, "token", "project");
+    expect(JSON.parse(prepared.init.body as string).model).toBe("gemini-4-argon-low");
+  });
+
   it("receives the tag through the loopback proxy, and strips it", async () => {
     let received: RequestInit | undefined;
     const route = await registerProxyRoute(async (url, init) => {

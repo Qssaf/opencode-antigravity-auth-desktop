@@ -139,9 +139,9 @@ function buildSignatureSessionKey(
 function shouldCacheThinkingSignatures(model?: string): boolean {
   if (typeof model !== "string") return false;
   const lower = model.toLowerCase();
-  // Both Claude and Gemini 3 models require thought signature caching
+  // Both Claude and Gemini 3+ models require thought signature caching
   // for multi-turn conversations with function calling
-  return lower.includes("claude") || lower.includes("gemini-3");
+  return lower.includes("claude") || isGemini3Model(lower);
 }
 
 /**
@@ -159,7 +159,7 @@ function signatureCacheProjectKey(
   model: string | undefined,
   projectKey: string | undefined,
 ): string | undefined {
-  if (typeof model === "string" && model.toLowerCase().includes("gemini-3")) {
+  if (typeof model === "string" && isGemini3Model(model)) {
     return undefined;
   }
   return projectKey;
@@ -1017,7 +1017,7 @@ function ensureDefaultGemini3ThinkingLevel(
   thinkingLevel?: string,
 ): void {
   if (
-    !effectiveModel.toLowerCase().includes("gemini-3") ||
+    !isGemini3Model(effectiveModel) ||
     isImageGenerationModel(effectiveModel)
   ) {
     return;
@@ -1341,7 +1341,7 @@ export function prepareAntigravityRequest(
           }
         }
 
-        if (effectiveModel.toLowerCase().includes("gemini-3")) {
+        if (isGemini3Model(effectiveModel)) {
           for (const req of requestObjects) {
             const variantConfig = extractVariantThinkingConfig(
               (req as any).providerOptions as
@@ -1472,7 +1472,7 @@ export function prepareAntigravityRequest(
           requestPayload.providerOptions as Record<string, unknown> | undefined,
           rawGenerationConfig,
         );
-        const isGemini3 = effectiveModel.toLowerCase().includes("gemini-3");
+        const isGemini3 = isGemini3Model(effectiveModel);
 
         log.debug(
           `[ThinkingResolution] rawModel=${rawModel} resolvedModel=${effectiveModel} resolvedTier=${tierThinkingLevel ?? "none"} variantLevel=${variantConfig?.thinkingLevel ?? "none"} variantBudget=${variantConfig?.thinkingBudget ?? "none"} providerOptions.google=${JSON.stringify((requestPayload.providerOptions as any)?.google ?? null)} generationConfig.thinkingConfig=${JSON.stringify((rawGenerationConfig as any)?.thinkingConfig ?? null)}`,
@@ -2281,7 +2281,7 @@ export function prepareAntigravityRequest(
 
   if (headerStyle === "antigravity") {
     // Use the official Antigravity CLI User-Agent. The backend gates newer
-    // models (e.g. gemini-3.7-flash) on the CLI UA; IDE-style fingerprint
+    // models (e.g. gemini-3.8-flash) on the CLI UA; IDE-style fingerprint
     // UAs like "antigravity/2.0.6 win32/x64" are rejected with 404
     // "Requested entity was not found" on those models.
     headers.set("User-Agent", ANTIGRAVITY_CLI_USER_AGENT);

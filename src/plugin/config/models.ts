@@ -1,5 +1,6 @@
 import type { ProviderModel } from "../types";
 import {
+  isGemini3OrLaterModel,
   remapRetiredAntigravityGeminiModel,
   toAntigravityWireModel,
 } from "../transform/model-resolver";
@@ -90,28 +91,6 @@ export const OPENCODE_MODEL_DEFINITIONS: OpencodeModelDefinitions = {
       high: { thinkingLevel: "high" },
     },
   },
-  "antigravity-gemini-3.6-flash": {
-    name: "Gemini 3.6 Flash (Antigravity)",
-    temperature: false,
-    limit: { context: 1048576, output: 65536 },
-    modalities: DEFAULT_MODALITIES,
-    variants: {
-      low: { thinkingLevel: "low" },
-      medium: { thinkingLevel: "medium" },
-      high: { thinkingLevel: "high" },
-    },
-  },
-  "antigravity-gemini-3.7-flash": {
-    name: "Gemini 3.7 Flash (Antigravity)",
-    temperature: false,
-    limit: { context: 1048576, output: 65536 },
-    modalities: DEFAULT_MODALITIES,
-    variants: {
-      low: { thinkingLevel: "low" },
-      medium: { thinkingLevel: "medium" },
-      high: { thinkingLevel: "high" },
-    },
-  },
   "antigravity-gemini-3.8-flash": {
     name: "Gemini 3.8 Flash (Antigravity)",
     temperature: false,
@@ -123,18 +102,18 @@ export const OPENCODE_MODEL_DEFINITIONS: OpencodeModelDefinitions = {
       high: { thinkingLevel: "high" },
     },
   },
-  "antigravity-claude-sonnet-4-6": {
-    name: "Claude Sonnet 4.6 (Antigravity)",
-    limit: { context: 200000, output: 64000 },
-    modalities: DEFAULT_MODALITIES,
-  },
-  "antigravity-claude-opus-4-6-thinking": {
-    name: "Claude Opus 4.6 Thinking (Antigravity)",
-    limit: { context: 200000, output: 64000 },
+  // Google AI Ultra only. Antigravity serves it as gemini-4-argon-{low,medium,high}
+  // (see resolveAntigravityGemini4ArgonBackendModel). Antigravity's default
+  // context window for it is 256K tokens, smaller than the API's 1M.
+  "antigravity-gemini-4-argon": {
+    name: "Gemini 4 Argon (Antigravity, Ultra)",
+    temperature: false,
+    limit: { context: 262144, output: 65536 },
     modalities: DEFAULT_MODALITIES,
     variants: {
-      low: { thinkingConfig: { thinkingBudget: 8192 } },
-      max: { thinkingConfig: { thinkingBudget: 32768 } },
+      low: { thinkingLevel: "low" },
+      medium: { thinkingLevel: "medium" },
+      high: { thinkingLevel: "high" },
     },
   },
   "gemini-2.5-flash": {
@@ -151,45 +130,6 @@ export const OPENCODE_MODEL_DEFINITIONS: OpencodeModelDefinitions = {
     name: "Gemini 3 Flash Preview (Gemini CLI)",
     limit: { context: 1048576, output: 65536 },
     modalities: DEFAULT_MODALITIES,
-  },
-  "gemini-3.5-flash": {
-    name: "Gemini 3.5 Flash (Gemini CLI)",
-    limit: { context: 1048576, output: 65536 },
-    modalities: DEFAULT_MODALITIES,
-  },
-  "gemini-3.5-flash-lite": {
-    name: "Gemini 3.5 Flash-Lite (Gemini CLI)",
-    temperature: false,
-    limit: { context: 1048576, output: 65536 },
-    modalities: DEFAULT_MODALITIES,
-    variants: {
-      minimal: { thinkingLevel: "minimal" },
-      low: { thinkingLevel: "low" },
-      medium: { thinkingLevel: "medium" },
-      high: { thinkingLevel: "high" },
-    },
-  },
-  "gemini-3.6-flash": {
-    name: "Gemini 3.6 Flash (Gemini CLI)",
-    temperature: false,
-    limit: { context: 1048576, output: 65536 },
-    modalities: DEFAULT_MODALITIES,
-    variants: {
-      medium: { thinkingLevel: "medium" },
-      high: { thinkingLevel: "high" },
-    },
-  },
-  "gemini-3.7-flash": {
-    name: "Gemini 3.7 Flash (Gemini CLI)",
-    temperature: false,
-    limit: { context: 1048576, output: 65536 },
-    modalities: DEFAULT_MODALITIES,
-    variants: {
-      minimal: { thinkingLevel: "minimal" },
-      low: { thinkingLevel: "low" },
-      medium: { thinkingLevel: "medium" },
-      high: { thinkingLevel: "high" },
-    },
   },
   "gemini-3.8-flash": {
     name: "Gemini 3.8 Flash (Gemini CLI)",
@@ -254,7 +194,7 @@ function defaultVariantsForModel(modelId: string): Record<string, ModelVariant> 
       max: { thinkingConfig: { thinkingBudget: 32768 } },
     };
   }
-  if (normalized.startsWith("gemini-3") || normalized.startsWith("gemini-2.5")) {
+  if (isGemini3OrLaterModel(normalized) || normalized.startsWith("gemini-2.5")) {
     if (normalized.includes("pro")) {
       return {
         low: { thinkingLevel: "low" },

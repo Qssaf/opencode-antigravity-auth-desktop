@@ -150,7 +150,7 @@ describe("api-key agy sdk support", () => {
 
   it("preserves Request input method, headers, and body when routing through API-key auth", async () => {
     const original = new Request(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:streamGenerateContent?key=old-url-key",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:streamGenerateContent?key=old-url-key",
       {
         method: "POST",
         headers: {
@@ -185,7 +185,7 @@ describe("api-key agy sdk support", () => {
 
   it("adds default Gemini 3 thinking config without dropping extra body options", async () => {
     const prepared = await prepareAgySdkGeminiRequest(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent",
       {
         method: "POST",
         body: JSON.stringify({
@@ -244,8 +244,9 @@ describe("api-key agy sdk support", () => {
   });
 
   it.each([
-    ["antigravity-gemini-3.6-flash", "gemini-3.6-flash", "medium"],
-    ["gemini-3.5-flash-lite", "gemini-3.5-flash-lite", "minimal"],
+    ["antigravity-gemini-3.6-flash", "gemini-3.8-flash", "high"],
+    ["antigravity-gemini-3.8-flash-medium", "gemini-3.8-flash", "medium"],
+    ["antigravity-gemini-4-argon", "gemini-4-argon", "high"],
   ])("routes %s through the public API as %s with strict sampling controls", async (requested, actual, thinkingLevel) => {
     const prepared = await prepareAgySdkGeminiRequest(
       `https://generativelanguage.googleapis.com/v1beta/models/${requested}:generateContent`,
@@ -278,7 +279,7 @@ describe("api-key agy sdk support", () => {
     });
   });
 
-  it("routes antigravity-gemini-3.7-flash through the public API as gemini-3.7-flash", async () => {
+  it("routes dropped antigravity-gemini-3.7-flash through the public API as gemini-3.8-flash", async () => {
     const prepared = await prepareAgySdkGeminiRequest(
       "https://generativelanguage.googleapis.com/v1beta/models/antigravity-gemini-3.7-flash:generateContent",
       {
@@ -295,13 +296,13 @@ describe("api-key agy sdk support", () => {
     );
 
     expect(String(prepared.request)).toBe(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.7-flash:generateContent",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
     );
     expect(await readPreparedBody(prepared.init.body)).toEqual({
       contents: [],
       generationConfig: {
         thinkingConfig: {
-          thinkingLevel: "medium",
+          thinkingLevel: "high",
           includeThoughts: true,
         },
       },

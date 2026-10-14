@@ -9,7 +9,7 @@ OpenCode's variant system lets you configure the thinking budget dynamically wit
 When you define a model with `variants`, OpenCode shows variant options in the model picker. Selecting a variant passes the `providerOptions` to the plugin, which extracts the thinking configuration.
 
 ```bash
-opencode run "Hello" --model=google/antigravity-claude-opus-4-6-thinking --variant=max
+opencode run "Hello" --model=google/antigravity-gemini-4-argon --variant=medium
 ```
 
 ---
@@ -20,13 +20,14 @@ Define variants in your model configuration:
 
 ```json
 {
-  "antigravity-claude-opus-4-6-thinking": {
-    "name": "Claude Opus 4.6 Thinking",
-    "limit": { "context": 200000, "output": 64000 },
+  "antigravity-gemini-4-argon": {
+    "name": "Gemini 4 Argon (Antigravity, Ultra)",
+    "limit": { "context": 262144, "output": 65536 },
     "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
     "variants": {
-      "low": { "thinkingConfig": { "thinkingBudget": 8192 } },
-      "max": { "thinkingConfig": { "thinkingBudget": 32768 } }
+      "low": { "thinkingLevel": "low" },
+      "medium": { "thinkingLevel": "medium" },
+      "high": { "thinkingLevel": "high" }
     }
   }
 }
@@ -41,25 +42,26 @@ The plugin accepts different variant formats depending on the model family:
 | Model Family | Variant Format | Example |
 |--------------|----------------|---------|
 | **Claude** | `thinkingConfig.thinkingBudget` | `{ "thinkingConfig": { "thinkingBudget": 8192 } }` |
-| **Gemini 3** | `thinkingLevel` | `{ "thinkingLevel": "high" }` |
+| **Gemini 3 and 4** | `thinkingLevel` | `{ "thinkingLevel": "high" }` |
 | **Gemini 2.5** | `thinkingConfig.thinkingBudget` | `{ "thinkingConfig": { "thinkingBudget": 8192 } }` |
 
 ---
 
 ## Gemini 3 Thinking Levels
 
-Gemini 3 models use string-based thinking levels. Available levels differ by model:
+Gemini 3 and Gemini 4 models use string-based thinking levels. Available levels differ by model:
 
-| Level | 3 Flash | 3.6 Flash | 3.7/3.8 Flash | Flash-Lite | Pro | Description |
-|-------|---------|-----------|---------------|------------|-----|-------------|
-| `minimal` | ✅ | ❌ | sent as `low` | ✅ | sent as `low` | Minimal thinking, lowest latency |
-| `low` | ✅ | Antigravity only | ✅ | ✅ | ✅ | Light thinking |
+| Level | 3 Flash | 3.8 Flash | 4 Argon | Flash-Lite | Pro | Description |
+|-------|---------|-----------|---------|------------|-----|-------------|
+| `minimal` | ✅ | sent as `low` | sent as `low` | ✅ | sent as `low` | Minimal thinking, lowest latency |
+| `low` | ✅ | ✅ | ✅ | ✅ | ✅ | Light thinking |
 | `medium` | ✅ | ✅ | ✅ | ✅ | sent as `high` | Balanced thinking |
 | `high` | ✅ | ✅ | ✅ | ✅ | ✅ | Maximum thinking |
 
-> **Note:** Antigravity rejects `"minimal"` on Gemini 3.1 Pro and 3.7/3.8 Flash, so the plugin sends `low` there. Gemini 3.1 Pro has only a low and a high tier.
-> Defaults are model-specific: Gemini 3.1 Pro uses `high`, Gemini 3.8 Flash uses `high`, Gemini 3.6–3.7 Flash use `medium`, Flash-Lite uses `minimal`, and Gemini 3 Flash uses `low`.
-> Gemini 3 Pro and 3.5 Flash are retired; their ids are served by Gemini 3.1 Pro and 3.7 Flash at the same tier.
+> **Note:** Antigravity rejects `"minimal"` on Gemini 3.1 Pro, 3.8 Flash and 4 Argon, so the plugin sends `low` there. Gemini 3.1 Pro has only a low and a high tier.
+> Defaults are model-specific: Gemini 3.1 Pro, 3.8 Flash and 4 Argon use `high`, and Gemini 3 Flash and Flash-Lite use `low`.
+> Gemini 4 Argon needs a Google AI Ultra subscription; see the README.
+> Gemini 3 Pro is retired and served by Gemini 3.1 Pro. Gemini 3.5, 3.6 and 3.7 Flash were dropped and are served by Gemini 3.8 Flash, and Gemini 3.5 Flash-Lite by Gemini 3.1 Flash-Lite, each at the same tier.
 
 ### Gemini 3.1 Pro Example
 
@@ -99,7 +101,7 @@ Gemini 3 models use string-based thinking levels. Available levels differ by mod
 
 ## Claude Thinking Budget
 
-Claude models use token-based thinking budgets (in tokens):
+Claude models use token-based thinking budgets (in tokens). Google dropped Claude Sonnet 4.6 and Opus 4.6 from Antigravity, so the plugin no longer lists a Claude model; the budget handling below still applies to any Claude model you configure yourself.
 
 | Variant | Budget | Description |
 |---------|--------|-------------|
@@ -156,9 +158,8 @@ For Gemini 3 models, the old `thinkingBudget` format is still supported but depr
 
 Tier-suffixed model names are still accepted:
 
-- `antigravity-claude-opus-4-6-thinking-low`
-- `antigravity-claude-opus-4-6-thinking-medium`
-- `antigravity-claude-opus-4-6-thinking-high`
+- `antigravity-gemini-4-argon-low`
+- `antigravity-gemini-4-argon-high`
 - `antigravity-gemini-3.1-pro-low`
 - `antigravity-gemini-3.1-pro-high`
 - `gemini-3.1-pro-low`

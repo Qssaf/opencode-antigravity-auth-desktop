@@ -156,20 +156,18 @@ describe("createAntigravityPlugin provider models", () => {
         providerID: "google",
         api: { id: "antigravity-gemini-3.1-pro" },
       });
-      expect(models?.["antigravity-gemini-3.6-flash"]?.capabilities).toMatchObject({
+      expect(models?.["antigravity-gemini-3.8-flash"]?.capabilities).toMatchObject({
         temperature: false,
         reasoning: true,
       });
-      expect(models?.["antigravity-gemini-3.7-flash"]?.capabilities).toMatchObject({
-        reasoning: true,
-      });
-      expect(models?.["gemini-3.7-flash"]?.capabilities).toMatchObject({
-        reasoning: true,
-      });
-      expect(models?.["gemini-3.5-flash-lite"]?.capabilities).toMatchObject({
+      expect(models?.["antigravity-gemini-4-argon"]?.capabilities).toMatchObject({
         temperature: false,
         reasoning: true,
       });
+      expect(models?.["gemini-3.8-flash"]?.capabilities).toMatchObject({
+        reasoning: true,
+      });
+      expect(models?.["antigravity-gemini-3.7-flash"]).toBeUndefined();
     } finally {
       vi.unstubAllGlobals();
     }
@@ -181,6 +179,10 @@ describe("createAntigravityPlugin provider models", () => {
       if (url.includes("fetchAvailableModels")) {
         return new Response(JSON.stringify({
           models: {
+            "gemini-3.8-flash": {
+              displayName: "Gemini 3.8 Flash",
+              modelName: "gemini-3.8-flash",
+            },
             "gemini-3.7-flash": {
               displayName: "Gemini 3.7 Flash",
               modelName: "gemini-3.7-flash",
@@ -218,7 +220,9 @@ describe("createAntigravityPlugin provider models", () => {
         },
       );
 
-      expect(models?.["antigravity-gemini-3.7-flash"]).toBeDefined();
+      expect(models?.["antigravity-gemini-3.8-flash"]).toBeDefined();
+      // A dropped model the registry still lists is not offered.
+      expect(models?.["antigravity-gemini-3.7-flash"]).toBeUndefined();
       expect(models?.["antigravity-gemini-3.9-flash"]).toMatchObject({
         id: "antigravity-gemini-3.9-flash",
         name: "Gemini 3.9 Flash (Registry) (Antigravity)",
@@ -656,6 +660,7 @@ describe("createAntigravityPlugin auth.loader disk OAuth promotion", () => {
 // api-key path (agy-sdk) instead of returning the raw 404 to the caller.
 // ---------------------------------------------------------------------------
 import { formatRefreshParts } from "./plugin/auth";
+import { resetUltraModelRefusals } from "./plugin/ultra-gate";
 
 describe("createAntigravityPlugin auth.loader 404→agy-sdk fallback", () => {
   // Isolated XDG_CONFIG_HOME so the real user config file is never loaded.
@@ -1029,6 +1034,150 @@ describe("createAntigravityPlugin auth.loader 404→agy-sdk fallback", () => {
       return "x-goog-api-key" in (hdrs as Record<string, string>);
     });
     expect(apiKeyFallbackCalls.length).toBeGreaterThan(0);
+  });
+});
+
+describe("Gemini 4 Argon (Ultra-only)", () => {
+  let tmpConfigHome: string;
+  const savedEnv: Record<string, string | undefined> = {};
+  const ARGON_URL =
+    "https://generativelanguage.googleapis.com/v1beta/models/antigravity-gemini-4-argon:streamGenerateContent?alt=sse";
+  const SSE_BODY =
+    'data: {"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"},"finishReason":"STOP","index":0}]}\n\n';
+
+  beforeEach(() => {
+    tmpConfigHome = join(tmpdir(), `opencode-antigravity-argon-${process.pid}-${Date.now()}`);
+    mkdirSync(tmpConfigHome, { recursive: true });
+    for (const key of ["XDG_CONFIG_HOME", "OPENCODE_ANTIGRAVITY_API_KEYS", "GEMINI_API_KEY", "GOOGLE_API_KEY"]) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+    process.env.XDG_CONFIG_HOME = tmpConfigHome;
+    vi.mocked(storageModule.loadAccounts).mockReset();
+    vi.mocked(storageModule.saveAccounts).mockReset();
+    resetUltraModelRefusals();
+  });
+
+  afterEach(() => {
+    for (const [key, val] of Object.entries(savedEnv)) {
+      if (val === undefined) delete process.env[key];
+      else process.env[key] = val;
+    }
+    vi.unstubAllGlobals();
+    resetUltraModelRefusals();
+    rmSync(tmpConfigHome, { recursive: true, force: true });
+  });
+
+  function account(refreshToken: string, project: string) {
+    return {
+      email: `${refreshToken}@example.com`,
+      refreshToken,
+      projectId: project,
+      managedProjectId: project,
+      addedAt: 0,
+      lastUsed: 0,
+      enabled: true,
+    };
+  }
+
+  /** Serves Argon only for projects in `ultraProjects`; every other one gets a 404. */
+  function buildArgonFetchMock(ultraProjects: string[]) {
+    const argonRequests: Array<{ project: string; model: string }> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url.includes("cloudcode-pa") && url.includes("GenerateContent")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as { project?: string; model?: string };
+        argonRequests.push({ project: body.project ?? "", model: body.model ?? "" });
+        if (ultraProjects.includes(body.project ?? "")) {
+          return new Response(SSE_BODY, { status: 200, headers: { "content-type": "text/event-stream" } });
+        }
+        return new Response(
+          JSON.stringify({ error: { code: 404, message: "Requested entity was not found.", status: "NOT_FOUND" } }),
+          { status: 404, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.includes("oauth2.googleapis.com")) {
+        return new Response(JSON.stringify({ access_token: "valid-access-token", expires_in: 3600 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.includes("generativelanguage.googleapis.com")) {
+        return new Response(JSON.stringify({ models: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("1.2.3");
+    });
+    return { fetchMock, argonRequests };
+  }
+
+  async function loaderFetch() {
+    const plugin = await createAntigravityPlugin("google")({ client, directory: process.cwd() });
+    const refresh = formatRefreshParts({ refreshToken: "free", projectId: "p-free", managedProjectId: "p-free" });
+    const getAuth = async () => ({
+      type: "oauth" as const,
+      refresh,
+      access: "valid-access-token",
+      expires: Date.now() + 3_600_000,
+    });
+    const loader = await plugin.auth.loader(getAuth, {
+      id: "google",
+      api: "https://generativelanguage.googleapis.com/v1beta",
+      npm: "@ai-sdk/google",
+      models: {},
+    });
+    return (loader as { fetch: typeof fetch }).fetch;
+  }
+
+  const argonRequest = () => ({
+    method: "POST",
+    body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "hi" }] }] }),
+  });
+
+  it("moves past an account Google refuses Argon for to an Ultra account", async () => {
+    vi.mocked(storageModule.loadAccounts).mockResolvedValue({
+      version: 4,
+      accounts: [account("free", "p-free"), account("ultra", "p-ultra")],
+      activeIndex: 0,
+    });
+    const { fetchMock, argonRequests } = buildArgonFetchMock(["p-ultra"]);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const fetchFn = await loaderFetch();
+    const res = await fetchFn(ARGON_URL, argonRequest());
+
+    expect(res.status).toBe(200);
+    expect(argonRequests.at(-1)).toEqual({ project: "p-ultra", model: "gemini-4-argon-high" });
+
+    // The refusal is remembered: the next request goes straight to the Ultra account.
+    const before = argonRequests.length;
+    expect((await fetchFn(ARGON_URL, argonRequest())).status).toBe(200);
+    expect(argonRequests.slice(before).map((r) => r.project)).toEqual(["p-ultra"]);
+  });
+
+  it("says Ultra is required once Google refuses Argon for every account", async () => {
+    vi.mocked(storageModule.loadAccounts).mockResolvedValue({
+      version: 4,
+      accounts: [account("free", "p-free"), account("pro", "p-pro")],
+      activeIndex: 0,
+    });
+    const { fetchMock, argonRequests } = buildArgonFetchMock([]);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const fetchFn = await loaderFetch();
+    const res = await fetchFn(ARGON_URL, argonRequest());
+    const text = await res.text();
+
+    expect(text).toContain("Gemini 4 Argon needs a Google AI Ultra subscription");
+    expect(text).toContain("all 2 signed-in accounts");
+    expect(new Set(argonRequests.map((r) => r.project))).toEqual(new Set(["p-free", "p-pro"]));
+
+    // Later requests answer at once, without asking Google again.
+    const before = argonRequests.length;
+    expect(await (await fetchFn(ARGON_URL, argonRequest())).text()).toContain("Google AI Ultra");
+    expect(argonRequests.length).toBe(before);
   });
 });
 
