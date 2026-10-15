@@ -15,10 +15,6 @@ const MODELS: ModelTest[] = [
   { model: "google/gemini-2.5-flash", category: "gemini-cli" },
 
   // Antigravity Gemini
-  { model: "google/antigravity-gemini-3-pro-low", category: "antigravity-gemini" },
-  { model: "google/antigravity-gemini-3-pro-high", category: "antigravity-gemini" },
-  { model: "google/antigravity-gemini-3-flash", category: "antigravity-gemini" },
-  { model: "google/antigravity-gemini-3.1-flash-lite", category: "antigravity-gemini" },
   { model: "google/antigravity-gemini-3.8-flash", category: "antigravity-gemini" },
   // Google AI Ultra only: other accounts get the "needs Ultra" message.
   { model: "google/antigravity-gemini-4-argon", category: "antigravity-gemini" },

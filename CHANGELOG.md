@@ -8,7 +8,9 @@
 
 ### Removed
 
-- **Gemini 3.5, 3.6 and 3.7 Flash, Claude Sonnet 4.6, Claude Opus 4.6 and GPT-OSS** - Google dropped them. They are gone from the model list, including when the Antigravity registry still lists them. Requests for the dropped Flash models, with or without a tier suffix, go to Gemini 3.8 Flash at the same tier (minimal becomes low), and Gemini 3.5 Flash-Lite goes to Gemini 3.1 Flash-Lite, on the Antigravity, Gemini CLI and API-key routes alike, so a session still set to one of them keeps working. `gemini-flash-latest` now means Gemini 3.8 Flash and `gemini-flash-lite-latest` Gemini 3.1 Flash-Lite. Claude handling stays in the plugin for any Claude model you configure yourself.
+- **Gemini 3.5, 3.6 and 3.7 Flash, Claude Sonnet 4.6, Claude Opus 4.6 and GPT-OSS** - Google dropped them. They are gone from the model list, including when the Antigravity registry still lists them. Requests for the dropped Flash models and 3.5 Flash-Lite, with or without a tier suffix, go to Gemini 3.8 Flash at the same tier (minimal becomes low) on the Antigravity, Gemini CLI and API-key routes alike, so a session still set to one of them keeps working. `gemini-flash-latest` and `gemini-flash-lite-latest` now mean Gemini 3.8 Flash. Claude handling stays in the plugin for any Claude model you configure yourself.
+
+- **Every other Antigravity Gemini model** - Antigravity now serves only Gemini 3.8 Flash and Gemini 4 Argon. `antigravity-gemini-3.1-pro`, `antigravity-gemini-3-flash` and `antigravity-gemini-3.1-flash-lite` are gone from the model list, and an `antigravity-` request for any retired generation (2.0, 2.5, 3, 3.1, 3.5-3.7; Pro, Flash or Flash-Lite) is served as Gemini 3.8 Flash at the same tier. The Gemini CLI quota models (`gemini-3.1-pro`, `gemini-3-pro-preview`, `gemini-3-flash-preview`, `gemini-2.5-*`) now go to the Gemini CLI quota first instead of Antigravity, and fall back to Antigravity as Gemini 3.8 Flash when it runs out. The retired list is explicit, so a model Google adds later is still discovered and routed to Antigravity.
 
 ### Changed
 

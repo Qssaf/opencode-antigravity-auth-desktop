@@ -20,6 +20,8 @@ const DEAD_BACKEND_IDS = new Set([
   "gemini-3.5-flash-extra-low",
   "gemini-3-flash-agent",
   "gemini-3.1-pro-high",
+  "gemini-3.1-pro-low",
+  "gemini-pro-agent",
 ]);
 
 function send(model: string, thinkingConfig: Record<string, unknown> | undefined, headerStyle: "antigravity" | "gemini-cli" = "antigravity") {
@@ -43,59 +45,65 @@ function send(model: string, thinkingConfig: Record<string, unknown> | undefined
 
 describe("retired and renamed Antigravity ids", () => {
   it.each([
-    ["gemini-3-pro", "gemini-3.1-pro"],
-    ["gemini-3-pro-low", "gemini-3.1-pro-low"],
-    ["gemini-3-pro-high", "gemini-3.1-pro-high"],
+    ["gemini-3-pro", "gemini-3.8-flash"],
+    ["gemini-3-pro-low", "gemini-3.8-flash-low"],
+    ["gemini-3-pro-high", "gemini-3.8-flash-high"],
+    ["gemini-3.1-pro", "gemini-3.8-flash"],
+    ["gemini-3.1-pro-low", "gemini-3.8-flash-low"],
+    ["gemini-3.1-pro-preview-customtools", "gemini-3.8-flash"],
+    ["gemini-3-flash", "gemini-3.8-flash"],
+    ["gemini-3-flash-preview", "gemini-3.8-flash"],
+    ["gemini-3.1-flash-lite", "gemini-3.8-flash"],
+    ["gemini-2.5-pro", "gemini-3.8-flash"],
     ["gemini-3.5-flash", "gemini-3.8-flash"],
     ["gemini-3.5-flash-minimal", "gemini-3.8-flash-low"],
     ["gemini-3.5-flash-medium", "gemini-3.8-flash-medium"],
-    ["gemini-3.6-flash", "gemini-3.8-flash"],
     ["gemini-3.6-flash-low", "gemini-3.8-flash-low"],
-    ["gemini-3.7-flash", "gemini-3.8-flash"],
     ["gemini-3.7-flash-high", "gemini-3.8-flash-high"],
-    ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"],
-    ["gemini-3.5-flash-lite-minimal", "gemini-3.1-flash-lite-minimal"],
+    ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
+    ["gemini-3.5-flash-lite-minimal", "gemini-3.8-flash-low"],
     ["gemini-3-flash-agent", "gemini-3.8-flash-high"],
     ["gemini-3.5-flash-extra-low", "gemini-3.8-flash-low"],
-    ["gemini-pro-agent", "gemini-3.1-pro-high"],
+    ["gemini-pro-agent", "gemini-3.8-flash-high"],
   ])("remaps %s to %s", (from, to) => {
     expect(remapRetiredAntigravityGeminiModel(from)).toBe(to);
   });
 
-  it.each(["gemini-3-pro-image", "gemini-3.1-pro", "gemini-3-flash", "gemini-3.1-flash-lite", "gemini-3.8-flash", "gemini-4-argon"])(
+  it.each([
+    "gemini-3-pro-image",
+    "gemini-3.8-flash",
+    "gemini-3.8-flash-medium",
+    "gemini-4-argon",
+    "gemini-4-argon-low",
+    // Models Google may add later are not treated as retired.
+    "gemini-3.9-flash",
+    "gemini-3.8-pro",
+  ])(
     "leaves %s alone",
     (model) => {
       expect(remapRetiredAntigravityGeminiModel(model)).toBe(model);
     },
   );
-
-  it("sends Gemini 3.1 Pro High under its current backend id", () => {
-    expect(toAntigravityWireModel("gemini-3.1-pro-high")).toBe("gemini-pro-agent");
-    expect(toAntigravityWireModel("gemini-3.1-pro-low")).toBe("gemini-3.1-pro-low");
-  });
 });
 
-describe("Gemini 3.1 Pro tier", () => {
-  it("defaults to the high tier", () => {
-    const result = resolveModelWithTier("antigravity-gemini-3.1-pro");
-    expect(result.actualModel).toBe("gemini-3.1-pro-high");
-    expect(result.thinkingLevel).toBe("high");
+describe("models Antigravity no longer serves", () => {
+  it.each(["gemini-3.1-pro", "gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash"])(
+    "routes %s to the Gemini CLI quota first",
+    (model) => {
+      const result = resolveModelWithTier(model);
+      expect(result.quotaPreference).toBe("gemini-cli");
+      // Not explicit: when the Gemini CLI quota runs out it may fall back to Antigravity.
+      expect(result.explicitQuota).toBe(false);
+    },
+  );
+
+  it.each(["gemini-3.8-flash", "gemini-4-argon", "gemini-3.9-flash"])("keeps %s on Antigravity first", (model) => {
+    expect(resolveModelWithTier(model).quotaPreference).toBe("antigravity");
   });
 
-  it("keeps an explicit low tier", () => {
-    const result = resolveModelWithTier("antigravity-gemini-3.1-pro-low");
-    expect(result.actualModel).toBe("gemini-3.1-pro-low");
-    expect(result.thinkingLevel).toBe("low");
-  });
-
-  it("picks the successor for the gemini-cli -> antigravity fallback of retired ids", () => {
-    expect(resolveModelForHeaderStyle("gemini-3-pro-preview", "antigravity").actualModel).toBe("gemini-3.1-pro-high");
-    expect(resolveModelForHeaderStyle("gemini-3.5-flash", "antigravity").actualModel).toBe("gemini-3.8-flash-high");
-  });
-
-  it("keeps the tier of a non-prefixed tier-suffixed Pro id on Antigravity", () => {
-    expect(resolveModelForHeaderStyle("gemini-3.1-pro-low", "antigravity").actualModel).toBe("gemini-3.1-pro-low");
-    expect(resolveModelForHeaderStyle("gemini-3.1-pro-high", "antigravity").actualModel).toBe("gemini-3.1-pro-high");
+  it("falls back to Antigravity as Gemini 3.8 Flash at the same tier", () => {
+    expect(resolveModelForHeaderStyle("gemini-3-pro-preview", "antigravity").actualModel).toBe("gemini-3.8-flash-high");
+    expect(resolveModelForHeaderStyle("gemini-3.1-pro-low", "antigravity").actualModel).toBe("gemini-3.8-flash-low");
     expect(resolveModelForHeaderStyle("gemini-3.1-pro-low", "gemini-cli").actualModel).toBe("gemini-3.1-pro");
   });
 
@@ -109,9 +117,6 @@ describe("resolveAntigravityGeminiBackend", () => {
     ["gemini-3.8-flash-medium", "minimal", "gemini-3.8-flash-low", "low"],
     ["gemini-4-argon-medium", "minimal", "gemini-4-argon-low", "low"],
     ["gemini-4-argon", "high", "gemini-4-argon-high", "high"],
-    ["gemini-3.1-pro-high", "minimal", "gemini-3.1-pro-low", "low"],
-    ["gemini-3.1-pro-high", "medium", "gemini-3.1-pro-high", "high"],
-    ["gemini-3.1-pro-low", "high", "gemini-3.1-pro-high", "high"],
   ])("%s with %s -> %s / %s", (model, level, backend, sentLevel) => {
     expect(resolveAntigravityGeminiBackend(model, level)).toEqual({ model: backend, thinkingLevel: sentLevel });
   });
@@ -119,27 +124,15 @@ describe("resolveAntigravityGeminiBackend", () => {
 
 describe("prepareAntigravityRequest wire model", () => {
   it.each([
-    ["antigravity-gemini-3.1-pro", { includeThoughts: true, thinkingLevel: "high" }],
-    ["antigravity-gemini-3.1-pro", { includeThoughts: true }],
-    ["antigravity-gemini-3.1-pro", { includeThoughts: true, thinkingBudget: 32768 }],
-    ["antigravity-gemini-3.1-pro-high", undefined],
-    ["antigravity-gemini-3.1-pro-low", { includeThoughts: true, thinkingLevel: "high" }],
-    ["antigravity-gemini-pro-agent", undefined],
-    ["antigravity-gemini-3-pro", undefined],
-    ["gemini-3.1-pro", { includeThoughts: true, thinkingLevel: "high" }],
-    ["gemini-3-pro-preview", undefined],
-  ])("%s %j goes out as gemini-pro-agent with thinkingLevel high", (model, thinkingConfig) => {
-    const { result, body, thinking } = send(model, thinkingConfig);
-    expect(body.model).toBe("gemini-pro-agent");
-    expect(thinking).toMatchObject({ thinkingLevel: "high" });
-    // Name-keyed Gemini 3 handling (thought signatures, thinkingLevel) still sees a Gemini 3 id.
-    expect(result.effectiveModel).toBe("gemini-3.1-pro-high");
-  });
-
-  it("sends an explicit low Pro variant to the low backend id", () => {
-    const { body, thinking } = send("antigravity-gemini-3.1-pro", { includeThoughts: true, thinkingLevel: "low" });
-    expect(body.model).toBe("gemini-3.1-pro-low");
-    expect(thinking).toMatchObject({ thinkingLevel: "low" });
+    ["antigravity-gemini-3.1-pro", { includeThoughts: true, thinkingLevel: "high" }, "gemini-3.8-flash-high"],
+    ["antigravity-gemini-3.1-pro", { includeThoughts: true, thinkingBudget: 32768 }, "gemini-3.8-flash-high"],
+    ["antigravity-gemini-3.1-pro-low", undefined, "gemini-3.8-flash-low"],
+    ["antigravity-gemini-pro-agent", undefined, "gemini-3.8-flash-high"],
+    ["antigravity-gemini-3-flash", undefined, "gemini-3.8-flash-high"],
+    ["antigravity-gemini-3.1-flash-lite", { includeThoughts: true, thinkingLevel: "minimal" }, "gemini-3.8-flash-low"],
+  ])("sends %s %j to Antigravity as %s", (model, thinkingConfig, backend) => {
+    const { body } = send(model, thinkingConfig);
+    expect(body.model).toBe(backend);
   });
 
   it("does not rename the Gemini CLI model id", () => {
@@ -175,7 +168,7 @@ describe("prepareAntigravityRequest wire model", () => {
 
   it("sends minimal as low where the backend rejects minimal", () => {
     expect(send("gemini-3.8-flash", { includeThoughts: true, thinkingLevel: "minimal" }).thinking).toMatchObject({ thinkingLevel: "low" });
-    expect(send("antigravity-gemini-3.1-pro", { includeThoughts: true, thinkingLevel: "minimal" }).thinking).toMatchObject({ thinkingLevel: "low" });
+    expect(send("antigravity-gemini-4-argon", { includeThoughts: true, thinkingLevel: "minimal" }).thinking).toMatchObject({ thinkingLevel: "low" });
   });
 
   it("never sends a retired or renamed backend id for any advertised model and variant", () => {
@@ -191,7 +184,11 @@ describe("prepareAntigravityRequest wire model", () => {
 });
 
 describe("advertised catalog", () => {
-  it("drops retired and dropped models and offers Gemini 4 Argon", () => {
+  it("offers only Gemini 3.8 Flash and Gemini 4 Argon on Antigravity", () => {
+    expect(Object.keys(OPENCODE_MODEL_DEFINITIONS).filter((id) => id.startsWith("antigravity-")).sort()).toEqual([
+      "antigravity-gemini-3.8-flash",
+      "antigravity-gemini-4-argon",
+    ]);
     for (const id of [
       "antigravity-gemini-3-pro",
       "antigravity-gemini-3.5-flash",
@@ -206,7 +203,6 @@ describe("advertised catalog", () => {
     ]) {
       expect(OPENCODE_MODEL_DEFINITIONS[id], id).toBeUndefined();
     }
-    expect(OPENCODE_MODEL_DEFINITIONS["antigravity-gemini-3.1-flash-lite"]).toBeDefined();
     expect(Object.keys(OPENCODE_MODEL_DEFINITIONS["antigravity-gemini-4-argon"]?.variants ?? {})).toEqual([
       "low",
       "medium",
@@ -228,10 +224,12 @@ describe("advertised catalog", () => {
       "gemini-pro-agent": { displayName: "Gemini 3.1 Pro (High)" },
       "gemini-3.1-pro-low": { displayName: "Gemini 3.1 Pro (Low)" },
       "gemini-3.1-flash-lite": { displayName: "Gemini 3.1 Flash Lite" },
+      "gemini-3.8-flash-medium": { displayName: "Gemini 3.8 Flash (Medium)" },
+      "gemini-4-argon-high": { displayName: "Gemini 4 Argon (High)" },
     });
     expect(Object.keys(discovered).sort()).toEqual([
-      "antigravity-gemini-3.1-flash-lite",
-      "antigravity-gemini-3.1-pro-low",
+      "antigravity-gemini-3.8-flash-medium",
+      "antigravity-gemini-4-argon-high",
     ]);
   });
 });

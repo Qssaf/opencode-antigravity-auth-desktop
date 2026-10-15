@@ -51,44 +51,26 @@ The plugin accepts different variant formats depending on the model family:
 
 Gemini 3 and Gemini 4 models use string-based thinking levels. Available levels differ by model:
 
-| Level | 3 Flash | 3.8 Flash | 4 Argon | Flash-Lite | Pro | Description |
-|-------|---------|-----------|---------|------------|-----|-------------|
-| `minimal` | ✅ | sent as `low` | sent as `low` | ✅ | sent as `low` | Minimal thinking, lowest latency |
-| `low` | ✅ | ✅ | ✅ | ✅ | ✅ | Light thinking |
-| `medium` | ✅ | ✅ | ✅ | ✅ | sent as `high` | Balanced thinking |
-| `high` | ✅ | ✅ | ✅ | ✅ | ✅ | Maximum thinking |
+| Level | 3.8 Flash | 4 Argon | Gemini CLI 3 Flash / Pro | Description |
+|-------|-----------|---------|--------------------------|-------------|
+| `minimal` | sent as `low` | sent as `low` | Flash only | Minimal thinking, lowest latency |
+| `low` | ✅ | ✅ | ✅ | Light thinking |
+| `medium` | ✅ | ✅ | Flash only | Balanced thinking |
+| `high` | ✅ | ✅ | ✅ | Maximum thinking |
 
-> **Note:** Antigravity rejects `"minimal"` on Gemini 3.1 Pro, 3.8 Flash and 4 Argon, so the plugin sends `low` there. Gemini 3.1 Pro has only a low and a high tier.
-> Defaults are model-specific: Gemini 3.1 Pro, 3.8 Flash and 4 Argon use `high`, and Gemini 3 Flash and Flash-Lite use `low`.
+> **Note:** Antigravity serves only Gemini 3.8 Flash and Gemini 4 Argon, and rejects `"minimal"` on both, so the plugin sends `low`. Both default to `high`.
 > Gemini 4 Argon needs a Google AI Ultra subscription; see the README.
-> Gemini 3 Pro is retired and served by Gemini 3.1 Pro. Gemini 3.5, 3.6 and 3.7 Flash were dropped and are served by Gemini 3.8 Flash, and Gemini 3.5 Flash-Lite by Gemini 3.1 Flash-Lite, each at the same tier.
+> Any other Gemini model requested on Antigravity (3 Pro, 3.1 Pro, 3 Flash, 3.1 Flash-Lite, 2.5, and the dropped 3.5-3.7 Flash) is served as Gemini 3.8 Flash at the same tier.
 
-### Gemini 3.1 Pro Example
-
-```json
-{
-  "antigravity-gemini-3.1-pro": {
-    "name": "Gemini 3.1 Pro (Antigravity)",
-    "limit": { "context": 1048576, "output": 65535 },
-    "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
-    "variants": {
-      "low": { "thinkingLevel": "low" },
-      "high": { "thinkingLevel": "high" }
-    }
-  }
-}
-```
-
-### Gemini 3 Flash Example
+### Gemini 3.8 Flash Example
 
 ```json
 {
-  "antigravity-gemini-3-flash": {
-    "name": "Gemini 3 Flash (Antigravity)",
+  "antigravity-gemini-3.8-flash": {
+    "name": "Gemini 3.8 Flash (Antigravity)",
     "limit": { "context": 1048576, "output": 65536 },
     "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
     "variants": {
-      "minimal": { "thinkingLevel": "minimal" },
       "low": { "thinkingLevel": "low" },
       "medium": { "thinkingLevel": "medium" },
       "high": { "thinkingLevel": "high" }
@@ -160,8 +142,8 @@ Tier-suffixed model names are still accepted:
 
 - `antigravity-gemini-4-argon-low`
 - `antigravity-gemini-4-argon-high`
-- `antigravity-gemini-3.1-pro-low`
-- `antigravity-gemini-3.1-pro-high`
+- `antigravity-gemini-3.8-flash-low`
+- `antigravity-gemini-3.8-flash-high`
 - `gemini-3.1-pro-low`
 - `gemini-3-flash-medium`
 

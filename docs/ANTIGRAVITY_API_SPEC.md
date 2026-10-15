@@ -80,8 +80,8 @@ Accept: text/event-stream
 |------------|----------|------|--------|
 | Gemini 4 Argon Low / Medium / High | `gemini-4-argon-low` / `-medium` / `-high` | Google | ⚠️ Google AI Ultra only; ids from a community analysis of Antigravity 2.23.0, not yet verified live |
 | Gemini 3.8 Flash Low / Medium / High | `gemini-3.8-flash-low` / `-medium` / `-high` | Google | ✅ Verified |
-| Gemini 3.1 Pro High | `gemini-pro-agent` | Google | ✅ Verified (`gemini-3.1-pro-high` is deprecated and returns 400) |
-| Gemini 3.1 Pro Low | `gemini-3.1-pro-low` | Google | ✅ Verified |
+| Gemini 3.1 Pro High / Low | `gemini-pro-agent` / `gemini-3.1-pro-low` | Google | ❌ No longer served |
+| Gemini 3 Flash, 3.1 Flash-Lite, 2.5 | `gemini-3-flash`, `gemini-3.1-flash-lite`, ... | Google | ❌ No longer served |
 | Gemini 3 Pro High / Low | `gemini-3-pro-high` / `gemini-3-pro-low` | Google | ❌ Retired (answers "no longer available") |
 | Gemini 3.5 / 3.6 / 3.7 Flash | `gemini-3.x-flash-*` | Google | ❌ Dropped |
 | Claude Sonnet 4.6 | `claude-sonnet-4-6` | Anthropic | ❌ Dropped |

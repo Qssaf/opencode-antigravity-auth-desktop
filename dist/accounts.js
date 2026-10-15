@@ -1915,7 +1915,7 @@ var THINKING_TIER_BUDGETS = {
 };
 var MODEL_ALIASES = {
   "gemini-flash-latest": "gemini-3.8-flash",
-  "gemini-flash-lite-latest": "gemini-3.1-flash-lite",
+  "gemini-flash-lite-latest": "gemini-3.8-flash",
   // Gemini 3 variants - for Gemini CLI only (tier stripped, thinkingLevel used)
   // For Antigravity, these are bypassed and full model name is kept
   "gemini-3-pro-low": "gemini-3-pro",
@@ -1986,22 +1986,22 @@ function isGemini3OrLaterModel(model) {
   return GEMINI_3_OR_LATER_REGEX.test(model);
 }
 function remapRetiredGeminiFlashModel(model) {
-  const lower = model.toLowerCase();
-  const lite = lower.match(/^gemini-3\.5-flash-lite(-(?:minimal|low|medium|high))?$/);
-  if (lite) return `gemini-3.1-flash-lite${lite[1] ?? ""}`;
-  const flash = lower.match(/^gemini-3\.[567]-flash(?:-(minimal|low|medium|high))?$/);
+  const flash = model.toLowerCase().match(/^gemini-3\.[567]-flash(?:-lite)?(?:-(minimal|low|medium|high))?$/);
   if (!flash) return model;
-  const tier = flash[1] === "minimal" ? "low" : flash[1];
-  return tier ? `gemini-3.8-flash-${tier}` : "gemini-3.8-flash";
+  return toGemini38Flash(flash[1]);
 }
+function toGemini38Flash(tier) {
+  const level = tier === "minimal" ? "low" : tier;
+  return level ? `gemini-3.8-flash-${level}` : "gemini-3.8-flash";
+}
+var RETIRED_ANTIGRAVITY_GEMINI_REGEX = /^gemini-(?:2\.0|2\.5|3|3\.0|3\.1|3\.5|3\.6|3\.7)-(?:pro|flash)(?:-lite)?(?:-preview)?(?:-customtools)?(?:-(minimal|low|medium|high))?$/;
 function remapRetiredAntigravityGeminiModel(model) {
   const lower = model.toLowerCase();
-  if (lower === "gemini-pro-agent") return "gemini-3.1-pro-high";
-  if (lower === "gemini-3-flash-agent") return "gemini-3.8-flash-high";
+  if (lower === "gemini-pro-agent" || lower === "gemini-3-flash-agent") return "gemini-3.8-flash-high";
   if (lower === "gemini-3.5-flash-extra-low") return "gemini-3.8-flash-low";
-  const pro = lower.match(/^gemini-3-pro(-(?:low|medium|high))?$/);
-  if (pro) return `gemini-3.1-pro${pro[1] ?? ""}`;
-  return remapRetiredGeminiFlashModel(model);
+  const retired = lower.match(RETIRED_ANTIGRAVITY_GEMINI_REGEX);
+  if (!retired) return model;
+  return toGemini38Flash(retired[1]);
 }
 var ANTIGRAVITY_WIRE_MODEL_IDS = {
   "gemini-3.1-pro-high": "gemini-pro-agent"
@@ -2071,6 +2071,9 @@ function getDefaultGemini3ThinkingLevel(model) {
   }
   return "low";
 }
+function isRetiredOnAntigravity(model) {
+  return remapRetiredAntigravityGeminiModel(model) !== model;
+}
 function resolveModelWithTier(requestedModel, options = {}) {
   const isAntigravity = QUOTA_PREFIX_REGEX.test(requestedModel);
   const strippedModel = requestedModel.replace(QUOTA_PREFIX_REGEX, "");
@@ -2079,7 +2082,7 @@ function resolveModelWithTier(requestedModel, options = {}) {
   const baseName = tier ? modelWithoutQuota.replace(TIER_REGEX, "") : modelWithoutQuota;
   const isImageModel = IMAGE_GENERATION_MODELS.test(modelWithoutQuota);
   const isClaudeModel2 = modelWithoutQuota.toLowerCase().includes("claude");
-  const preferGeminiCli = !isAntigravity && options.cli_first === true && !isImageModel && !isClaudeModel2;
+  const preferGeminiCli = !isAntigravity && !isImageModel && !isClaudeModel2 && (options.cli_first === true || isRetiredOnAntigravity(MODEL_ALIASES[modelWithoutQuota] ?? modelWithoutQuota));
   const quotaPreference = preferGeminiCli ? "gemini-cli" : "antigravity";
   const explicitQuota = isAntigravity || isImageModel;
   const isGemini3 = isGemini3OrLaterModel(modelWithoutQuota);
@@ -2236,37 +2239,6 @@ var DEFAULT_MODALITIES = {
   output: ["text"]
 };
 var OPENCODE_MODEL_DEFINITIONS = {
-  "antigravity-gemini-3.1-pro": {
-    name: "Gemini 3.1 Pro (Antigravity)",
-    limit: { context: 1048576, output: 65535 },
-    modalities: DEFAULT_MODALITIES,
-    variants: {
-      low: { thinkingLevel: "low" },
-      high: { thinkingLevel: "high" }
-    }
-  },
-  "antigravity-gemini-3.1-flash-lite": {
-    name: "Gemini 3.1 Flash Lite (Antigravity)",
-    limit: { context: 1048576, output: 65535 },
-    modalities: DEFAULT_MODALITIES,
-    variants: {
-      minimal: { thinkingLevel: "minimal" },
-      low: { thinkingLevel: "low" },
-      medium: { thinkingLevel: "medium" },
-      high: { thinkingLevel: "high" }
-    }
-  },
-  "antigravity-gemini-3-flash": {
-    name: "Gemini 3 Flash (Antigravity)",
-    limit: { context: 1048576, output: 65536 },
-    modalities: DEFAULT_MODALITIES,
-    variants: {
-      minimal: { thinkingLevel: "minimal" },
-      low: { thinkingLevel: "low" },
-      medium: { thinkingLevel: "medium" },
-      high: { thinkingLevel: "high" }
-    }
-  },
   "antigravity-gemini-3.8-flash": {
     name: "Gemini 3.8 Flash (Antigravity)",
     temperature: false,

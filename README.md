@@ -19,7 +19,7 @@ Enable Opencode to authenticate against **Antigravity** (Google's IDE) via OAuth
 
 ## What You Get
 
-- **Gemini 4 Argon** (Google AI Ultra), **Gemini 3.8 Flash** and **Gemini 3.1 Pro** via Google OAuth
+- **Gemini 4 Argon** (Google AI Ultra) and **Gemini 3.8 Flash** via Google OAuth (Antigravity), plus the Gemini CLI quota models
 - **Multi-account support** — add multiple Google accounts, auto-rotates when rate-limited
 - **Modern Gemini API support** — use Antigravity SDK-style API keys / Cloud Projects as Gemini backups or opt-in primary routing
 - **Legacy Gemini CLI quota support** — still available for compatibility and quota fallback
@@ -141,15 +141,12 @@ opencode run "Hello" --model=google/antigravity-gemini-3.8-flash --variant=high
 
 | Model | Variants | Notes |
 |-------|----------|-------|
-| `antigravity-gemini-3.1-pro` | low, high | Gemini 3.1 Pro with thinking (high default) |
-| `antigravity-gemini-3-flash` | minimal, low, medium, high | Gemini 3 Flash with thinking |
-| `antigravity-gemini-3.1-flash-lite` | minimal, low, medium, high | Gemini 3.1 Flash Lite with thinking |
 | `antigravity-gemini-3.8-flash` | low, medium, high | Gemini 3.8 Flash with thinking (high default) |
 | `antigravity-gemini-4-argon` | low, medium, high | **Newest. Google AI Ultra only.** Gemini 4 Argon with thinking (high default, 256K context) |
 
 > **Gemini 4 Argon needs a Google AI Ultra subscription.** The plugin cannot read your subscription, so it learns it from Google: an account Google refuses Argon for is skipped for an hour and the next account is tried. When no signed-in account has Ultra, the request is answered with a message saying so instead of an error. With an API key configured (`agy_sdk`), Argon is tried through the public Gemini API before that message.
 
-> Google dropped Gemini 3.5, 3.6 and 3.7 Flash, Claude Sonnet 4.6, Claude Opus 4.6 and GPT-OSS. Requests for the dropped Flash models (with or without a tier suffix) go to Gemini 3.8 Flash at the same tier, and Gemini 3.5 Flash-Lite goes to Gemini 3.1 Flash-Lite, so sessions still set to an old model keep working. Gemini 3 Pro still goes to Gemini 3.1 Pro.
+> Antigravity now serves only Gemini 3.8 Flash and Gemini 4 Argon. Google dropped Gemini 3.5, 3.6 and 3.7 Flash, Claude Sonnet 4.6, Claude Opus 4.6 and GPT-OSS from it, and no longer serves Gemini 3 Pro, 3.1 Pro, 3 Flash, 3.1 Flash-Lite or 2.5 there either. An `antigravity-` request for any of those (with or without a tier suffix) goes to Gemini 3.8 Flash at the same tier, so sessions still set to an old model keep working. The Gemini CLI models below go to the Gemini CLI quota first, and fall back to Antigravity as Gemini 3.8 Flash when that runs out.
 
 **Antigravity SDK / Gemini API projects** (API-key backed; used by API-key auth, or as OAuth fallback when configured):
 
@@ -173,7 +170,7 @@ The official Antigravity SDK uses `GEMINI_API_KEY` for local Gemini access. This
 > - **Legacy CLI-first (`cli_first: true`):** Gemini models use the legacy Gemini CLI quota first.
 > - When OAuth quota pools are exhausted, configured `agy_sdk.cloud_projects` are used as backup capacity before failing if `agy_sdk.enabled: true`, `agy_sdk.api_key_fallback: true`, and usable API-key credentials are present.
 > - Gemini 4 Argon and image models always use Antigravity (Argon is not on the Gemini CLI quota).
-> Model names are automatically transformed for the target API (e.g., `antigravity-gemini-3-flash` → `gemini-3-flash-preview` for CLI).
+> Model names are automatically transformed for the target API (e.g., `gemini-3-flash` → `gemini-3-flash-preview` for the Gemini CLI).
 
 **Using variants:**
 ```bash
@@ -194,37 +191,6 @@ Add this to your `~/.config/opencode/opencode.json`:
   "provider": {
     "google": {
       "models": {
-        "antigravity-gemini-3.1-pro": {
-          "name": "Gemini 3.1 Pro (Antigravity)",
-          "limit": { "context": 1048576, "output": 65535 },
-          "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
-          "variants": {
-            "low": { "thinkingLevel": "low" },
-            "high": { "thinkingLevel": "high" }
-          }
-        },
-        "antigravity-gemini-3-flash": {
-          "name": "Gemini 3 Flash (Antigravity)",
-          "limit": { "context": 1048576, "output": 65536 },
-          "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
-          "variants": {
-            "minimal": { "thinkingLevel": "minimal" },
-            "low": { "thinkingLevel": "low" },
-            "medium": { "thinkingLevel": "medium" },
-            "high": { "thinkingLevel": "high" }
-          }
-        },
-        "antigravity-gemini-3.1-flash-lite": {
-          "name": "Gemini 3.1 Flash Lite (Antigravity)",
-          "limit": { "context": 1048576, "output": 65535 },
-          "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
-          "variants": {
-            "minimal": { "thinkingLevel": "minimal" },
-            "low": { "thinkingLevel": "low" },
-            "medium": { "thinkingLevel": "medium" },
-            "high": { "thinkingLevel": "high" }
-          }
-        },
         "antigravity-gemini-3.8-flash": {
           "name": "Gemini 3.8 Flash (Antigravity)",
           "limit": { "context": 1048576, "output": 65536 },
@@ -291,7 +257,7 @@ Add this to your `~/.config/opencode/opencode.json`:
 }
 ```
 
-> **Backward Compatibility:** Legacy model names with `antigravity-` prefix (e.g., `antigravity-gemini-3-flash`) still work. The plugin automatically handles model name transformation for both Antigravity and Gemini CLI APIs.
+> **Backward Compatibility:** Legacy model names with `antigravity-` prefix (e.g., `antigravity-gemini-3-flash`) still work; Antigravity serves them as Gemini 3.8 Flash. The plugin automatically handles model name transformation for both Antigravity and Gemini CLI APIs.
 
 </details>
 
@@ -577,8 +543,8 @@ If you encounter errors during a session:
 {
   "google_auth": false,
   "agents": {
-    "frontend-ui-ux-engineer": { "model": "google/antigravity-gemini-3.1-pro" },
-    "document-writer": { "model": "google/antigravity-gemini-3-flash" }
+    "frontend-ui-ux-engineer": { "model": "google/antigravity-gemini-3.8-flash" },
+    "document-writer": { "model": "google/antigravity-gemini-3.8-flash" }
   }
 }
 ```
@@ -725,9 +691,9 @@ Disable built-in auth and override agent models in `oh-my-opencode.json`:
 {
   "google_auth": false,
   "agents": {
-    "frontend-ui-ux-engineer": { "model": "google/antigravity-gemini-3.1-pro" },
-    "document-writer": { "model": "google/antigravity-gemini-3-flash" },
-    "multimodal-looker": { "model": "google/antigravity-gemini-3-flash" }
+    "frontend-ui-ux-engineer": { "model": "google/antigravity-gemini-3.8-flash" },
+    "document-writer": { "model": "google/antigravity-gemini-3.8-flash" },
+    "multimodal-looker": { "model": "google/antigravity-gemini-3.8-flash" }
   }
 }
 ```

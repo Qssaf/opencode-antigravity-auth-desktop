@@ -44,7 +44,7 @@ export const GEMINI_3_THINKING_LEVELS = [
  */
 export const MODEL_ALIASES: Record<string, string> = {
   "gemini-flash-latest": "gemini-3.8-flash",
-  "gemini-flash-lite-latest": "gemini-3.1-flash-lite",
+  "gemini-flash-lite-latest": "gemini-3.8-flash",
 
   // Gemini 3 variants - for Gemini CLI only (tier stripped, thinkingLevel used)
   // For Antigravity, these are bypassed and full model name is kept
@@ -175,43 +175,46 @@ export function isGemini3OrLaterModel(model: string): boolean {
 }
 
 /**
- * Google dropped Gemini 3.5, 3.6 and 3.7 Flash. A request for any of them,
- * with or without a tier suffix, moves to Gemini 3.8 Flash at the same tier, so
- * sessions still set to an old model keep working. Minimal becomes low, which
- * is the lowest tier 3.8 Flash serves on Antigravity. Gemini 3.5 Flash-Lite
- * moves to Gemini 3.1 Flash-Lite, which keeps every tier.
+ * Google dropped Gemini 3.5, 3.6 and 3.7 Flash and 3.5 Flash-Lite. A request
+ * for any of them, with or without a tier suffix, moves to Gemini 3.8 Flash at
+ * the same tier, so sessions still set to an old model keep working. Minimal
+ * becomes low, the lowest tier 3.8 Flash serves on Antigravity.
  */
 export function remapRetiredGeminiFlashModel(model: string): string {
-  const lower = model.toLowerCase();
-  const lite = lower.match(/^gemini-3\.5-flash-lite(-(?:minimal|low|medium|high))?$/);
-  if (lite) return `gemini-3.1-flash-lite${lite[1] ?? ""}`;
-  const flash = lower.match(/^gemini-3\.[567]-flash(?:-(minimal|low|medium|high))?$/);
+  const flash = model.toLowerCase().match(/^gemini-3\.[567]-flash(?:-lite)?(?:-(minimal|low|medium|high))?$/);
   if (!flash) return model;
-  const tier = flash[1] === "minimal" ? "low" : flash[1];
-  return tier ? `gemini-3.8-flash-${tier}` : "gemini-3.8-flash";
+  return toGemini38Flash(flash[1]);
+}
+
+function toGemini38Flash(tier: string | undefined): string {
+  const level = tier === "minimal" ? "low" : tier;
+  return level ? `gemini-3.8-flash-${level}` : "gemini-3.8-flash";
 }
 
 /**
- * Antigravity retired Gemini 3 Pro and Gemini 3.5 Flash. Their backend ids still
- * answer HTTP 200, but with canned text ("... is no longer available. Please
- * switch to ...") instead of a model response, so a request for them moves to a
- * successor, keeping the requested tier. `gemini-3-flash-agent` and
- * `gemini-3.5-flash-extra-low` are the retired 3.5 Flash High and Low backend
- * ids. Gemini 3.6 and 3.7 Flash were dropped later; see
- * remapRetiredGeminiFlashModel.
- *
- * `gemini-pro-agent` is the backend id of Gemini 3.1 Pro (High) (see
- * toAntigravityWireModel). It resolves as `gemini-3.1-pro-high` so the Gemini 3
- * handling keyed on the model name (thinkingLevel, thought signatures) applies.
+ * Gemini chat models of the generations Antigravity no longer serves (2.0, 2.5,
+ * 3, 3.1, 3.5-3.7), with any preview/custom-tools and tier suffix. Listed
+ * explicitly so a model Google adds later (gemini-3.9-flash, ...) is left alone.
+ */
+const RETIRED_ANTIGRAVITY_GEMINI_REGEX =
+  /^gemini-(?:2\.0|2\.5|3|3\.0|3\.1|3\.5|3\.6|3\.7)-(?:pro|flash)(?:-lite)?(?:-preview)?(?:-customtools)?(?:-(minimal|low|medium|high))?$/;
+
+/**
+ * Antigravity now serves only Gemini 3.8 Flash and Gemini 4 Argon. A request
+ * for a retired Gemini chat model on Antigravity (Gemini 2.5, 3 Pro, 3.1 Pro,
+ * 3 Flash, 3.1 Flash-Lite, the dropped 3.5-3.7 Flash) moves to Gemini 3.8 Flash
+ * at the same tier, so sessions still set to an old model keep working.
+ * Retired backend ids get the same treatment: `gemini-pro-agent` (3.1 Pro High),
+ * `gemini-3-flash-agent` (3.5 Flash High) and `gemini-3.5-flash-extra-low`.
+ * Image models are left alone.
  */
 export function remapRetiredAntigravityGeminiModel(model: string): string {
   const lower = model.toLowerCase();
-  if (lower === "gemini-pro-agent") return "gemini-3.1-pro-high";
-  if (lower === "gemini-3-flash-agent") return "gemini-3.8-flash-high";
+  if (lower === "gemini-pro-agent" || lower === "gemini-3-flash-agent") return "gemini-3.8-flash-high";
   if (lower === "gemini-3.5-flash-extra-low") return "gemini-3.8-flash-low";
-  const pro = lower.match(/^gemini-3-pro(-(?:low|medium|high))?$/);
-  if (pro) return `gemini-3.1-pro${pro[1] ?? ""}`;
-  return remapRetiredGeminiFlashModel(model);
+  const retired = lower.match(RETIRED_ANTIGRAVITY_GEMINI_REGEX);
+  if (!retired) return model;
+  return toGemini38Flash(retired[1]);
 }
 
 /**
@@ -355,6 +358,10 @@ export function getDefaultGemini3ThinkingLevel(model: string): string {
  * @param options - Optional configuration including cli_first preference
  * @returns Resolved model with thinking configuration
  */
+function isRetiredOnAntigravity(model: string): boolean {
+  return remapRetiredAntigravityGeminiModel(model) !== model;
+}
+
 export function resolveModelWithTier(
   requestedModel: string,
   options: ModelResolverOptions = {},
@@ -373,11 +380,13 @@ export function resolveModelWithTier(
   const isImageModel = IMAGE_GENERATION_MODELS.test(modelWithoutQuota);
   const isClaudeModel = modelWithoutQuota.toLowerCase().includes("claude");
 
-  // Models default to Antigravity unless cli_first is enabled.
-  // Fallback to gemini-cli happens at the account rotation level when Antigravity is exhausted
+  // Models default to Antigravity unless cli_first is enabled, or Antigravity no
+  // longer serves them (it serves only Gemini 3.8 Flash and 4 Argon): those go to
+  // the Gemini CLI quota first. Fallback between the two happens at the account
+  // rotation level; on Antigravity a model it no longer serves becomes 3.8 Flash.
   const preferGeminiCli =
-    !isAntigravity &&
-    options.cli_first === true && !isImageModel && !isClaudeModel;
+    !isAntigravity && !isImageModel && !isClaudeModel &&
+    (options.cli_first === true || isRetiredOnAntigravity(MODEL_ALIASES[modelWithoutQuota] ?? modelWithoutQuota));
   const quotaPreference = preferGeminiCli
     ? ("gemini-cli" as const)
     : ("antigravity" as const);
@@ -670,18 +679,15 @@ export function resolveModelWithVariant(
 
   if (isGemini3) {
     const level = budgetToGemini3Level(budget);
-    const isAntigravityGemini3Pro =
-      base.quotaPreference === "antigravity" &&
-      isGemini3ProModel(base.actualModel);
-
-    const actualModel = isAntigravityGemini3Pro
-      ? (resolveAntigravityGemini3ProBackendModel(base.actualModel, level) ?? base.actualModel)
-      : base.actualModel;
+    // On Antigravity the tier is part of the backend id, so it follows the level.
+    const backend = base.quotaPreference === "antigravity"
+      ? resolveAntigravityGeminiBackend(base.actualModel, level)
+      : undefined;
 
     return {
       ...base,
-      actualModel,
-      thinkingLevel: level,
+      actualModel: backend?.model ?? base.actualModel,
+      thinkingLevel: backend?.thinkingLevel ?? level,
       thinkingBudget: undefined,
       configSource: "variant",
     };

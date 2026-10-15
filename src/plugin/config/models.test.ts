@@ -19,9 +19,6 @@ describe("OPENCODE_MODEL_DEFINITIONS", () => {
     const modelNames = Object.keys(OPENCODE_MODEL_DEFINITIONS).sort();
 
     expect(modelNames).toEqual([
-      "antigravity-gemini-3-flash",
-      "antigravity-gemini-3.1-flash-lite",
-      "antigravity-gemini-3.1-pro",
       "antigravity-gemini-3.8-flash",
       "antigravity-gemini-4-argon",
       "gemini-2.5-flash",
@@ -35,25 +32,6 @@ describe("OPENCODE_MODEL_DEFINITIONS", () => {
   });
 
   it("defines Gemini 3 variants for Antigravity models", () => {
-    expect(getModel("antigravity-gemini-3.1-pro").variants).toEqual({
-      low: { thinkingLevel: "low" },
-      high: { thinkingLevel: "high" },
-    });
-
-    expect(getModel("antigravity-gemini-3-flash").variants).toEqual({
-      minimal: { thinkingLevel: "minimal" },
-      low: { thinkingLevel: "low" },
-      medium: { thinkingLevel: "medium" },
-      high: { thinkingLevel: "high" },
-    });
-
-    expect(getModel("antigravity-gemini-3.1-flash-lite").variants).toEqual({
-      minimal: { thinkingLevel: "minimal" },
-      low: { thinkingLevel: "low" },
-      medium: { thinkingLevel: "medium" },
-      high: { thinkingLevel: "high" },
-    });
-
     expect(getModel("antigravity-gemini-3.8-flash").variants).toEqual({
       low: { thinkingLevel: "low" },
       medium: { thinkingLevel: "medium" },
@@ -157,13 +135,8 @@ describe("dynamic model discovery helpers", () => {
       },
     });
 
-    expect(models["antigravity-gemini-3-flash"]?.variants).toEqual({
-      minimal: { thinkingLevel: "minimal" },
-      low: { thinkingLevel: "low" },
-      medium: { thinkingLevel: "medium" },
-      high: { thinkingLevel: "high" },
-    });
-    // Dropped models are left out even when the registry still lists them.
+    // Models Antigravity no longer serves are left out even when the registry still lists them.
+    expect(models["antigravity-gemini-3-flash"]).toBeUndefined();
     expect(models["antigravity-gemini-3.6-flash"]).toBeUndefined();
     expect(models["antigravity-gemini-3.7-flash"]).toBeUndefined();
     expect(models["antigravity-gemini-3.8-flash"]?.variants).toEqual({

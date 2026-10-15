@@ -214,12 +214,22 @@ describe("header style resolution", () => {
 
   it("keeps antigravity for unsuffixed Gemini models when cli_first is disabled", () => {
     const headerStyle = getHeaderStyleFromUrl?.(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:streamGenerateContent",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:streamGenerateContent",
       "gemini",
       false,
     );
 
     expect(headerStyle).toBe("antigravity");
+  });
+
+  it("prefers the Gemini CLI quota for a model Antigravity no longer serves", () => {
+    const headerStyle = getHeaderStyleFromUrl?.(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:streamGenerateContent",
+      "gemini",
+      false,
+    );
+
+    expect(headerStyle).toBe("gemini-cli");
   });
 
   it("keeps antigravity for explicit antigravity prefix when cli_first is enabled", () => {
@@ -246,7 +256,7 @@ describe("header style resolution", () => {
 describe("header routing decision", () => {
   it("defaults to antigravity-first for unsuffixed Gemini when cli_first is disabled", () => {
     const decision = resolveHeaderRoutingDecision?.(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:streamGenerateContent",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:streamGenerateContent",
       "gemini",
       {
         cli_first: false,
@@ -314,7 +324,7 @@ describe("header routing decision", () => {
 
   it("ignores legacy quota_fallback when deciding Gemini fallback availability", () => {
     const decision = resolveHeaderRoutingDecision?.(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:streamGenerateContent",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:streamGenerateContent",
       "gemini",
       {
         cli_first: false,
