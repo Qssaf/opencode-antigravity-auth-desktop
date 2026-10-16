@@ -1592,8 +1592,8 @@ it("removes API key headers", () => {
         expect(result.effectiveModel).toBe("gemini-3.1-pro-preview-customtools");
       });
 
-      it("keeps non-Gemini-3 models unchanged regardless of headerStyle", () => {
-        const result = prepareAntigravityRequest(
+      it("sends a Gemini 2 model as Gemini 3.8 Flash on either quota", () => {
+        const antigravity = prepareAntigravityRequest(
           "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
           { method: "POST", body: JSON.stringify({ contents: [] }) },
           mockAccessToken,
@@ -1601,7 +1601,17 @@ it("removes API key headers", () => {
           undefined,
           "antigravity"
         );
-        expect(result.effectiveModel).toBe("gemini-2.5-flash");
+        expect(antigravity.effectiveModel).toBe("gemini-3.8-flash-high");
+
+        const cli = prepareAntigravityRequest(
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent",
+          { method: "POST", body: JSON.stringify({ contents: [] }) },
+          mockAccessToken,
+          mockProjectId,
+          undefined,
+          "gemini-cli"
+        );
+        expect(cli.effectiveModel).toBe("gemini-3.8-flash");
       });
     });
   });

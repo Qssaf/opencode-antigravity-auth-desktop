@@ -3,7 +3,7 @@ import { spawn } from "child_process";
 
 interface ModelTest {
   model: string;
-  category: "gemini-cli" | "antigravity-gemini" | "antigravity-claude";
+  category: "gemini-cli" | "antigravity-gemini";
 }
 
 const MODELS: ModelTest[] = [
@@ -11,8 +11,7 @@ const MODELS: ModelTest[] = [
   { model: "google/gemini-3-flash-preview", category: "gemini-cli" },
   { model: "google/gemini-3.8-flash", category: "gemini-cli" },
   { model: "google/gemini-3-pro-preview", category: "gemini-cli" },
-  { model: "google/gemini-2.5-pro", category: "gemini-cli" },
-  { model: "google/gemini-2.5-flash", category: "gemini-cli" },
+  { model: "google/gemini-3.1-pro", category: "gemini-cli" },
 
   // Antigravity Gemini
   { model: "google/antigravity-gemini-3.8-flash", category: "antigravity-gemini" },
@@ -89,7 +88,7 @@ Usage:
 
 Options:
   --model <model>      Test specific model
-  --category <cat>     Test by category (gemini-cli, antigravity-gemini, antigravity-claude)
+  --category <cat>     Test by category (gemini-cli, antigravity-gemini)
   --timeout <ms>       Timeout per model (default: 120000)
   --dry-run            List models without testing
   --help, -h           Show this help
@@ -97,7 +96,7 @@ Options:
 Examples:
   npx tsx script/test-models.ts --dry-run
   npx tsx script/test-models.ts --model google/gemini-3.8-flash
-  npx tsx script/test-models.ts --category antigravity-claude
+  npx tsx script/test-models.ts --category antigravity-gemini
 `);
 }
 

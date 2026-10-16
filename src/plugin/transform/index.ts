@@ -28,7 +28,8 @@ export {
   resolveAntigravityGemini3ProBackendModel,
   resolveAntigravityGeminiBackend,
   remapRetiredAntigravityGeminiModel,
-  remapRetiredGeminiFlashModel,
+  remapDroppedGeminiModel,
+  isGemini2Model,
   toAntigravityWireModel,
   isGemini3ProModel,
   isGemini3OrLaterModel,
@@ -60,7 +61,6 @@ export type { ClaudeTransformOptions, ClaudeTransformResult } from "./claude";
 export {
   isGeminiModel,
   isGemini3Model,
-  isGemini25Model,
   isImageGenerationModel,
   buildGemini3ThinkingConfig,
   buildGemini25ThinkingConfig,

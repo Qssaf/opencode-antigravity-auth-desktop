@@ -8,6 +8,7 @@
  * is created by the first `setup` and disposed by the last cleanup.
  */
 
+import { statSync } from "node:fs";
 import { tool } from "@opencode-ai/plugin/tool";
 import { ANTIGRAVITY_PROVIDER_ID } from "../constants";
 import {
@@ -19,6 +20,7 @@ import {
 } from "../plugin";
 import { formatRefreshParts, isOAuthAuth } from "../plugin/auth";
 import type { AntigravityRuntime } from "../plugin";
+import { getProjectConfigPath, getUserConfigPath } from "../plugin/config/loader";
 import { OPENCODE_MODEL_DEFINITIONS } from "../plugin/config/models";
 import { createLogger } from "../plugin/logger";
 import { loadAccounts } from "../plugin/storage";
@@ -501,8 +503,42 @@ export class V2Runtime {
  */
 export const RUNTIME_LINGER_MS = 10_000;
 
-let shared: { runtime: Promise<V2Runtime>; refs: number; linger?: ReturnType<typeof setTimeout> } | undefined;
+interface SharedRuntime {
+  runtime: Promise<V2Runtime>;
+  refs: number;
+  /** The directory the runtime loaded its config from, and what that config looked like. */
+  directory: string;
+  configStamp: string;
+  linger?: { timer: ReturnType<typeof setTimeout>; runtime: V2Runtime };
+}
+
+let shared: SharedRuntime | undefined;
 let disposing: Promise<void> | undefined;
+
+/**
+ * Modification times of the config files a runtime reads at creation, so a
+ * lingering runtime is not reused after the config changed: the reload that
+ * follows an edit must pick the new settings up, as it did before lingering.
+ */
+function readConfigStamp(directory: string): string {
+  return [getUserConfigPath(), getProjectConfigPath(directory)]
+    .map((path) => {
+      try {
+        return String(statSync(path).mtimeMs);
+      } catch {
+        return "-";
+      }
+    })
+    .join("|");
+}
+
+function retire(entry: SharedRuntime, runtime: V2Runtime): void {
+  if (shared === entry) shared = undefined;
+  const shutdown = runtime.dispose().finally(() => {
+    if (disposing === shutdown) disposing = undefined;
+  });
+  disposing = shutdown;
+}
 
 /**
  * Attaches a location to the shared runtime, creating it if none is alive.
@@ -511,13 +547,26 @@ let disposing: Promise<void> | undefined;
  * again first.
  */
 export async function acquireRuntime(ctx: Context): Promise<RuntimeHandle> {
+  // A lingering runtime whose config changed is replaced, not reused.
+  const lingering = shared?.linger;
+  if (shared && lingering && shared.configStamp !== readConfigStamp(shared.directory)) {
+    clearTimeout(lingering.timer);
+    shared.linger = undefined;
+    retire(shared, lingering.runtime);
+  }
+
   // A previous generation may still be shutting down.
   await disposing;
 
-  const entry = (shared ??= { runtime: V2Runtime.create(ctx), refs: 0 });
+  const entry = (shared ??= {
+    runtime: V2Runtime.create(ctx),
+    refs: 0,
+    directory: ctx.location.directory,
+    configStamp: readConfigStamp(ctx.location.directory),
+  });
   entry.refs += 1;
   if (entry.linger) {
-    clearTimeout(entry.linger);
+    clearTimeout(entry.linger.timer);
     entry.linger = undefined;
   }
 
@@ -544,17 +593,14 @@ export async function acquireRuntime(ctx: Context): Promise<RuntimeHandle> {
       // pool is saved now. Not awaited: a save waiting on the file lock would
       // hold up the reload this lingering is meant to keep short.
       void runtime.flush();
-      entry.linger = setTimeout(() => {
+      const timer = setTimeout(() => {
         entry.linger = undefined;
         if (entry.refs !== 0 || shared !== entry) return;
-        shared = undefined;
-        const shutdown = runtime.dispose().finally(() => {
-          if (disposing === shutdown) disposing = undefined;
-        });
-        disposing = shutdown;
+        retire(entry, runtime);
       }, RUNTIME_LINGER_MS);
       // A lingering runtime must not keep the process alive.
-      entry.linger.unref?.();
+      timer.unref?.();
+      entry.linger = { timer, runtime };
     },
   };
 }

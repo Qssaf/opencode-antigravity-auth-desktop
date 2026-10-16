@@ -3284,11 +3284,13 @@ export const createAntigravityRuntime = (providerId: string) => async (
                   continue;
                 }
 
-                if (isUltraOnlyRequest && !response.ok) {
-                  const refusalBody = response.status === 400
+                // Only Antigravity serves Argon, so only its answer says anything
+                // about the account's subscription.
+                if (isUltraOnlyRequest && headerStyle === "antigravity" && !response.ok) {
+                  const refusalBody = response.status === 400 || response.status === 403
                     ? await response.clone().text().catch(() => "")
                     : "";
-                  if (isUltraEntitlementRefusal(response.status, refusalBody)) {
+                  if (isUltraEntitlementRefusal(response.status, refusalBody, permissionDeniedOnProject)) {
                     markUltraModelRefused(account.parts.refreshToken);
                     pushDebug(`ultra-refused: account ${account.index} status=${response.status}`);
                     await logResponseBody(debugContext, response, response.status);
@@ -4625,9 +4627,11 @@ function resolveHeaderRoutingDecision(
     cliFirst,
     preferredHeaderStyle,
     explicitQuota,
+    // Gemini CLI does not serve image models or Gemini 4 Argon.
     allowQuotaFallback:
       family === "gemini" &&
-      resolvedModel?.isImageModel !== true,
+      resolvedModel?.isImageModel !== true &&
+      !isGemini4ArgonModel(modelWithSuffix ?? ""),
   };
 }
 

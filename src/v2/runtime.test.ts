@@ -55,6 +55,22 @@ describe("acquireRuntime", () => {
     await second.release();
   });
 
+  it("builds a new runtime when the config changed while the old one lingered", async () => {
+    const dispose = vi.spyOn(V2Runtime.prototype, "dispose");
+
+    const first = await acquireRuntime(fakeContext(configDir));
+    await first.release();
+
+    // An edit made during the reload must reach the runtime the reload builds.
+    await fs.mkdir(join(configDir, ".opencode"), { recursive: true });
+    await fs.writeFile(join(configDir, ".opencode", "antigravity.json"), JSON.stringify({ cli_first: true }));
+
+    const second = await acquireRuntime(fakeContext(configDir));
+    expect(second.runtime).not.toBe(first.runtime);
+    expect(dispose).toHaveBeenCalledTimes(1);
+    await second.release();
+  });
+
   it("disposes the runtime once nothing attaches within the linger time", async () => {
     const dispose = vi.spyOn(V2Runtime.prototype, "dispose");
 

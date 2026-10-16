@@ -21,11 +21,15 @@ describe("ultra-gate", () => {
     expect(isUltraModelRefused("token-a", 1_000)).toBe(false);
   });
 
-  it("treats 403 and 404 as a refusal, and a 400 only when it is about the subscription", () => {
+  it("treats 404 as a refusal, and 403 or 400 only when they are about the model's entitlement", () => {
     expect(isUltraEntitlementRefusal(404, "")).toBe(true);
-    expect(isUltraEntitlementRefusal(403, "")).toBe(true);
+    // A plain 403 is a credential or access problem.
+    expect(isUltraEntitlementRefusal(403, "The caller does not have permission")).toBe(false);
+    expect(isUltraEntitlementRefusal(403, "Permission denied on resource project", true)).toBe(true);
+    expect(isUltraEntitlementRefusal(403, "Requires a Google AI Ultra subscription")).toBe(true);
     expect(isUltraEntitlementRefusal(400, "This model requires a Google AI Ultra subscription.")).toBe(true);
     expect(isUltraEntitlementRefusal(400, "Request contains an invalid argument.")).toBe(false);
+    expect(isUltraEntitlementRefusal(400, "thinking level not available for this tier")).toBe(false);
     expect(isUltraEntitlementRefusal(429, "Resource exhausted")).toBe(false);
     expect(isUltraEntitlementRefusal(500, "ultra")).toBe(false);
   });

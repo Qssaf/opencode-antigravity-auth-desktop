@@ -5,15 +5,15 @@ import { __testExports, fetchRateLimitSummary, findRateLimitBucket, isGeminiRate
 describe("Antigravity quota aggregation", () => {
   it("uses the best available Gemini variant instead of the most exhausted rollout variant", () => {
     const summary = __testExports.aggregateQuota({
-      "gemini-3.5-flash-low": {
-        displayName: "Gemini 3.5 Flash Low",
+      "gemini-3.8-flash-low": {
+        displayName: "Gemini 3.8 Flash Low",
         quotaInfo: {
           remainingFraction: 1,
           resetTime: "2026-05-26T18:00:00Z",
         },
       },
-      "gemini-3-flash-agent": {
-        displayName: "Gemini 3 Flash Agent",
+      "gemini-3.8-flash-high": {
+        displayName: "Gemini 3.8 Flash High",
         quotaInfo: {
           remainingFraction: 0,
           resetTime: "2026-05-27T18:00:00Z",
@@ -26,17 +26,62 @@ describe("Antigravity quota aggregation", () => {
     expect(summary.groups["gemini-flash"]?.modelCount).toBe(2);
   });
 
+  it("leaves out models Google dropped, so their unused quota does not hide an exhausted 3.8 Flash", () => {
+    const summary = __testExports.aggregateQuota({
+      "gemini-3.8-flash-high": {
+        displayName: "Gemini 3.8 Flash High",
+        quotaInfo: { remainingFraction: 0, resetTime: "2026-05-27T18:00:00Z" },
+      },
+      "gemini-3.5-flash-lite": {
+        displayName: "Gemini 3.5 Flash Lite",
+        quotaInfo: { remainingFraction: 1, resetTime: "2026-05-26T18:00:00Z" },
+      },
+      "gemini-3.7-flash": {
+        displayName: "Gemini 3.7 Flash",
+        quotaInfo: { remainingFraction: 1, resetTime: "2026-05-26T18:00:00Z" },
+      },
+      "gemini-3-flash-agent": {
+        displayName: "Gemini 3 Flash Agent",
+        quotaInfo: { remainingFraction: 1 },
+      },
+      "gemini-2.5-flash": {
+        displayName: "Gemini 2.5 Flash",
+        quotaInfo: { remainingFraction: 1 },
+      },
+    });
+
+    expect(summary.groups["gemini-flash"]).toEqual({
+      remainingFraction: 0,
+      resetTime: "2026-05-27T18:00:00Z",
+      modelCount: 1,
+    });
+    expect(summary.modelCount).toBe(1);
+  });
+
+  it("leaves dropped models out of the Gemini CLI quota", () => {
+    const summary = __testExports.aggregateGeminiCliQuota({
+      buckets: [
+        { modelId: "gemini-3.7-flash", remainingFraction: 1 },
+        { modelId: "gemini-3.5-flash-lite", remainingFraction: 1 },
+        { modelId: "gemini-2.5-pro", remainingFraction: 1 },
+        { modelId: "gemini-3.8-flash", remainingFraction: 0.5 },
+        { modelId: "gemini-3.1-pro", remainingFraction: 0.25 },
+      ],
+    });
+    expect(summary.models.map((m) => m.modelId)).toEqual(["gemini-3.1-pro", "gemini-3.8-flash"]);
+  });
+
   it("keeps resetTime coupled to the model whose remainingFraction is displayed", () => {
     const summary = __testExports.aggregateQuota({
-      "gemini-3.5-flash-low": {
-        displayName: "Gemini 3.5 Flash Low",
+      "gemini-3.8-flash-low": {
+        displayName: "Gemini 3.8 Flash Low",
         quotaInfo: {
           remainingFraction: 1,
           resetTime: "2026-05-27T18:00:00Z",
         },
       },
-      "gemini-3-flash-agent": {
-        displayName: "Gemini 3 Flash Agent",
+      "gemini-3.8-flash-high": {
+        displayName: "Gemini 3.8 Flash High",
         quotaInfo: {
           remainingFraction: 0,
           resetTime: "2026-05-26T18:00:00Z",
@@ -44,7 +89,7 @@ describe("Antigravity quota aggregation", () => {
       },
     });
 
-    // The displayed remainingFraction (1) belongs to gemini-3.5-flash-low, so the
+    // The displayed remainingFraction (1) belongs to gemini-3.8-flash-low, so the
     // reset time must be that same model's reset time, not the earliest across models.
     expect(summary.groups["gemini-flash"]?.remainingFraction).toBe(1);
     expect(summary.groups["gemini-flash"]?.resetTime).toBe("2026-05-27T18:00:00Z");
@@ -52,15 +97,15 @@ describe("Antigravity quota aggregation", () => {
 
   it("takes the resetTime of the winning model regardless of iteration order", () => {
     const summary = __testExports.aggregateQuota({
-      "gemini-3-flash-agent": {
-        displayName: "Gemini 3 Flash Agent",
+      "gemini-3.8-flash-high": {
+        displayName: "Gemini 3.8 Flash High",
         quotaInfo: {
           remainingFraction: 0.2,
           resetTime: "2026-05-26T18:00:00Z",
         },
       },
-      "gemini-3.5-flash-low": {
-        displayName: "Gemini 3.5 Flash Low",
+      "gemini-3.8-flash-low": {
+        displayName: "Gemini 3.8 Flash Low",
         quotaInfo: {
           remainingFraction: 0.9,
           resetTime: "2026-05-28T18:00:00Z",
@@ -76,15 +121,15 @@ describe("Antigravity quota aggregation", () => {
     // Both models are equally drained; the representative reset time must be the
     // earliest, regardless of iteration order (the later-reset model is first).
     const summary = __testExports.aggregateQuota({
-      "gemini-3.5-flash-low": {
-        displayName: "Gemini 3.5 Flash Low",
+      "gemini-3.8-flash-low": {
+        displayName: "Gemini 3.8 Flash Low",
         quotaInfo: {
           remainingFraction: 0.5,
           resetTime: "2026-05-28T18:00:00Z",
         },
       },
-      "gemini-3-flash-agent": {
-        displayName: "Gemini 3 Flash Agent",
+      "gemini-3.8-flash-high": {
+        displayName: "Gemini 3.8 Flash High",
         quotaInfo: {
           remainingFraction: 0.5,
           resetTime: "2026-05-26T18:00:00Z",
@@ -98,8 +143,8 @@ describe("Antigravity quota aggregation", () => {
 
   it("ignores unparseable reset times", () => {
     const summary = __testExports.aggregateQuota({
-      "gemini-3-flash-agent": {
-        displayName: "Gemini 3 Flash Agent",
+      "gemini-3.8-flash-high": {
+        displayName: "Gemini 3.8 Flash High",
         quotaInfo: {
           remainingFraction: 0.5,
           resetTime: "not-a-date",

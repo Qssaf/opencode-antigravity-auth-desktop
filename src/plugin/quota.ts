@@ -9,7 +9,13 @@ import { accessTokenExpired, formatRefreshParts, parseRefreshParts } from "./aut
 import { logQuotaFetch, logQuotaStatus } from "./debug";
 import { ensureProjectContext } from "./project";
 import { refreshAccessToken } from "./token";
-import { getModelFamily, isGemini3OrLaterModel } from "./transform/model-resolver";
+import {
+  getModelFamily,
+  isGemini2Model,
+  isGemini3OrLaterModel,
+  remapDroppedGeminiModel,
+  remapRetiredAntigravityGeminiModel,
+} from "./transform/model-resolver";
 import { recordAntigravityAvailableModels } from "./model-catalog";
 import type { PluginClient, OAuthAuthDetails } from "./types";
 import type { AccountMetadataV3 } from "./storage";
@@ -163,6 +169,13 @@ function classifyQuotaGroup(modelName: string, displayName?: string): QuotaGroup
   const combined = `${modelName} ${displayName ?? ""}`.toLowerCase();
   if (combined.includes("claude")) {
     return "claude";
+  }
+  // A model Antigravity no longer serves can still be listed with its own,
+  // untouched quota. Counting it would make the group look available while the
+  // model that replaced it (Gemini 3.8 Flash) is used up.
+  const id = modelName.toLowerCase().replace(/^antigravity-/, "");
+  if (isGemini2Model(id) || remapRetiredAntigravityGeminiModel(id) !== id) {
+    return null;
   }
   const isGemini3 = isGemini3OrLaterModel(combined) || /gemini (?:[3-9]|[1-9]\d+)\b/.test(combined);
   if (!isGemini3) {
@@ -332,11 +345,9 @@ function aggregateGeminiCliQuota(response: RetrieveUserQuotaResponse): GeminiCli
     }
     
     // Filter out models we don't care about for Gemini CLI quotas
-    // Only show Gemini 3+ and gemini-2.5-pro models (the premium ones)
+    // Only show Gemini 3 and later models, without the ones Google dropped
     const modelId = bucket.modelId;
-    const isRelevantModel = 
-      isGemini3OrLaterModel(modelId) || 
-      modelId === "gemini-2.5-pro";
+    const isRelevantModel = isGemini3OrLaterModel(modelId) && remapDroppedGeminiModel(modelId) === modelId;
     
     if (!isRelevantModel) {
       continue;
@@ -629,5 +640,6 @@ export async function checkAccountsQuota(
 
 export const __testExports = {
   aggregateQuota,
+  aggregateGeminiCliQuota,
   mapWithConcurrency,
 }

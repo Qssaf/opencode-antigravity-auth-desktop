@@ -110,7 +110,7 @@ var EMPTY_SCHEMA_PLACEHOLDER_NAME = "_placeholder";
 var EMPTY_SCHEMA_PLACEHOLDER_DESCRIPTION = "Placeholder. Always pass true.";
 var SKIP_THOUGHT_SIGNATURE = "skip_thought_signature_validator";
 var MIN_SIGNATURE_LENGTH = 50;
-var SEARCH_MODEL = "gemini-2.5-flash";
+var SEARCH_MODEL = "gemini-3.8-flash-low";
 var SEARCH_TIMEOUT_MS = 6e4;
 var SEARCH_SYSTEM_INSTRUCTION = `You are an expert web search assistant with access to Google Search and URL analysis tools.
 
@@ -1909,8 +1909,6 @@ import { homedir as homedir2 } from "node:os";
 // src/plugin/transform/model-resolver.ts
 var THINKING_TIER_BUDGETS = {
   claude: { low: 8192, medium: 16384, high: 32768 },
-  "gemini-2.5-pro": { low: 8192, medium: 16384, high: 32768 },
-  "gemini-2.5-flash": { low: 6144, medium: 12288, high: 24576 },
   default: { low: 4096, medium: 8192, high: 16384 }
 };
 var MODEL_ALIASES = {
@@ -1926,7 +1924,6 @@ var MODEL_ALIASES = {
   "gemini-3-flash-medium": "gemini-3-flash",
   "gemini-3-flash-high": "gemini-3-flash"
   // Image generation models - only gemini-3-pro-image is available via Antigravity API
-  // Note: gemini-2.5-flash-image (Nano Banana) is NOT supported by Antigravity - only Google AI API
   // Reference: Antigravity-Manager/src-tauri/src/proxy/common/model_mapping.rs
 };
 var TIER_REGEX = /-(minimal|low|medium|high)$/;
@@ -1934,7 +1931,7 @@ var QUOTA_PREFIX_REGEX = /^antigravity-/i;
 var GEMINI_3_PRO_REGEX = /^gemini-3(?:\.\d+)?-pro/i;
 var GEMINI_3_FLASH_REGEX = /^gemini-3(?:\.\d+)?-flash/i;
 var GEMINI_3_PRO_TIER_REGEX = /^(gemini-3(?:\.\d+)?-pro)(?:-(minimal|low|medium|high))?$/i;
-var GEMINI_38_FLASH_REGEX = /^gemini-3\.8-flash(?:-(low|medium|high))?$/i;
+var GEMINI_38_FLASH_REGEX = /^gemini-3\.8-flash(?:-(minimal|low|medium|high))?$/i;
 var GEMINI_38_FLASH_MODELS = {
   low: "gemini-3.8-flash-low",
   medium: "gemini-3.8-flash-medium",
@@ -1951,7 +1948,7 @@ var GEMINI_DOTTED_MINOR_REGEX = /^gemini-3\.(?:[1-9]\d*)/i;
 var IMAGE_GENERATION_MODELS = /image|imagen/i;
 function supportsThinkingTiers(model) {
   const lower = model.toLowerCase();
-  return isGemini3OrLaterModel(lower) || lower.includes("gemini-2.5") || lower.includes("claude") && lower.includes("thinking");
+  return isGemini3OrLaterModel(lower) || lower.includes("claude") && lower.includes("thinking");
 }
 function extractThinkingTierFromModel(model) {
   if (!supportsThinkingTiers(model)) {
@@ -1964,17 +1961,11 @@ function getBudgetFamily(model) {
   if (model.includes("claude")) {
     return "claude";
   }
-  if (model.includes("gemini-2.5-pro")) {
-    return "gemini-2.5-pro";
-  }
-  if (model.includes("gemini-2.5-flash")) {
-    return "gemini-2.5-flash";
-  }
   return "default";
 }
 function isThinkingCapableModel(model) {
   const lower = model.toLowerCase();
-  return lower.includes("thinking") || isGemini3OrLaterModel(lower) || lower.includes("gemini-2.5");
+  return lower.includes("thinking") || isGemini3OrLaterModel(lower);
 }
 function isGemini3ProModel(model) {
   return GEMINI_3_PRO_REGEX.test(model);
@@ -1985,14 +1976,17 @@ function isGemini3FlashModel(model) {
 function isGemini3OrLaterModel(model) {
   return GEMINI_3_OR_LATER_REGEX.test(model);
 }
-function remapRetiredGeminiFlashModel(model) {
-  const flash = model.toLowerCase().match(/^gemini-3\.[567]-flash(?:-lite)?(?:-(minimal|low|medium|high))?$/);
-  if (!flash) return model;
-  return toGemini38Flash(flash[1]);
+var DROPPED_GEMINI_REGEX = /^gemini-(?:2(?:\.\d+)?-(?:pro|flash)(?:-lite)?(?:-preview)?(?:-\d{2}-\d{2}|-\d{3})?|3\.[567]-flash(?:-lite)?)(?:-(minimal|low|medium|high))?$/;
+function remapDroppedGeminiModel(model) {
+  const dropped = model.toLowerCase().match(DROPPED_GEMINI_REGEX);
+  if (!dropped) return model;
+  return toGemini38Flash(dropped[1]);
+}
+function isGemini2Model(model) {
+  return /^(?:antigravity-)?gemini-2(?:[.-]|$)/i.test(model);
 }
 function toGemini38Flash(tier) {
-  const level = tier === "minimal" ? "low" : tier;
-  return level ? `gemini-3.8-flash-${level}` : "gemini-3.8-flash";
+  return tier ? `gemini-3.8-flash-${tier}` : "gemini-3.8-flash";
 }
 var RETIRED_ANTIGRAVITY_GEMINI_REGEX = /^gemini-(?:2\.0|2\.5|3|3\.0|3\.1|3\.5|3\.6|3\.7)-(?:pro|flash)(?:-lite)?(?:-preview)?(?:-customtools)?(?:-(minimal|low|medium|high))?$/;
 function remapRetiredAntigravityGeminiModel(model) {
@@ -2001,7 +1995,7 @@ function remapRetiredAntigravityGeminiModel(model) {
   if (lower === "gemini-3.5-flash-extra-low") return "gemini-3.8-flash-low";
   const retired = lower.match(RETIRED_ANTIGRAVITY_GEMINI_REGEX);
   if (!retired) return model;
-  return toGemini38Flash(retired[1]);
+  return toGemini38Flash(retired[1] === "minimal" ? "low" : retired[1]);
 }
 var ANTIGRAVITY_WIRE_MODEL_IDS = {
   "gemini-3.1-pro-high": "gemini-pro-agent"
@@ -2077,12 +2071,12 @@ function isRetiredOnAntigravity(model) {
 function resolveModelWithTier(requestedModel, options = {}) {
   const isAntigravity = QUOTA_PREFIX_REGEX.test(requestedModel);
   const strippedModel = requestedModel.replace(QUOTA_PREFIX_REGEX, "");
-  const modelWithoutQuota = isAntigravity ? remapRetiredAntigravityGeminiModel(strippedModel) : remapRetiredGeminiFlashModel(strippedModel);
+  const modelWithoutQuota = isAntigravity ? remapRetiredAntigravityGeminiModel(strippedModel) : remapDroppedGeminiModel(strippedModel);
   const tier = extractThinkingTierFromModel(modelWithoutQuota);
   const baseName = tier ? modelWithoutQuota.replace(TIER_REGEX, "") : modelWithoutQuota;
   const isImageModel = IMAGE_GENERATION_MODELS.test(modelWithoutQuota);
   const isClaudeModel2 = modelWithoutQuota.toLowerCase().includes("claude");
-  const preferGeminiCli = !isAntigravity && !isImageModel && !isClaudeModel2 && (options.cli_first === true || isRetiredOnAntigravity(MODEL_ALIASES[modelWithoutQuota] ?? modelWithoutQuota));
+  const preferGeminiCli = !isAntigravity && !isImageModel && !isClaudeModel2 && !isGemini4ArgonModel(modelWithoutQuota) && (options.cli_first === true || isRetiredOnAntigravity(MODEL_ALIASES[modelWithoutQuota] ?? modelWithoutQuota));
   const quotaPreference = preferGeminiCli ? "gemini-cli" : "antigravity";
   const explicitQuota = isAntigravity || isImageModel;
   const isGemini3 = isGemini3OrLaterModel(modelWithoutQuota);
@@ -2192,13 +2186,13 @@ function mapAntigravityModelToPublicApi(model) {
 }
 function resolveModelForHeaderStyle(requestedModel, headerStyle) {
   const aliasResolvedModel = MODEL_ALIASES[requestedModel];
-  const keepsTier = headerStyle === "antigravity" && TIER_REGEX.test(requestedModel);
+  const keepsTier = TIER_REGEX.test(requestedModel);
   if (aliasResolvedModel && !keepsTier) {
     return resolveModelForHeaderStyle(aliasResolvedModel, headerStyle);
   }
   const isGemini3 = isGemini3OrLaterModel(requestedModel);
   if (headerStyle === "agy-sdk") {
-    const modelWithTier = remapRetiredGeminiFlashModel(requestedModel.replace(/^antigravity-/i, ""));
+    const modelWithTier = remapDroppedGeminiModel(requestedModel.replace(/^antigravity-/i, ""));
     const stripped = modelWithTier.replace(/-(minimal|low|medium|high)$/i, "");
     const transformedModel = mapAntigravityModelToPublicApi(stripped) ?? stripped;
     return {
@@ -2217,7 +2211,9 @@ function resolveModelForHeaderStyle(requestedModel, headerStyle) {
     return resolveModelWithTier(prefixedModel);
   }
   if (headerStyle === "gemini-cli") {
-    let transformedModel = requestedModel.replace(/^antigravity-/i, "").replace(/-(minimal|low|medium|high)$/i, "");
+    const withoutQuota = remapDroppedGeminiModel(requestedModel.replace(/^antigravity-/i, ""));
+    const tier = withoutQuota.match(TIER_REGEX)?.[1];
+    let transformedModel = withoutQuota.replace(TIER_REGEX, "");
     const hasPreviewSuffix = /-preview($|-)/i.test(transformedModel);
     const usesBareName = GEMINI_DOTTED_MINOR_REGEX.test(transformedModel);
     if (usesBareName && /-preview$/i.test(transformedModel)) {
@@ -2225,8 +2221,11 @@ function resolveModelForHeaderStyle(requestedModel, headerStyle) {
     } else if (!hasPreviewSuffix && !usesBareName) {
       transformedModel = `${transformedModel}-preview`;
     }
+    const resolved = resolveModelWithTier(transformedModel);
+    const thinkingLevel = tier && isGemini3ProModel(transformedModel) ? tier === "low" || tier === "minimal" ? "low" : "high" : tier;
     return {
-      ...resolveModelWithTier(transformedModel),
+      ...resolved,
+      ...thinkingLevel ? { thinkingLevel } : {},
       quotaPreference: "gemini-cli"
     };
   }
@@ -2263,16 +2262,6 @@ var OPENCODE_MODEL_DEFINITIONS = {
       medium: { thinkingLevel: "medium" },
       high: { thinkingLevel: "high" }
     }
-  },
-  "gemini-2.5-flash": {
-    name: "Gemini 2.5 Flash (Gemini CLI)",
-    limit: { context: 1048576, output: 65536 },
-    modalities: DEFAULT_MODALITIES
-  },
-  "gemini-2.5-pro": {
-    name: "Gemini 2.5 Pro (Gemini CLI)",
-    limit: { context: 1048576, output: 65536 },
-    modalities: DEFAULT_MODALITIES
   },
   "gemini-3-flash-preview": {
     name: "Gemini 3 Flash Preview (Gemini CLI)",
@@ -2333,7 +2322,7 @@ function defaultVariantsForModel(modelId) {
       max: { thinkingConfig: { thinkingBudget: 32768 } }
     };
   }
-  if (isGemini3OrLaterModel(normalized) || normalized.startsWith("gemini-2.5")) {
+  if (isGemini3OrLaterModel(normalized)) {
     if (normalized.includes("pro")) {
       return {
         low: { thinkingLevel: "low" },
@@ -2373,7 +2362,7 @@ function modelsFromGeminiApi(models) {
   for (const model of models) {
     if (!supportsGeminiGeneration(model)) continue;
     const modelId = modelIdFromGeminiName(model.name) || model.baseModelId;
-    if (!modelId) continue;
+    if (!modelId || isGemini2Model(modelId)) continue;
     const variants = defaultVariantsForModel(modelId);
     const discovered = {
       name: model.displayName ? `${model.displayName} (Gemini API)` : `${titleFromModelId(modelId)} (Gemini API)`,
@@ -2395,7 +2384,7 @@ function modelsFromAntigravityAvailableModels(models) {
     const modelId = antigravityModelIdFromEntry(sourceId, entry);
     if (!modelId) continue;
     const backendId = modelId.replace(/^antigravity-/, "");
-    if (remapRetiredAntigravityGeminiModel(backendId) !== backendId || toAntigravityWireModel(backendId) !== backendId) {
+    if (isGemini2Model(backendId) || remapRetiredAntigravityGeminiModel(backendId) !== backendId || toAntigravityWireModel(backendId) !== backendId) {
       continue;
     }
     const variants = defaultVariantsForModel(modelId);
@@ -9079,9 +9068,10 @@ function isUltraModelRefused(refreshToken, now = Date.now()) {
   }
   return true;
 }
-var ENTITLEMENT_WORDS = /\b(?:ultra|subscription|tier|entitle\w*|not available|not enabled)\b/i;
-function isUltraEntitlementRefusal(status, bodyText) {
-  if (status === 404 || status === 403) return true;
+var ENTITLEMENT_WORDS = /\b(?:ultra|subscription|entitle\w*)\b/i;
+function isUltraEntitlementRefusal(status, bodyText, permissionDeniedOnProject = false) {
+  if (status === 404) return true;
+  if (status === 403) return permissionDeniedOnProject || ENTITLEMENT_WORDS.test(bodyText);
   return status === 400 && ENTITLEMENT_WORDS.test(bodyText);
 }
 function ultraRequiredMessage(modelLabel, accountCount2) {
@@ -9090,8 +9080,8 @@ function ultraRequiredMessage(modelLabel, accountCount2) {
     `[Antigravity Error] ${modelLabel} needs a Google AI Ultra subscription.`,
     `Google refused it for ${accounts}, so none of them has Ultra.`,
     "",
-    "Pick another model (Gemini 3.8 Flash or Gemini 3.1 Pro), or sign in an Ultra",
-    "account with `opencode auth login`. Accounts are tried again after an hour,",
+    "Pick Gemini 3.8 Flash instead, or sign in an Ultra account with",
+    "`opencode auth login`. Accounts are tried again after an hour,",
     "so an account that upgrades to Ultra starts working without a restart."
   ].join("\n");
 }
@@ -11369,6 +11359,10 @@ function classifyQuotaGroup(modelName, displayName) {
   if (combined.includes("claude")) {
     return "claude";
   }
+  const id = modelName.toLowerCase().replace(/^antigravity-/, "");
+  if (isGemini2Model(id) || remapRetiredAntigravityGeminiModel(id) !== id) {
+    return null;
+  }
   const isGemini3 = isGemini3OrLaterModel(combined) || /gemini (?:[3-9]|[1-9]\d+)\b/.test(combined);
   if (!isGemini3) {
     return null;
@@ -11479,7 +11473,7 @@ function aggregateGeminiCliQuota(response) {
       continue;
     }
     const modelId = bucket.modelId;
-    const isRelevantModel = isGemini3OrLaterModel(modelId) || modelId === "gemini-2.5-pro";
+    const isRelevantModel = isGemini3OrLaterModel(modelId) && remapDroppedGeminiModel(modelId) === modelId;
     if (!isRelevantModel) {
       continue;
     }
@@ -12146,9 +12140,10 @@ ${urlList}`;
       }
     ],
     tools,
+    // Gemini 3.8 Flash takes no sampling settings, and its thinking level
+    // matches the tier in SEARCH_MODEL.
     generationConfig: {
-      temperature: 0,
-      topP: 1
+      thinkingConfig: { thinkingLevel: "low" }
     }
   };
   const wrappedBody = {
@@ -12331,8 +12326,6 @@ function extractRequestedGeminiModel(urlString) {
   return extractGeminiModelFromUrl(urlString);
 }
 var PUBLIC_GEMINI_API_MODEL_SUGGESTIONS = [
-  "gemini-2.5-pro",
-  "gemini-2.5-flash",
   "gemini-3.1-pro-preview",
   "gemini-3.1-flash-lite",
   "gemini-3.8-flash",
@@ -14835,9 +14828,9 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                       lastFailure = createFailureContext(response);
                       continue;
                     }
-                    if (isUltraOnlyRequest && !response.ok) {
-                      const refusalBody = response.status === 400 ? await response.clone().text().catch(() => "") : "";
-                      if (isUltraEntitlementRefusal(response.status, refusalBody)) {
+                    if (isUltraOnlyRequest && headerStyle === "antigravity" && !response.ok) {
+                      const refusalBody = response.status === 400 || response.status === 403 ? await response.clone().text().catch(() => "") : "";
+                      if (isUltraEntitlementRefusal(response.status, refusalBody, permissionDeniedOnProject)) {
                         markUltraModelRefused(account.parts.refreshToken);
                         pushDebug(`ultra-refused: account ${account.index} status=${response.status}`);
                         await logResponseBody(debugContext, response, response.status);
@@ -15918,7 +15911,8 @@ function resolveHeaderRoutingDecision(urlString, family, config) {
     cliFirst,
     preferredHeaderStyle,
     explicitQuota,
-    allowQuotaFallback: family === "gemini" && resolvedModel?.isImageModel !== true
+    // Gemini CLI does not serve image models or Gemini 4 Argon.
+    allowQuotaFallback: family === "gemini" && resolvedModel?.isImageModel !== true && !isGemini4ArgonModel(modelWithSuffix ?? "")
   };
 }
 function getCliFirst(config) {

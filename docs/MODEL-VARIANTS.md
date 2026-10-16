@@ -43,7 +43,6 @@ The plugin accepts different variant formats depending on the model family:
 |--------------|----------------|---------|
 | **Claude** | `thinkingConfig.thinkingBudget` | `{ "thinkingConfig": { "thinkingBudget": 8192 } }` |
 | **Gemini 3 and 4** | `thinkingLevel` | `{ "thinkingLevel": "high" }` |
-| **Gemini 2.5** | `thinkingConfig.thinkingBudget` | `{ "thinkingConfig": { "thinkingBudget": 8192 } }` |
 
 ---
 

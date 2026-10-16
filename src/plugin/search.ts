@@ -253,9 +253,10 @@ export async function executeSearch(
       },
     ],
     tools,
+    // Gemini 3.8 Flash takes no sampling settings, and its thinking level
+    // matches the tier in SEARCH_MODEL.
     generationConfig: {
-      temperature: 0,
-      topP: 1,
+      thinkingConfig: { thinkingLevel: "low" },
     },
   };
 

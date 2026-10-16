@@ -87,7 +87,7 @@ describe("retired and renamed Antigravity ids", () => {
 });
 
 describe("models Antigravity no longer serves", () => {
-  it.each(["gemini-3.1-pro", "gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-2.5-pro", "gemini-2.5-flash"])(
+  it.each(["gemini-3.1-pro", "gemini-3-pro-preview", "gemini-3-flash-preview"])(
     "routes %s to the Gemini CLI quota first",
     (model) => {
       const result = resolveModelWithTier(model);
@@ -105,6 +105,19 @@ describe("models Antigravity no longer serves", () => {
     expect(resolveModelForHeaderStyle("gemini-3-pro-preview", "antigravity").actualModel).toBe("gemini-3.8-flash-high");
     expect(resolveModelForHeaderStyle("gemini-3.1-pro-low", "antigravity").actualModel).toBe("gemini-3.8-flash-low");
     expect(resolveModelForHeaderStyle("gemini-3.1-pro-low", "gemini-cli").actualModel).toBe("gemini-3.1-pro");
+  });
+
+  it("keeps Gemini 4 Argon on Antigravity even with cli_first, since Gemini CLI does not serve it", () => {
+    expect(resolveModelWithTier("gemini-4-argon", { cli_first: true }).quotaPreference).toBe("antigravity");
+  });
+
+  it("keeps a tier suffix as the thinking level on Gemini CLI", () => {
+    const pro = resolveModelForHeaderStyle("gemini-3.1-pro-low", "gemini-cli");
+    expect(pro.thinkingLevel).toBe("low");
+    // Pro takes only low and high.
+    expect(resolveModelForHeaderStyle("gemini-3.1-pro-medium", "gemini-cli").thinkingLevel).toBe("high");
+    const flash = resolveModelForHeaderStyle("gemini-3.8-flash-minimal", "gemini-cli");
+    expect(flash).toMatchObject({ actualModel: "gemini-3.8-flash", thinkingLevel: "minimal" });
   });
 
   it("does not resolve the retired 3.5 Flash Low id to a nonexistent backend id", () => {
@@ -148,6 +161,44 @@ describe("prepareAntigravityRequest wire model", () => {
       expect(thinking).toMatchObject({ thinkingLevel: "medium" });
     },
   );
+
+  describe("Gemini 3.5 Flash-Lite and 3.7 Flash, which Google dropped", () => {
+    const DROPPED = [
+      "gemini-3.5-flash-lite",
+      "antigravity-gemini-3.5-flash-lite",
+      "gemini-3.7-flash",
+      "antigravity-gemini-3.7-flash",
+    ];
+    const LEVELS: Array<[string | undefined, string, string]> = [
+      [undefined, "gemini-3.8-flash-high", "high"],
+      ["minimal", "gemini-3.8-flash-low", "low"],
+      ["low", "gemini-3.8-flash-low", "low"],
+      ["medium", "gemini-3.8-flash-medium", "medium"],
+      ["high", "gemini-3.8-flash-high", "high"],
+    ];
+
+    for (const model of DROPPED) {
+      it.each(LEVELS)(`sends ${model} with variant %s to Antigravity as %s`, (level, backend, sentLevel) => {
+        const { body, thinking } = send(model, level ? { includeThoughts: true, thinkingLevel: level } : undefined);
+        expect(body.model).toBe(backend);
+        expect(thinking).toMatchObject({ thinkingLevel: sentLevel });
+      });
+
+      it(`sends ${model} to Gemini CLI as gemini-3.8-flash, keeping minimal`, () => {
+        const { body, thinking } = send(model, { includeThoughts: true, thinkingLevel: "minimal" }, "gemini-cli");
+        expect(body.model).toBe("gemini-3.8-flash");
+        expect(thinking).toMatchObject({ thinkingLevel: "minimal" });
+      });
+    }
+
+    it.each([
+      ["gemini-3.5-flash-lite-low", "gemini-3.8-flash-low"],
+      ["gemini-3.7-flash-medium", "gemini-3.8-flash-medium"],
+      ["antigravity-gemini-3.7-flash-minimal", "gemini-3.8-flash-low"],
+    ])("keeps the tier of %s on Antigravity: %s", (model, backend) => {
+      expect(send(model, undefined).body.model).toBe(backend);
+    });
+  });
 
   it.each([
     [undefined, "gemini-4-argon-high", "high"],

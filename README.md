@@ -146,7 +146,7 @@ opencode run "Hello" --model=google/antigravity-gemini-3.8-flash --variant=high
 
 > **Gemini 4 Argon needs a Google AI Ultra subscription.** The plugin cannot read your subscription, so it learns it from Google: an account Google refuses Argon for is skipped for an hour and the next account is tried. When no signed-in account has Ultra, the request is answered with a message saying so instead of an error. With an API key configured (`agy_sdk`), Argon is tried through the public Gemini API before that message.
 
-> Antigravity now serves only Gemini 3.8 Flash and Gemini 4 Argon. Google dropped Gemini 3.5, 3.6 and 3.7 Flash, Claude Sonnet 4.6, Claude Opus 4.6 and GPT-OSS from it, and no longer serves Gemini 3 Pro, 3.1 Pro, 3 Flash, 3.1 Flash-Lite or 2.5 there either. An `antigravity-` request for any of those (with or without a tier suffix) goes to Gemini 3.8 Flash at the same tier, so sessions still set to an old model keep working. The Gemini CLI models below go to the Gemini CLI quota first, and fall back to Antigravity as Gemini 3.8 Flash when that runs out.
+> Antigravity now serves only Gemini 3.8 Flash and Gemini 4 Argon. Google dropped Gemini 3.5, 3.6 and 3.7 Flash, Claude Sonnet 4.6, Claude Opus 4.6 and GPT-OSS from it, and no longer serves Gemini 3 Pro, 3.1 Pro, 3 Flash, 3.1 Flash-Lite or 2.5 there either. An `antigravity-` request for any of those (with or without a tier suffix) goes to Gemini 3.8 Flash at the same tier, so sessions still set to an old model keep working. Gemini 2 is gone from every route: a request for any Gemini 2 model is sent as Gemini 3.8 Flash. The Gemini CLI models below go to the Gemini CLI quota first, and fall back to Antigravity as Gemini 3.8 Flash when that runs out.
 
 **Antigravity SDK / Gemini API projects** (API-key backed; used by API-key auth, or as OAuth fallback when configured):
 
@@ -156,8 +156,6 @@ The official Antigravity SDK uses `GEMINI_API_KEY` for local Gemini access. This
 
 | Model | Notes |
 |-------|-------|
-| `gemini-2.5-flash` | Gemini 2.5 Flash |
-| `gemini-2.5-pro` | Gemini 2.5 Pro |
 | `gemini-3-flash-preview` | Gemini 3 Flash (preview) |
 | `gemini-3.8-flash` | **Newest.** Gemini 3.8 Flash (high default) |
 | `gemini-3-pro-preview` | Gemini 3 Pro (preview) |
@@ -210,16 +208,6 @@ Add this to your `~/.config/opencode/opencode.json`:
             "medium": { "thinkingLevel": "medium" },
             "high": { "thinkingLevel": "high" }
           }
-        },
-        "gemini-2.5-flash": {
-          "name": "Gemini 2.5 Flash (Gemini CLI)",
-          "limit": { "context": 1048576, "output": 65536 },
-          "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] }
-        },
-        "gemini-2.5-pro": {
-          "name": "Gemini 2.5 Pro (Gemini CLI)",
-          "limit": { "context": 1048576, "output": 65536 },
-          "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] }
         },
         "gemini-3-flash-preview": {
           "name": "Gemini 3 Flash Preview (Gemini CLI)",

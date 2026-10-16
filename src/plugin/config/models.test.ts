@@ -21,8 +21,6 @@ describe("OPENCODE_MODEL_DEFINITIONS", () => {
     expect(modelNames).toEqual([
       "antigravity-gemini-3.8-flash",
       "antigravity-gemini-4-argon",
-      "gemini-2.5-flash",
-      "gemini-2.5-pro",
       "gemini-3-flash-preview",
       "gemini-3-pro-preview",
       "gemini-3.1-pro",
@@ -63,10 +61,15 @@ describe("dynamic model discovery helpers", () => {
   it("converts Gemini models.list metadata into OpenCode models", () => {
     const models = modelsFromGeminiApi([
       {
-        name: "models/gemini-2.5-flash",
-        displayName: "Gemini 2.5 Flash",
+        name: "models/gemini-3.9-flash",
+        displayName: "Gemini 3.9 Flash",
         inputTokenLimit: 1000,
         outputTokenLimit: 2000,
+        supportedGenerationMethods: ["generateContent"],
+      },
+      {
+        name: "models/gemini-2.5-flash",
+        displayName: "Gemini 2.5 Flash",
         supportedGenerationMethods: ["generateContent"],
       },
       {
@@ -76,8 +79,10 @@ describe("dynamic model discovery helpers", () => {
       },
     ]);
 
-    expect(models["gemini-2.5-flash"]).toMatchObject({
-      name: "Gemini 2.5 Flash (Gemini API)",
+    // Gemini 2 is no longer offered.
+    expect(models["gemini-2.5-flash"]).toBeUndefined();
+    expect(models["gemini-3.9-flash"]).toMatchObject({
+      name: "Gemini 3.9 Flash (Gemini API)",
       limit: { context: 1000, output: 2000 },
       modalities: { input: ["text", "image", "pdf"], output: ["text"] },
     });
@@ -87,25 +92,25 @@ describe("dynamic model discovery helpers", () => {
   it("keeps Gemini models.list resource names distinct from shared base aliases", () => {
     const models = modelsFromGeminiApi([
       {
-        name: "models/gemini-2.5-flash-001",
-        baseModelId: "gemini-2.5-flash",
-        displayName: "Gemini 2.5 Flash 001",
+        name: "models/gemini-3.9-flash-001",
+        baseModelId: "gemini-3.9-flash",
+        displayName: "Gemini 3.9 Flash 001",
         inputTokenLimit: 1000,
         outputTokenLimit: 2000,
         supportedGenerationMethods: ["generateContent"],
       },
       {
-        name: "models/gemini-2.5-flash-002",
-        baseModelId: "gemini-2.5-flash",
-        displayName: "Gemini 2.5 Flash 002",
+        name: "models/gemini-3.9-flash-002",
+        baseModelId: "gemini-3.9-flash",
+        displayName: "Gemini 3.9 Flash 002",
         inputTokenLimit: 3000,
         outputTokenLimit: 4000,
         supportedGenerationMethods: ["generateContent"],
       },
     ]);
 
-    expect(models["gemini-2.5-flash-001"]?.limit).toEqual({ context: 1000, output: 2000 });
-    expect(models["gemini-2.5-flash-002"]?.limit).toEqual({ context: 3000, output: 4000 });
+    expect(models["gemini-3.9-flash-001"]?.limit).toEqual({ context: 1000, output: 2000 });
+    expect(models["gemini-3.9-flash-002"]?.limit).toEqual({ context: 3000, output: 4000 });
   });
 
   it("converts Antigravity available models while preserving curated variants and inferring dynamic ones", () => {

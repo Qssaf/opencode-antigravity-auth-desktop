@@ -1,5 +1,6 @@
 import type { ProviderModel } from "../types";
 import {
+  isGemini2Model,
   isGemini3OrLaterModel,
   remapRetiredAntigravityGeminiModel,
   toAntigravityWireModel,
@@ -85,16 +86,6 @@ export const OPENCODE_MODEL_DEFINITIONS: OpencodeModelDefinitions = {
       high: { thinkingLevel: "high" },
     },
   },
-  "gemini-2.5-flash": {
-    name: "Gemini 2.5 Flash (Gemini CLI)",
-    limit: { context: 1048576, output: 65536 },
-    modalities: DEFAULT_MODALITIES,
-  },
-  "gemini-2.5-pro": {
-    name: "Gemini 2.5 Pro (Gemini CLI)",
-    limit: { context: 1048576, output: 65536 },
-    modalities: DEFAULT_MODALITIES,
-  },
   "gemini-3-flash-preview": {
     name: "Gemini 3 Flash Preview (Gemini CLI)",
     limit: { context: 1048576, output: 65536 },
@@ -163,7 +154,7 @@ function defaultVariantsForModel(modelId: string): Record<string, ModelVariant> 
       max: { thinkingConfig: { thinkingBudget: 32768 } },
     };
   }
-  if (isGemini3OrLaterModel(normalized) || normalized.startsWith("gemini-2.5")) {
+  if (isGemini3OrLaterModel(normalized)) {
     if (normalized.includes("pro")) {
       return {
         low: { thinkingLevel: "low" },
@@ -211,7 +202,8 @@ export function modelsFromGeminiApi(models: GeminiApiModel[]): OpencodeModelDefi
   for (const model of models) {
     if (!supportsGeminiGeneration(model)) continue;
     const modelId = modelIdFromGeminiName(model.name) || model.baseModelId;
-    if (!modelId) continue;
+    // Gemini 2 is no longer offered.
+    if (!modelId || isGemini2Model(modelId)) continue;
 
     const variants = defaultVariantsForModel(modelId);
     const discovered: OpencodeModelDefinition = {
@@ -243,6 +235,7 @@ export function modelsFromAntigravityAvailableModels(
     // Retired and renamed ids are served under their successor's catalog entry.
     const backendId = modelId.replace(/^antigravity-/, "");
     if (
+      isGemini2Model(backendId) ||
       remapRetiredAntigravityGeminiModel(backendId) !== backendId ||
       toAntigravityWireModel(backendId) !== backendId
     ) {

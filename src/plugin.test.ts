@@ -660,7 +660,7 @@ describe("createAntigravityPlugin auth.loader disk OAuth promotion", () => {
 // api-key path (agy-sdk) instead of returning the raw 404 to the caller.
 // ---------------------------------------------------------------------------
 import { formatRefreshParts } from "./plugin/auth";
-import { resetUltraModelRefusals } from "./plugin/ultra-gate";
+import { isUltraModelRefused, resetUltraModelRefusals } from "./plugin/ultra-gate";
 
 describe("createAntigravityPlugin auth.loader 404→agy-sdk fallback", () => {
   // Isolated XDG_CONFIG_HOME so the real user config file is never loaded.
@@ -1080,8 +1080,10 @@ describe("Gemini 4 Argon (Ultra-only)", () => {
     };
   }
 
-  /** Serves Argon only for projects in `ultraProjects`; every other one gets a 404. */
-  function buildArgonFetchMock(ultraProjects: string[]) {
+  const NOT_FOUND = { status: 404, error: { code: 404, message: "Requested entity was not found.", status: "NOT_FOUND" } };
+
+  /** Serves Argon only for projects in `ultraProjects`; every other one gets `refusal` (a 404 by default). */
+  function buildArgonFetchMock(ultraProjects: string[], refusal: { status: number; error: object } = NOT_FOUND) {
     const argonRequests: Array<{ project: string; model: string }> = [];
     const fetchMock = vi.fn(async (input: RequestInfo, init?: RequestInit) => {
       const url = typeof input === "string" ? input : (input as Request).url;
@@ -1092,8 +1094,8 @@ describe("Gemini 4 Argon (Ultra-only)", () => {
           return new Response(SSE_BODY, { status: 200, headers: { "content-type": "text/event-stream" } });
         }
         return new Response(
-          JSON.stringify({ error: { code: 404, message: "Requested entity was not found.", status: "NOT_FOUND" } }),
-          { status: 404, headers: { "content-type": "application/json" } },
+          JSON.stringify({ error: refusal.error }),
+          { status: refusal.status, headers: { "content-type": "application/json" } },
         );
       }
       if (url.includes("oauth2.googleapis.com")) {
@@ -1178,6 +1180,138 @@ describe("Gemini 4 Argon (Ultra-only)", () => {
     const before = argonRequests.length;
     expect(await (await fetchFn(ARGON_URL, argonRequest())).text()).toContain("Google AI Ultra");
     expect(argonRequests.length).toBe(before);
+  });
+
+  it("does not blame the subscription for a 403 that is a credential or access problem", async () => {
+    vi.mocked(storageModule.loadAccounts).mockResolvedValue({
+      version: 4,
+      accounts: [account("free", "p-free")],
+      activeIndex: 0,
+    });
+    const { fetchMock } = buildArgonFetchMock([], {
+      status: 403,
+      error: { code: 403, message: "The caller does not have permission", status: "PERMISSION_DENIED" },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const fetchFn = await loaderFetch();
+    const res = await fetchFn(ARGON_URL, argonRequest());
+
+    expect(await res.text()).not.toContain("Google AI Ultra");
+    expect(isUltraModelRefused("free")).toBe(false);
+  });
+
+  it("never falls back to the Gemini CLI quota, which does not serve Argon", () => {
+    const decision = __testExports.resolveHeaderRoutingDecision(ARGON_URL, "gemini", DEFAULT_CONFIG);
+    expect(decision.preferredHeaderStyle).toBe("antigravity");
+    expect(decision.allowQuotaFallback).toBe(false);
+    const flash = __testExports.resolveHeaderRoutingDecision(ARGON_URL.replace("4-argon", "3.8-flash"), "gemini", DEFAULT_CONFIG);
+    expect(flash.allowQuotaFallback).toBe(true);
+  });
+});
+
+describe("Gemini 3.5 Flash-Lite and 3.7 Flash through the plugin fetch", () => {
+  let tmpConfigHome: string;
+  const savedEnv: Record<string, string | undefined> = {};
+  const SSE_BODY =
+    'data: {"candidates":[{"content":{"parts":[{"text":"thinking","thought":true}],"role":"model"},"index":0}]}\n\n' +
+    'data: {"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"},"finishReason":"STOP","index":0}]}\n\n';
+
+  beforeEach(() => {
+    tmpConfigHome = join(tmpdir(), `opencode-antigravity-dropped-${process.pid}-${Date.now()}`);
+    mkdirSync(tmpConfigHome, { recursive: true });
+    for (const key of ["XDG_CONFIG_HOME", "OPENCODE_ANTIGRAVITY_API_KEYS", "GEMINI_API_KEY", "GOOGLE_API_KEY"]) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+    process.env.XDG_CONFIG_HOME = tmpConfigHome;
+    vi.mocked(storageModule.loadAccounts).mockReset();
+    vi.mocked(storageModule.saveAccounts).mockReset();
+    vi.mocked(storageModule.loadAccounts).mockResolvedValue({
+      version: 4,
+      accounts: [{
+        email: "a@example.com",
+        refreshToken: "a",
+        projectId: "p-a",
+        managedProjectId: "p-a",
+        addedAt: 0,
+        lastUsed: 0,
+        enabled: true,
+      }],
+      activeIndex: 0,
+    });
+  });
+
+  afterEach(() => {
+    for (const [key, val] of Object.entries(savedEnv)) {
+      if (val === undefined) delete process.env[key];
+      else process.env[key] = val;
+    }
+    vi.unstubAllGlobals();
+    rmSync(tmpConfigHome, { recursive: true, force: true });
+  });
+
+  it.each([
+    ["gemini-3.5-flash-lite", undefined, "gemini-3.8-flash-high", "high"],
+    ["gemini-3.7-flash", "low", "gemini-3.8-flash-low", "low"],
+    ["antigravity-gemini-3.5-flash-lite", "minimal", "gemini-3.8-flash-low", "low"],
+    ["antigravity-gemini-3.7-flash", "medium", "gemini-3.8-flash-medium", "medium"],
+  ])("serves %s (variant %s) from Antigravity as %s", async (model, level, backend, sentLevel) => {
+    const sent: Array<{ url: string; model: string; thinkingLevel?: string }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url.includes("cloudcode-pa") && url.includes("GenerateContent")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as {
+          model?: string;
+          request?: { generationConfig?: { thinkingConfig?: { thinkingLevel?: string } } };
+        };
+        sent.push({
+          url,
+          model: body.model ?? "",
+          thinkingLevel: body.request?.generationConfig?.thinkingConfig?.thinkingLevel,
+        });
+        return new Response(SSE_BODY, { status: 200, headers: { "content-type": "text/event-stream" } });
+      }
+      if (url.includes("oauth2.googleapis.com")) {
+        return new Response(JSON.stringify({ access_token: "valid-access-token", expires_in: 3600 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ models: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+
+    const plugin = await createAntigravityPlugin("google")({ client, directory: process.cwd() });
+    const loader = await plugin.auth.loader(async () => ({
+      type: "oauth" as const,
+      refresh: formatRefreshParts({ refreshToken: "a", projectId: "p-a", managedProjectId: "p-a" }),
+      access: "valid-access-token",
+      expires: Date.now() + 3_600_000,
+    }), {
+      id: "google",
+      api: "https://generativelanguage.googleapis.com/v1beta",
+      npm: "@ai-sdk/google",
+      models: {},
+    });
+    const fetchFn = (loader as { fetch: typeof fetch }).fetch;
+
+    const res = await fetchFn(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: "hi" }] }],
+          ...(level ? { generationConfig: { thinkingConfig: { includeThoughts: true, thinkingLevel: level } } } : {}),
+        }),
+      },
+    );
+
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("thinking");
+    expect(text).toContain("hi");
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ model: backend, thinkingLevel: sentLevel });
   });
 });
 

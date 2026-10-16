@@ -3,6 +3,7 @@ import {
   resolveModelWithTier,
   resolveModelWithVariant,
   resolveModelForHeaderStyle,
+  isGemini2Model,
 } from "./model-resolver";
 
 describe("resolveModelWithTier", () => {
@@ -79,20 +80,30 @@ describe("resolveModelWithTier", () => {
 
   });
 
-  describe("Gemini models Antigravity no longer serves use the Gemini CLI quota first", () => {
-    it("gemini-2.5-flash uses the Gemini CLI quota first", () => {
-      const result = resolveModelWithTier("gemini-2.5-flash");
-      expect(result.quotaPreference).toBe("gemini-cli");
+  describe("Gemini 2 models are dropped", () => {
+    it.each([
+      ["gemini-2.5-flash", "gemini-3.8-flash"],
+      ["gemini-2.5-pro", "gemini-3.8-flash"],
+      ["gemini-2.0-flash", "gemini-3.8-flash"],
+      ["gemini-2.5-flash-lite", "gemini-3.8-flash"],
+      ["gemini-2.5-pro-preview-05-06", "gemini-3.8-flash"],
+      ["gemini-2.5-flash-low", "gemini-3.8-flash"],
+    ])("%s becomes %s on the Antigravity quota", (model, expected) => {
+      const result = resolveModelWithTier(model);
+      expect(result.actualModel).toBe(expected);
+      expect(result.quotaPreference).toBe("antigravity");
     });
 
-    it("gemini-2.5-pro uses the Gemini CLI quota first", () => {
-      const result = resolveModelWithTier("gemini-2.5-pro");
-      expect(result.quotaPreference).toBe("gemini-cli");
+    it("keeps the tier as the thinking level", () => {
+      expect(resolveModelWithTier("gemini-2.5-flash-low").thinkingLevel).toBe("low");
     });
 
-    it("gemini-2.0-flash uses the Gemini CLI quota first", () => {
-      const result = resolveModelWithTier("gemini-2.0-flash");
-      expect(result.quotaPreference).toBe("gemini-cli");
+    it("recognizes Gemini 2 ids with or without the antigravity- prefix", () => {
+      expect(isGemini2Model("gemini-2.5-pro")).toBe(true);
+      expect(isGemini2Model("antigravity-gemini-2.0-flash")).toBe(true);
+      expect(isGemini2Model("gemini-2.5-flash-image")).toBe(true);
+      expect(isGemini2Model("gemini-3.8-flash")).toBe(false);
+      expect(isGemini2Model("gemini-20-flash")).toBe(false);
     });
   });
 
@@ -388,7 +399,7 @@ describe("resolveModelWithVariant", () => {
     });
 
     it("uses budget directly for non-Gemini 3 models", () => {
-      const result = resolveModelWithVariant("gemini-2.5-pro", {
+      const result = resolveModelWithVariant("claude-opus-4-6-thinking", {
         thinkingBudget: 20000,
       });
       expect(result.thinkingBudget).toBe(20000);
@@ -558,14 +569,14 @@ describe("Issue #103: resolveModelForHeaderStyle", () => {
   });
 
   describe("no transformation needed", () => {
-    it("keeps gemini-2.5-flash unchanged for both header styles", () => {
+    it("sends gemini-2.5-flash as Gemini 3.8 Flash for both header styles", () => {
       const antigravity = resolveModelForHeaderStyle(
         "gemini-2.5-flash",
         "antigravity",
       );
       const cli = resolveModelForHeaderStyle("gemini-2.5-flash", "gemini-cli");
-      expect(antigravity.actualModel).toBe("gemini-2.5-flash");
-      expect(cli.actualModel).toBe("gemini-2.5-flash");
+      expect(antigravity.actualModel).toBe("gemini-3.8-flash");
+      expect(cli.actualModel).toBe("gemini-3.8-flash");
     });
 
     it("keeps claude models unchanged (antigravity only)", () => {
