@@ -55,7 +55,7 @@ export const AgySdkConfigSchema = z.object({
   /** Prefer API-key projects for Gemini requests when OAuth credentials are also present. */
   prefer_for_gemini: z.boolean().default(false),
 
-  /** Use API-key projects as fallback when OAuth Antigravity/Gemini CLI quotas are unavailable. */
+  /** Use API-key projects as fallback when the OAuth Antigravity quota is unavailable. */
   api_key_fallback: z.boolean().default(true),
 
   /** Optional pool of Google AI API keys / Cloud projects for Gemini API fallback. */
@@ -317,18 +317,17 @@ export const AntigravityConfigSchema = z.object({
   /**
    * @deprecated Kept only for backward compatibility.
    * This flag is ignored at runtime.
-   * Gemini requests always fall back between Antigravity and Gemini CLI quotas.
+   * Gemini CLI quota fallback no longer exists; every model uses the Antigravity quota.
    *
    * @default false
    */
   quota_fallback: z.boolean().default(false),
 
   /**
-   * Prefer gemini-cli routing before Antigravity for Gemini models.
-   * 
-   * When false (default): Antigravity is tried first, then gemini-cli.
-   * When true: gemini-cli is tried first, then Antigravity.
-   * 
+   * @deprecated Kept only for backward compatibility.
+   * This flag is ignored at runtime: Google deprecated the Gemini CLI quota, so
+   * every model uses the Antigravity quota.
+   *
    * @default false
    */
   cli_first: z.boolean().default(false),

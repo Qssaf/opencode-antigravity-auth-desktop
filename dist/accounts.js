@@ -35,7 +35,6 @@ var ANTIGRAVITY_LOAD_ENDPOINTS = [
   ANTIGRAVITY_ENDPOINT_AUTOPUSH
 ];
 var ANTIGRAVITY_ENDPOINT = ANTIGRAVITY_ENDPOINT_DAILY;
-var GEMINI_CLI_ENDPOINT = ANTIGRAVITY_ENDPOINT_PROD;
 var ANTIGRAVITY_DEFAULT_PROJECT_ID = "default-cli-project";
 var ANTIGRAVITY_CLI_USER_AGENT = "antigravity/cli/1.1.13 (aidev_client; os_type=linux; arch=amd64; cl=964361259; auth_method=consumer)";
 var ANTIGRAVITY_VERSION_FALLBACK = "1.18.3";
@@ -77,13 +76,6 @@ function randomFrom(arr) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 function getRandomizedHeaders(style, model) {
-  if (style === "gemini-cli") {
-    return {
-      "User-Agent": GEMINI_CLI_HEADERS["User-Agent"],
-      "X-Goog-Api-Client": GEMINI_CLI_HEADERS["X-Goog-Api-Client"],
-      "Client-Metadata": GEMINI_CLI_HEADERS["Client-Metadata"]
-    };
-  }
   const platform = randomFrom(ANTIGRAVITY_PLATFORMS);
   const metadataPlatform = platform.startsWith("windows") ? "WINDOWS" : "MACOS";
   return {
@@ -1914,7 +1906,7 @@ var THINKING_TIER_BUDGETS = {
 var MODEL_ALIASES = {
   "gemini-flash-latest": "gemini-3.8-flash",
   "gemini-flash-lite-latest": "gemini-3.8-flash",
-  // Gemini 3 variants - for Gemini CLI only (tier stripped, thinkingLevel used)
+  // Gemini 3 tier variants - tier stripped, thinkingLevel used (API-key path)
   // For Antigravity, these are bypassed and full model name is kept
   "gemini-3-pro-low": "gemini-3-pro",
   "gemini-3-pro-high": "gemini-3-pro",
@@ -1944,7 +1936,6 @@ var GEMINI_4_ARGON_MODELS = {
   high: "gemini-4-argon-high"
 };
 var GEMINI_3_OR_LATER_REGEX = /gemini-(?:[3-9]|[1-9]\d+)(?=[.-]|$)/i;
-var GEMINI_DOTTED_MINOR_REGEX = /^gemini-3\.(?:[1-9]\d*)/i;
 var IMAGE_GENERATION_MODELS = /image|imagen/i;
 function supportsThinkingTiers(model) {
   const lower = model.toLowerCase();
@@ -2065,19 +2056,18 @@ function getDefaultGemini3ThinkingLevel(model) {
   }
   return "low";
 }
-function isRetiredOnAntigravity(model) {
-  return remapRetiredAntigravityGeminiModel(model) !== model;
+function resolveModelWithTier(requestedModel) {
+  return resolveModel(requestedModel, true);
 }
-function resolveModelWithTier(requestedModel, options = {}) {
+function resolveModel(requestedModel, onAntigravity) {
   const isAntigravity = QUOTA_PREFIX_REGEX.test(requestedModel);
   const strippedModel = requestedModel.replace(QUOTA_PREFIX_REGEX, "");
-  const modelWithoutQuota = isAntigravity ? remapRetiredAntigravityGeminiModel(strippedModel) : remapDroppedGeminiModel(strippedModel);
+  const withoutDropped = remapDroppedGeminiModel(strippedModel);
+  const modelWithoutQuota = onAntigravity || isAntigravity ? remapRetiredAntigravityGeminiModel(withoutDropped) : withoutDropped;
   const tier = extractThinkingTierFromModel(modelWithoutQuota);
   const baseName = tier ? modelWithoutQuota.replace(TIER_REGEX, "") : modelWithoutQuota;
   const isImageModel = IMAGE_GENERATION_MODELS.test(modelWithoutQuota);
-  const isClaudeModel2 = modelWithoutQuota.toLowerCase().includes("claude");
-  const preferGeminiCli = !isAntigravity && !isImageModel && !isClaudeModel2 && !isGemini4ArgonModel(modelWithoutQuota) && (options.cli_first === true || isRetiredOnAntigravity(MODEL_ALIASES[modelWithoutQuota] ?? modelWithoutQuota));
-  const quotaPreference = preferGeminiCli ? "gemini-cli" : "antigravity";
+  const quotaPreference = "antigravity";
   const explicitQuota = isAntigravity || isImageModel;
   const isGemini3 = isGemini3OrLaterModel(modelWithoutQuota);
   const skipAlias = isAntigravity && isGemini3;
@@ -2196,7 +2186,7 @@ function resolveModelForHeaderStyle(requestedModel, headerStyle) {
     const stripped = modelWithTier.replace(/-(minimal|low|medium|high)$/i, "");
     const transformedModel = mapAntigravityModelToPublicApi(stripped) ?? stripped;
     return {
-      ...resolveModelWithTier(modelWithTier),
+      ...resolveModel(modelWithTier, false),
       actualModel: transformedModel,
       quotaPreference: "agy-sdk",
       explicitQuota: false
@@ -2209,25 +2199,6 @@ function resolveModelForHeaderStyle(requestedModel, headerStyle) {
     const transformedModel = requestedModel.replace(/-preview-customtools$/i, "").replace(/-preview$/i, "").replace(/^antigravity-/i, "");
     const prefixedModel = `antigravity-${transformedModel}`;
     return resolveModelWithTier(prefixedModel);
-  }
-  if (headerStyle === "gemini-cli") {
-    const withoutQuota = remapDroppedGeminiModel(requestedModel.replace(/^antigravity-/i, ""));
-    const tier = withoutQuota.match(TIER_REGEX)?.[1];
-    let transformedModel = withoutQuota.replace(TIER_REGEX, "");
-    const hasPreviewSuffix = /-preview($|-)/i.test(transformedModel);
-    const usesBareName = GEMINI_DOTTED_MINOR_REGEX.test(transformedModel);
-    if (usesBareName && /-preview$/i.test(transformedModel)) {
-      transformedModel = transformedModel.replace(/-preview$/i, "");
-    } else if (!hasPreviewSuffix && !usesBareName) {
-      transformedModel = `${transformedModel}-preview`;
-    }
-    const resolved = resolveModelWithTier(transformedModel);
-    const thinkingLevel = tier && isGemini3ProModel(transformedModel) ? tier === "low" || tier === "minimal" ? "low" : "high" : tier;
-    return {
-      ...resolved,
-      ...thinkingLevel ? { thinkingLevel } : {},
-      quotaPreference: "gemini-cli"
-    };
   }
   return resolveModelWithTier(requestedModel);
 }
@@ -2262,38 +2233,6 @@ var OPENCODE_MODEL_DEFINITIONS = {
       medium: { thinkingLevel: "medium" },
       high: { thinkingLevel: "high" }
     }
-  },
-  "gemini-3-flash-preview": {
-    name: "Gemini 3 Flash Preview (Gemini CLI)",
-    limit: { context: 1048576, output: 65536 },
-    modalities: DEFAULT_MODALITIES
-  },
-  "gemini-3.8-flash": {
-    name: "Gemini 3.8 Flash (Gemini CLI)",
-    temperature: false,
-    limit: { context: 1048576, output: 65536 },
-    modalities: DEFAULT_MODALITIES,
-    variants: {
-      minimal: { thinkingLevel: "minimal" },
-      low: { thinkingLevel: "low" },
-      medium: { thinkingLevel: "medium" },
-      high: { thinkingLevel: "high" }
-    }
-  },
-  "gemini-3-pro-preview": {
-    name: "Gemini 3 Pro Preview (Gemini CLI)",
-    limit: { context: 1048576, output: 65535 },
-    modalities: DEFAULT_MODALITIES
-  },
-  "gemini-3.1-pro": {
-    name: "Gemini 3.1 Pro (Gemini CLI)",
-    limit: { context: 1048576, output: 65535 },
-    modalities: DEFAULT_MODALITIES
-  },
-  "gemini-3.1-pro-preview-customtools": {
-    name: "Gemini 3.1 Pro Preview Custom Tools (Gemini CLI)",
-    limit: { context: 1048576, output: 65535 },
-    modalities: DEFAULT_MODALITIES
   }
 };
 function modelIdFromGeminiName(name) {
@@ -3291,7 +3230,7 @@ var AgySdkConfigSchema = z2.object({
   enabled: z2.boolean().default(true),
   /** Prefer API-key projects for Gemini requests when OAuth credentials are also present. */
   prefer_for_gemini: z2.boolean().default(false),
-  /** Use API-key projects as fallback when OAuth Antigravity/Gemini CLI quotas are unavailable. */
+  /** Use API-key projects as fallback when the OAuth Antigravity quota is unavailable. */
   api_key_fallback: z2.boolean().default(true),
   /** Optional pool of Google AI API keys / Cloud projects for Gemini API fallback. */
   cloud_projects: z2.array(AgySdkCloudProjectSchema).default([])
@@ -3504,17 +3443,16 @@ var AntigravityConfigSchema = z2.object({
   /**
    * @deprecated Kept only for backward compatibility.
    * This flag is ignored at runtime.
-   * Gemini requests always fall back between Antigravity and Gemini CLI quotas.
+   * Gemini CLI quota fallback no longer exists; every model uses the Antigravity quota.
    *
    * @default false
    */
   quota_fallback: z2.boolean().default(false),
   /**
-   * Prefer gemini-cli routing before Antigravity for Gemini models.
-   * 
-   * When false (default): Antigravity is tried first, then gemini-cli.
-   * When true: gemini-cli is tried first, then Antigravity.
-   * 
+   * @deprecated Kept only for backward compatibility.
+   * This flag is ignored at runtime: Google deprecated the Gemini CLI quota, so
+   * every model uses the Antigravity quota.
+   *
    * @default false
    */
   cli_first: z2.boolean().default(false),
@@ -8144,8 +8082,7 @@ function prepareAntigravityRequest(input3, init, accessToken, projectId, endpoin
   const resolved = resolveModelForHeaderStyle(rawModel, headerStyle);
   let effectiveModel = resolved.actualModel;
   const streaming = rawAction === STREAM_ACTION;
-  const defaultEndpoint = headerStyle === "gemini-cli" ? GEMINI_CLI_ENDPOINT : ANTIGRAVITY_ENDPOINT;
-  const baseEndpoint = endpointOverride ?? defaultEndpoint;
+  const baseEndpoint = endpointOverride ?? ANTIGRAVITY_ENDPOINT;
   const transformedUrl = `${baseEndpoint}/v1internal:${rawAction}${streaming ? "?alt=sse" : ""}`;
   const isClaude = isClaudeModel(resolved.actualModel);
   const isClaudeThinking = isClaudeThinkingModel(resolved.actualModel);
@@ -8775,10 +8712,6 @@ ${hint}`;
     headers.set("User-Agent", ANTIGRAVITY_CLI_USER_AGENT);
     headers.delete("X-Goog-Api-Client");
     headers.delete("Client-Metadata");
-  } else {
-    headers.set("User-Agent", GEMINI_CLI_HEADERS["User-Agent"]);
-    headers.set("X-Goog-Api-Client", GEMINI_CLI_HEADERS["X-Goog-Api-Client"]);
-    headers.set("Client-Metadata", GEMINI_CLI_HEADERS["Client-Metadata"]);
   }
   return {
     request: transformedUrl,
@@ -9905,7 +9838,7 @@ function getQuotaKey(family, headerStyle, model) {
   if (family === "claude") {
     return "claude";
   }
-  const base = headerStyle === "gemini-cli" ? "gemini-cli" : "gemini-antigravity";
+  const base = "gemini-antigravity";
   if (model) {
     return `${base}:${model}`;
   }
@@ -9919,9 +9852,7 @@ function isRateLimitedForFamily(account, family, model) {
   if (family === "claude") {
     return isRateLimitedForQuotaKey(account, "claude");
   }
-  const antigravityIsLimited = isRateLimitedForHeaderStyle(account, family, "antigravity", model);
-  const cliIsLimited = isRateLimitedForHeaderStyle(account, family, "gemini-cli", model);
-  return antigravityIsLimited && cliIsLimited;
+  return isRateLimitedForHeaderStyle(account, family, "antigravity", model);
 }
 function isRateLimitedForHeaderStyle(account, family, headerStyle, model) {
   clearExpiredRateLimits(account);
@@ -10014,7 +9945,6 @@ function resolveQuotaGroup(family, model) {
   return family === "claude" ? "claude" : "gemini-pro";
 }
 function isOverSoftQuotaThreshold(account, family, headerStyle, thresholdPercent, cacheTtlMs, model) {
-  if (headerStyle === "gemini-cli") return false;
   if (thresholdPercent >= 100) return false;
   if (!account.cachedQuota) return false;
   if (account.cachedQuotaUpdatedAt == null) return false;
@@ -10334,14 +10264,9 @@ var AccountManager = class _AccountManager {
         }
       } else {
         const antigravityKey = getQuotaKey(family, "antigravity", model);
-        const cliKey = getQuotaKey(family, "gemini-cli", model);
         if (account.rateLimitResetTimes[antigravityKey] !== void 0) {
           delete account.rateLimitResetTimes[antigravityKey];
           recordClearedQuotaKey(account, antigravityKey, now);
-        }
-        if (account.rateLimitResetTimes[cliKey] !== void 0) {
-          delete account.rateLimitResetTimes[cliKey];
-          recordClearedQuotaKey(account, cliKey, now);
         }
       }
       account.consecutiveFailures = 0;
@@ -10391,25 +10316,10 @@ var AccountManager = class _AccountManager {
   isRateLimitedForHeaderStyle(account, family, headerStyle, model) {
     return isRateLimitedForHeaderStyle(account, family, headerStyle, model);
   }
-  getAvailableHeaderStyle(account, family, model) {
-    clearExpiredRateLimits(account);
-    if (family === "claude") {
-      return isRateLimitedForHeaderStyle(account, family, "antigravity") ? null : "antigravity";
-    }
-    if (!isRateLimitedForHeaderStyle(account, family, "antigravity", model)) {
-      return "antigravity";
-    }
-    if (!isRateLimitedForHeaderStyle(account, family, "gemini-cli", model)) {
-      return "gemini-cli";
-    }
-    return null;
-  }
   /**
    * Check if any OTHER account has antigravity quota available for the given family/model.
    * 
-   * Used to determine whether to switch accounts vs fall back to gemini-cli:
-   * - If true: Switch to another account (preserve antigravity priority)
-   * - If false: All accounts exhausted antigravity, safe to fall back to gemini-cli
+   * Used to decide whether switching accounts can help after a rate limit.
    * 
    * @param currentAccountIndex - Index of the current account (will be excluded from check)
    * @param family - Model family ("gemini" or "claude")
@@ -10564,15 +10474,8 @@ var AccountManager = class _AccountManager {
         const t = a.rateLimitResetTimes[key];
         if (t !== void 0) waitTimes.push(Math.max(0, t - nowMs()));
       } else {
-        const antigravityKey = getQuotaKey(family, "antigravity", model);
-        const cliKey = getQuotaKey(family, "gemini-cli", model);
-        const t1 = a.rateLimitResetTimes[antigravityKey];
-        const t2 = a.rateLimitResetTimes[cliKey];
-        const accountWait = Math.min(
-          t1 !== void 0 ? Math.max(0, t1 - nowMs()) : Infinity,
-          t2 !== void 0 ? Math.max(0, t2 - nowMs()) : Infinity
-        );
-        if (accountWait !== Infinity) waitTimes.push(accountWait);
+        const t = a.rateLimitResetTimes[getQuotaKey(family, "antigravity", model)];
+        if (t !== void 0) waitTimes.push(Math.max(0, t - nowMs()));
       }
     }
     return waitTimes.length > 0 ? Math.min(...waitTimes) : 0;
@@ -11438,54 +11341,6 @@ async function fetchAvailableModels(accessToken, projectId) {
   );
   throw new Error(errors.join("; ") || "fetchAvailableModels failed");
 }
-async function fetchGeminiCliQuota(accessToken, projectId) {
-  const endpoint = ANTIGRAVITY_ENDPOINT_PROD;
-  const platform = process.platform || "darwin";
-  const arch = process.arch || "arm64";
-  const geminiCliUserAgent = `GeminiCLI/1.0.0/gemini-2.5-pro (${platform}; ${arch})`;
-  const body = projectId ? { project: projectId } : {};
-  try {
-    const response = await fetchWithTimeout2(`${endpoint}/v1internal:retrieveUserQuota`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        "User-Agent": geminiCliUserAgent
-      },
-      body: JSON.stringify(body)
-    });
-    if (response.ok) {
-      const data = await response.json();
-      return data;
-    }
-    return { buckets: [] };
-  } catch {
-    return { buckets: [] };
-  }
-}
-function aggregateGeminiCliQuota(response) {
-  const models = [];
-  if (!response.buckets || response.buckets.length === 0) {
-    return { models };
-  }
-  for (const bucket of response.buckets) {
-    if (!bucket.modelId) {
-      continue;
-    }
-    const modelId = bucket.modelId;
-    const isRelevantModel = isGemini3OrLaterModel(modelId) && remapDroppedGeminiModel(modelId) === modelId;
-    if (!isRelevantModel) {
-      continue;
-    }
-    models.push({
-      modelId: bucket.modelId,
-      remainingFraction: normalizeRemainingFraction(bucket.remainingFraction),
-      resetTime: bucket.resetTime
-    });
-  }
-  models.sort((a, b) => a.modelId.localeCompare(b.modelId));
-  return { models };
-}
 function applyAccountUpdates(account, auth) {
   const parts = parseRefreshParts(auth.refresh);
   if (!parts.refreshToken) {
@@ -11608,10 +11463,8 @@ async function checkSingleAccountQuota(account, index, client2, providerId) {
     auth = projectContext.auth;
     const updatedAccount = applyAccountUpdates(account, auth);
     let quotaResult;
-    let geminiCliQuotaResult;
-    const [antigravityResponse, geminiCliResponse, rateLimitSummary] = await Promise.all([
+    const [antigravityResponse, rateLimitSummary] = await Promise.all([
       fetchAvailableModels(auth.access ?? "", projectContext.effectiveProjectId).catch(() => ({ models: void 0 })),
-      fetchGeminiCliQuota(auth.access ?? "", projectContext.effectiveProjectId),
       fetchRateLimitSummary(auth.access ?? "", projectContext.effectiveProjectId)
     ]);
     if (antigravityResponse.models === void 0) {
@@ -11624,10 +11477,6 @@ async function checkSingleAccountQuota(account, index, client2, providerId) {
       recordAntigravityAvailableModels(antigravityResponse.models);
       quotaResult = aggregateQuota(antigravityResponse.models);
     }
-    geminiCliQuotaResult = aggregateGeminiCliQuota(geminiCliResponse);
-    if (geminiCliResponse.buckets === void 0 || geminiCliResponse.buckets.length === 0) {
-      geminiCliQuotaResult.error = geminiCliQuotaResult.models.length === 0 ? "No Gemini CLI quota available" : void 0;
-    }
     for (const [family, groupQuota] of Object.entries(quotaResult.groups)) {
       const remainingPercent = (groupQuota.remainingFraction ?? 0) * 100;
       logQuotaStatus(account.email, index, remainingPercent, family);
@@ -11638,7 +11487,6 @@ async function checkSingleAccountQuota(account, index, client2, providerId) {
       status: "ok",
       disabled,
       quota: quotaResult,
-      geminiCliQuota: geminiCliQuotaResult,
       rateLimits: rateLimitSummary,
       updatedAccount
     };
@@ -13630,24 +13478,11 @@ function resetRateLimitState(accountIndex, quotaKey) {
   const stateKey = `${accountIndex}:${quotaKey}`;
   rateLimitStateByAccountQuota.delete(stateKey);
 }
-function headerStyleToQuotaKey(headerStyle, family) {
-  if (family === "claude") return "claude";
-  return headerStyle === "antigravity" ? "gemini-antigravity" : "gemini-cli";
+function headerStyleToQuotaKey(family) {
+  return family === "claude" ? "claude" : "gemini-antigravity";
 }
-function isEndpointUsableForHeaderStyle(endpoint, headerStyle) {
-  if (headerStyle === "gemini-cli" && endpoint !== ANTIGRAVITY_ENDPOINT_PROD) {
-    return false;
-  }
-  return true;
-}
-function hasUsableEndpointAfterIndex(index, headerStyle) {
-  for (let j = index + 1; j < ANTIGRAVITY_ENDPOINT_FALLBACKS.length; j++) {
-    const endpoint = ANTIGRAVITY_ENDPOINT_FALLBACKS[j];
-    if (endpoint && isEndpointUsableForHeaderStyle(endpoint, headerStyle)) {
-      return true;
-    }
-  }
-  return false;
+function hasUsableEndpointAfterIndex(index) {
+  return index < ANTIGRAVITY_ENDPOINT_FALLBACKS.length - 1;
 }
 var accountFailureState = /* @__PURE__ */ new Map();
 var MAX_CONSECUTIVE_FAILURES = 5;
@@ -14099,13 +13934,8 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                   `Antigravity request routing did not converge for ${model ?? family}. All ${accountCount2} account(s) appear rate-limited or exhausted for this model. Run \`opencode auth login\` to add accounts or wait for quota reset.`
                 );
               }
-              const routingDecision = resolveHeaderRoutingDecision(urlString, family, config);
-              const {
-                cliFirst,
-                preferredHeaderStyle,
-                explicitQuota,
-                allowQuotaFallback
-              } = routingDecision;
+              const routingDecision = resolveHeaderRoutingDecision(urlString);
+              const { preferredHeaderStyle, explicitQuota } = routingDecision;
               if (family === "gemini" && config.agy_sdk.prefer_for_gemini && !explicitQuota && agySdkCredentials.length > 0 && isAgySdkSupportedRequest(urlString)) {
                 const response = await tryFetchWithAgySdkCredentials(
                   input3,
@@ -14134,7 +13964,6 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                 config.soft_quota_cache_ttl_minutes,
                 config.quota_refresh_interval_minutes
               );
-              let selectedHeaderStyle = preferredHeaderStyle;
               let account = accountManager.getCurrentOrNextForFamily(
                 family,
                 model,
@@ -14145,25 +13974,6 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                 softQuotaCacheTtlMs,
                 triedSwitchIndices
               );
-              if (!account && allowQuotaFallback) {
-                const alternateHeaderStyle = preferredHeaderStyle === "antigravity" ? "gemini-cli" : "antigravity";
-                account = accountManager.getCurrentOrNextForFamily(
-                  family,
-                  model,
-                  config.account_selection_strategy,
-                  alternateHeaderStyle,
-                  config.pid_offset_enabled,
-                  config.soft_quota_threshold_percent,
-                  softQuotaCacheTtlMs,
-                  triedSwitchIndices
-                );
-                if (account) {
-                  selectedHeaderStyle = alternateHeaderStyle;
-                  pushDebug(
-                    `selected-by-fallback idx=${account.index} preferred=${preferredHeaderStyle} alternate=${alternateHeaderStyle}`
-                  );
-                }
-              }
               if (!account) {
                 if (accountCount2 > 0 && triedSwitchIndices.size >= accountCount2) {
                   const exhaustedFallback = await tryAgySdkFallbackForRequest(input3, init, config, agySdkCredentials, urlString);
@@ -14230,12 +14040,11 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                   await sleep(softQuotaWaitMs, abortSignal);
                   continue;
                 }
-                const strictWait = !allowQuotaFallback;
                 const waitMs = accountManager.getMinWaitTimeForFamily(
                   family,
                   model,
                   preferredHeaderStyle,
-                  strictWait
+                  true
                 ) || 6e4;
                 const waitSecValue = Math.max(1, Math.ceil(waitMs / 1e3));
                 pushDebug(`all-rate-limited family=${family} accounts=${accountCount2} waitMs=${waitMs}`);
@@ -14478,56 +14287,13 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                 }
               };
               let shouldSwitchAccount = false;
-              let headerStyle = selectedHeaderStyle;
+              const headerStyle = preferredHeaderStyle;
               pushDebug(`headerStyle=${headerStyle} explicit=${explicitQuota}`);
               if (account.fingerprint) {
                 pushDebug(`fingerprint: quotaUser=${account.fingerprint.quotaUser} deviceId=${account.fingerprint.deviceId.slice(0, 8)}...`);
               }
               if (accountManager.isRateLimitedForHeaderStyle(account, family, headerStyle, model)) {
-                if (allowQuotaFallback && family === "gemini" && headerStyle === "antigravity") {
-                  if (accountManager.hasOtherAccountWithAntigravityAvailable(account.index, family, model)) {
-                    pushDebug(`antigravity rate-limited on account ${account.index}, but available on other accounts. Switching.`);
-                    shouldSwitchAccount = true;
-                  } else {
-                    const alternateStyle = accountManager.getAvailableHeaderStyle(account, family, model);
-                    const fallbackStyle = resolveQuotaFallbackHeaderStyle({
-                      family,
-                      headerStyle,
-                      alternateStyle
-                    });
-                    if (fallbackStyle) {
-                      await showToast(
-                        `Antigravity quota exhausted on all accounts. Using Gemini CLI quota.`,
-                        "warning"
-                      );
-                      headerStyle = fallbackStyle;
-                      pushDebug(`all-accounts antigravity exhausted, quota fallback: ${headerStyle}`);
-                    } else {
-                      shouldSwitchAccount = true;
-                    }
-                  }
-                } else if (allowQuotaFallback && family === "gemini") {
-                  const alternateStyle = accountManager.getAvailableHeaderStyle(account, family, model);
-                  const fallbackStyle = resolveQuotaFallbackHeaderStyle({
-                    family,
-                    headerStyle,
-                    alternateStyle
-                  });
-                  if (fallbackStyle) {
-                    const quotaName = headerStyle === "gemini-cli" ? "Gemini CLI" : "Antigravity";
-                    const altQuotaName = fallbackStyle === "gemini-cli" ? "Gemini CLI" : "Antigravity";
-                    await showToast(
-                      `${quotaName} quota exhausted, using ${altQuotaName} quota`,
-                      "warning"
-                    );
-                    headerStyle = fallbackStyle;
-                    pushDebug(`quota fallback: ${headerStyle}`);
-                  } else {
-                    shouldSwitchAccount = true;
-                  }
-                } else {
-                  shouldSwitchAccount = true;
-                }
+                shouldSwitchAccount = true;
               }
               while (!shouldSwitchAccount) {
                 let forceThinkingRecovery = false;
@@ -14540,10 +14306,6 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                     lastEndpointIndex = i;
                   }
                   const currentEndpoint = ANTIGRAVITY_ENDPOINT_FALLBACKS[i];
-                  if (headerStyle === "gemini-cli" && currentEndpoint !== ANTIGRAVITY_ENDPOINT_PROD) {
-                    pushDebug(`Skipping sandbox endpoint ${currentEndpoint} for gemini-cli headerStyle`);
-                    continue;
-                  }
                   try {
                     const prepared = await prepareAntigravityRequest(
                       input3,
@@ -14631,25 +14393,10 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                         if (newFingerprint) {
                           pushDebug(`Fingerprint regenerated for account ${account.index}`);
                         }
-                        if (hasUsableEndpointAfterIndex(i, headerStyle)) {
+                        if (hasUsableEndpointAfterIndex(i)) {
                           continue;
                         }
                         accountManager.markRateLimitedWithReason(account, family, headerStyle, model, rateLimitReason, serverRetryMs);
-                        if (family === "gemini" && allowQuotaFallback) {
-                          const alternateStyle = accountManager.getAvailableHeaderStyle(account, family, model);
-                          const fallbackStyle = resolveQuotaFallbackHeaderStyle({ family, headerStyle, alternateStyle });
-                          if (fallbackStyle) {
-                            const safeModelName = model || "this model";
-                            const currentQuotaName = headerStyle === "antigravity" ? "Antigravity" : "Gemini CLI";
-                            await showToast(
-                              `Server busy on ${currentQuotaName} quota for ${safeModelName}. Trying alternate quota...`,
-                              "warning"
-                            );
-                            headerStyle = fallbackStyle;
-                            pushDebug(`capacity fallback: ${headerStyle}`);
-                            continue;
-                          }
-                        }
                         const capacityAgySdkFallback = await tryAgySdkFallbackForRequest(
                           input3,
                           init,
@@ -14670,7 +14417,7 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                         shouldSwitchAccount = true;
                         break;
                       }
-                      const quotaKey2 = headerStyleToQuotaKey(headerStyle, family);
+                      const quotaKey2 = headerStyleToQuotaKey(family);
                       const { attempt, delayMs, isDuplicate } = getRateLimitBackoff(account.index, quotaKey2, serverRetryMs);
                       const smartBackoffMs = calculateBackoffMs(rateLimitReason, account.consecutiveFailures ?? 0, serverRetryMs);
                       const effectiveDelayMs = Math.max(delayMs, smartBackoffMs);
@@ -14722,52 +14469,11 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                       }
                       accountManager.markRateLimitedWithReason(account, family, headerStyle, model, rateLimitReason, serverRetryMs, config.failure_ttl_seconds * 1e3);
                       accountManager.requestSaveToDisk();
-                      if (family === "gemini") {
-                        if (headerStyle === "antigravity") {
-                          if (hasOtherAccountWithAntigravity(account)) {
-                            pushDebug(`antigravity exhausted on account ${account.index}, but available on others. Switching account.`);
-                            await showToast(`Rate limited again. Switching account...`, "warning");
-                            shouldSwitchAccount = true;
-                            break;
-                          }
-                          if (allowQuotaFallback) {
-                            const alternateStyle = accountManager.getAvailableHeaderStyle(account, family, model);
-                            const fallbackStyle = resolveQuotaFallbackHeaderStyle({
-                              family,
-                              headerStyle,
-                              alternateStyle
-                            });
-                            if (fallbackStyle) {
-                              const safeModelName = model || "this model";
-                              await showToast(
-                                `Antigravity quota exhausted for ${safeModelName}. Switching to Gemini CLI quota...`,
-                                "warning"
-                              );
-                              headerStyle = fallbackStyle;
-                              pushDebug(`quota fallback: ${headerStyle}`);
-                              continue;
-                            }
-                          }
-                        } else if (headerStyle === "gemini-cli") {
-                          if (allowQuotaFallback) {
-                            const alternateStyle = accountManager.getAvailableHeaderStyle(account, family, model);
-                            const fallbackStyle = resolveQuotaFallbackHeaderStyle({
-                              family,
-                              headerStyle,
-                              alternateStyle
-                            });
-                            if (fallbackStyle) {
-                              const safeModelName = model || "this model";
-                              await showToast(
-                                `Gemini CLI quota exhausted for ${safeModelName}. Switching to Antigravity quota...`,
-                                "warning"
-                              );
-                              headerStyle = fallbackStyle;
-                              pushDebug(`quota fallback: ${headerStyle}`);
-                              continue;
-                            }
-                          }
-                        }
+                      if (family === "gemini" && hasOtherAccountWithAntigravity(account)) {
+                        pushDebug(`antigravity exhausted on account ${account.index}, but available on others. Switching account.`);
+                        await showToast(`Rate limited again. Switching account...`, "warning");
+                        shouldSwitchAccount = true;
+                        break;
                       }
                       const agySdkFallbackResponse = await tryAgySdkFallbackForRequest(
                         input3,
@@ -14779,7 +14485,7 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                       if (agySdkFallbackResponse && !isRetryableAgySdkCredentialStatus(agySdkFallbackResponse.status)) {
                         return agySdkFallbackResponse;
                       }
-                      const quotaName = headerStyle === "antigravity" ? "Antigravity" : "Gemini CLI";
+                      const quotaName = "Antigravity";
                       if (accountCount2 > 1) {
                         const quotaMsg = bodyInfo.quotaResetTime ? ` (quota resets ${bodyInfo.quotaResetTime})` : ``;
                         await showToast(`Rate limited again. Switching account...${quotaMsg}`, "warning");
@@ -14793,7 +14499,7 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                       shouldSwitchAccount = true;
                       break;
                     }
-                    const quotaKey = headerStyleToQuotaKey(headerStyle, family);
+                    const quotaKey = headerStyleToQuotaKey(family);
                     resetRateLimitState(account.index, quotaKey);
                     resetAccountFailureState(account.index);
                     let permissionDeniedOnProject = false;
@@ -15167,26 +14873,9 @@ Alternatively, you can:
                         }
                         return ` (resets in ${formatWaitTime(ms)})`;
                       };
-                      const hasGeminiCli = res.geminiCliQuota && res.geminiCliQuota.models.length > 0;
-                      console.log(`
-  \u250C\u2500 Gemini CLI Quota`);
-                      if (!hasGeminiCli) {
-                        const errorMsg = res.geminiCliQuota?.error || "No Gemini CLI quota available";
-                        console.log(`  \u2502  \u2514\u2500 ${errorMsg}`);
-                      } else {
-                        const models = res.geminiCliQuota.models;
-                        models.forEach((model, idx) => {
-                          const isLast = idx === models.length - 1;
-                          const connector = isLast ? "\u2514\u2500" : "\u251C\u2500";
-                          const bar = createProgressBar(model.remainingFraction);
-                          const reset = formatReset(model.resetTime);
-                          const modelName = model.modelId.padEnd(29);
-                          console.log(`  \u2502  ${connector} ${modelName} ${bar}${reset}`);
-                        });
-                      }
                       const hasAntigravity = res.quota && Object.keys(res.quota.groups).length > 0;
-                      console.log(`  \u2502`);
-                      console.log(`  \u2514\u2500 Antigravity Quota`);
+                      console.log(`
+  \u2514\u2500 Antigravity Quota`);
                       if (!hasAntigravity) {
                         const errorMsg = res.quota?.error || "No quota information available";
                         console.log(`     \u2514\u2500 ${errorMsg}`);
@@ -15892,42 +15581,13 @@ function getModelFamilyFromUrl(urlString) {
   }
   return family;
 }
-function resolveQuotaFallbackHeaderStyle(input3) {
-  if (input3.family !== "gemini") {
-    return null;
-  }
-  if (!input3.alternateStyle || input3.alternateStyle === input3.headerStyle) {
-    return null;
-  }
-  return input3.alternateStyle;
-}
-function resolveHeaderRoutingDecision(urlString, family, config) {
-  const cliFirst = getCliFirst(config);
-  const preferredHeaderStyle = getHeaderStyleFromUrl(urlString, family, cliFirst);
+function resolveHeaderRoutingDecision(urlString) {
   const modelWithSuffix = extractModelFromUrlWithSuffix(urlString);
-  const resolvedModel = modelWithSuffix ? resolveModelWithTier(modelWithSuffix, { cli_first: cliFirst }) : null;
-  const explicitQuota = resolvedModel?.explicitQuota ?? false;
+  const resolvedModel = modelWithSuffix ? resolveModelWithTier(modelWithSuffix) : null;
   return {
-    cliFirst,
-    preferredHeaderStyle,
-    explicitQuota,
-    // Gemini CLI does not serve image models or Gemini 4 Argon.
-    allowQuotaFallback: family === "gemini" && resolvedModel?.isImageModel !== true && !isGemini4ArgonModel(modelWithSuffix ?? "")
+    preferredHeaderStyle: "antigravity",
+    explicitQuota: resolvedModel?.explicitQuota ?? false
   };
-}
-function getCliFirst(config) {
-  return config.cli_first ?? false;
-}
-function getHeaderStyleFromUrl(urlString, family, cliFirst = false) {
-  if (family === "claude") {
-    return "antigravity";
-  }
-  const modelWithSuffix = extractModelFromUrlWithSuffix(urlString);
-  if (!modelWithSuffix) {
-    return cliFirst ? "gemini-cli" : "antigravity";
-  }
-  const { quotaPreference } = resolveModelWithTier(modelWithSuffix, { cli_first: cliFirst });
-  return quotaPreference ?? "antigravity";
 }
 
 // src/plugin/account-admin.ts
@@ -16146,12 +15806,6 @@ function renderModelQuotaDetail(result) {
         `    ${name.padEnd(18)} ${formatPercent(data?.remainingFraction)}${countdown ? ` (resets in ${countdown})` : ""}`
       );
     }
-  }
-  for (const model of result.geminiCliQuota?.models ?? []) {
-    const countdown = formatCountdown(model.resetTime);
-    lines.push(
-      `    ${`CLI ${model.modelId}`.padEnd(18)} ${formatPercent(model.remainingFraction)}${countdown ? ` (resets in ${countdown})` : ""}`
-    );
   }
   return lines;
 }

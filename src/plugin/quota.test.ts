@@ -58,19 +58,6 @@ describe("Antigravity quota aggregation", () => {
     expect(summary.modelCount).toBe(1);
   });
 
-  it("leaves dropped models out of the Gemini CLI quota", () => {
-    const summary = __testExports.aggregateGeminiCliQuota({
-      buckets: [
-        { modelId: "gemini-3.7-flash", remainingFraction: 1 },
-        { modelId: "gemini-3.5-flash-lite", remainingFraction: 1 },
-        { modelId: "gemini-2.5-pro", remainingFraction: 1 },
-        { modelId: "gemini-3.8-flash", remainingFraction: 0.5 },
-        { modelId: "gemini-3.1-pro", remainingFraction: 0.25 },
-      ],
-    });
-    expect(summary.models.map((m) => m.modelId)).toEqual(["gemini-3.1-pro", "gemini-3.8-flash"]);
-  });
-
   it("keeps resetTime coupled to the model whose remainingFraction is displayed", () => {
     const summary = __testExports.aggregateQuota({
       "gemini-3.8-flash-low": {

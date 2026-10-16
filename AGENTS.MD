@@ -142,7 +142,7 @@ Things to know before changing this:
 ## Key Design Patterns
 
 ### 1. Request Interception
-Plugin intercepts `fetch()` for `generativelanguage.googleapis.com`, transforms to Antigravity format. Two header styles: `antigravity` (Electron-style UA + fingerprint) and `gemini-cli` (nodejs-client UA).
+Plugin intercepts `fetch()` for `generativelanguage.googleapis.com`, transforms to Antigravity format. Header styles: `antigravity` (OAuth, Antigravity quota) and `agy-sdk` (public Gemini API with an API key). The Gemini CLI style is gone: Google deprecated that quota.
 
 ### 2. Claude Thinking Blocks
 ALL thinking blocks are stripped from outgoing requests for Claude models. Claude generates fresh thinking each turn. This eliminates signature validation errors.
@@ -154,7 +154,7 @@ When tool execution is interrupted (ESC/timeout), the plugin injects synthetic `
 Tool schemas are cleaned via allowlist. Unsupported fields (`const`, `$ref`, `$defs`) are removed or converted to Antigravity-compatible format.
 
 ### 5. Multi-Account Load Balancing
-Accounts rotate on rate limits. Gemini has dual quota pools (Antigravity headers + Gemini CLI headers). Fingerprints are per-account and regenerated on capacity exhaustion.
+Accounts rotate on rate limits. Every request uses the Antigravity quota (the Gemini CLI quota is deprecated). Fingerprints are per-account and regenerated on capacity exhaustion.
 
 ### 6. Fingerprint System
 Per-account device fingerprints stored in `antigravity-accounts.json`. Each fingerprint includes deviceId, sessionToken, userAgent, and a reduced clientMetadata (ideType, platform, pluginType — no osVersion, arch, or sqmId). The only header composed is `User-Agent`, built by `buildFingerprintHeaders()` in `fingerprint.ts` and applied on the antigravity request path in `request.ts`. History tracked (max 5), restorable.

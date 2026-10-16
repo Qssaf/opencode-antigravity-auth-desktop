@@ -59,13 +59,6 @@ export const ANTIGRAVITY_LOAD_ENDPOINTS = [
 export const ANTIGRAVITY_ENDPOINT = ANTIGRAVITY_ENDPOINT_DAILY;
 
 /**
- * Gemini CLI endpoint (production).
- * Used for models without :antigravity suffix.
- * Same as opencode-gemini-auth's GEMINI_CODE_ASSIST_ENDPOINT.
- */
-export const GEMINI_CLI_ENDPOINT = ANTIGRAVITY_ENDPOINT_PROD;
-
-/**
  * AGY's consumer OAuth flow uses this backend project when no managed project is returned.
  */
 export const ANTIGRAVITY_DEFAULT_PROJECT_ID = "default-cli-project";
@@ -137,13 +130,6 @@ export type HeaderSet = {
 };
 
 export function getRandomizedHeaders(style: HeaderStyle, model?: string): HeaderSet {
-  if (style === "gemini-cli") {
-    return {
-      "User-Agent": GEMINI_CLI_HEADERS["User-Agent"],
-      "X-Goog-Api-Client": GEMINI_CLI_HEADERS["X-Goog-Api-Client"],
-      "Client-Metadata": GEMINI_CLI_HEADERS["Client-Metadata"],
-    };
-  }
   const platform = randomFrom(ANTIGRAVITY_PLATFORMS);
   const metadataPlatform = platform.startsWith("windows") ? "WINDOWS" : "MACOS";
   return {
@@ -153,7 +139,7 @@ export function getRandomizedHeaders(style: HeaderStyle, model?: string): Header
   };
 }
 
-export type HeaderStyle = "antigravity" | "gemini-cli" | "agy-sdk";
+export type HeaderStyle = "antigravity" | "agy-sdk";
 
 /**
  * Provider identifier shared between the plugin loader and credential store.

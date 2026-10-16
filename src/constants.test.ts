@@ -21,22 +21,6 @@ describe("GEMINI_CLI_HEADERS", () => {
 })
 
 describe("getRandomizedHeaders", () => {
-  describe("gemini-cli style", () => {
-    it("returns static Code Assist headers", () => {
-      const headers = getRandomizedHeaders("gemini-cli", "gemini-2.5-pro")
-      expect(headers).toEqual({
-        "User-Agent": "google-api-nodejs-client/9.15.1",
-        "X-Goog-Api-Client": "gl-node/22.17.0",
-        "Client-Metadata": "ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI",
-      })
-    })
-
-    it("ignores requested model and keeps static User-Agent", () => {
-      const headers = getRandomizedHeaders("gemini-cli", "gemini-3-pro-preview")
-      expect(headers["User-Agent"]).toBe("google-api-nodejs-client/9.15.1")
-    })
-  })
-
   describe("antigravity style", () => {
     it("returns all three headers", () => {
       const headers = getRandomizedHeaders("antigravity")

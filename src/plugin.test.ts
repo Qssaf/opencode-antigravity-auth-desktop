@@ -85,16 +85,10 @@ describe("Gemini Flash-Lite routing", () => {
   const url =
     "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:streamGenerateContent";
 
-  it("uses the Antigravity quota path with Gemini CLI fallback, like other Gemini models", () => {
-    expect(__testExports.getHeaderStyleFromUrl(url, "gemini")).toBe(
-      "antigravity",
-    );
-    expect(
-      __testExports.resolveHeaderRoutingDecision(url, "gemini", DEFAULT_CONFIG),
-    ).toMatchObject({
+  it("uses the Antigravity quota path, like every other model", () => {
+    expect(__testExports.resolveHeaderRoutingDecision(url)).toEqual({
       preferredHeaderStyle: "antigravity",
       explicitQuota: false,
-      allowQuotaFallback: true,
     });
   });
 });
@@ -164,9 +158,8 @@ describe("createAntigravityPlugin provider models", () => {
         temperature: false,
         reasoning: true,
       });
-      expect(models?.["gemini-3.8-flash"]?.capabilities).toMatchObject({
-        reasoning: true,
-      });
+      // Gemini CLI models are gone.
+      expect(models?.["gemini-3.8-flash"]).toBeUndefined();
       expect(models?.["antigravity-gemini-3.7-flash"]).toBeUndefined();
     } finally {
       vi.unstubAllGlobals();
@@ -386,100 +379,7 @@ describe("createAntigravityPlugin auth.loader disk OAuth promotion", () => {
     }
   });
 
-  it("uses Gemini CLI when Antigravity soft quota is exhausted", async () => {
-    const now = Date.now();
-    vi.mocked(storageModule.loadAccounts).mockResolvedValue({
-      version: 4,
-      accounts: [
-        {
-          email: "test@example.com",
-          refreshToken: "refresh-token",
-          projectId: "project-id",
-          managedProjectId: "managed-project-id",
-          addedAt: now,
-          lastUsed: now,
-          enabled: true,
-          cachedQuotaUpdatedAt: now,
-          cachedQuota: {
-            "gemini-pro": {
-              remainingFraction: 0,
-              modelCount: 1,
-            },
-          },
-        },
-      ],
-      activeIndex: 0,
-    });
-
-    const fetchedUrls: string[] = [];
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo) => {
-      const url = String(input);
-      fetchedUrls.push(url);
-      if (url.includes("oauth2.googleapis.com")) {
-        return new Response(JSON.stringify({
-          access_token: "access-token",
-          expires_in: 3600,
-          token_type: "Bearer",
-        }), { status: 200, headers: { "content-type": "application/json" } });
-      }
-      if (url.includes("v1internal:generateContent")) {
-        return new Response(JSON.stringify({
-          response: {
-            candidates: [
-              {
-                content: { parts: [{ text: "ok" }], role: "model" },
-                finishReason: "STOP",
-                index: 0,
-              },
-            ],
-          },
-        }), { status: 200, headers: { "content-type": "application/json" } });
-      }
-      return new Response("1.2.3");
-    }));
-
-    try {
-      const plugin = await createAntigravityPlugin("google")({
-        client,
-        directory: process.cwd(),
-      });
-      const loader = await plugin.auth.loader(
-        async () => ({
-          type: "oauth",
-          refresh: formatRefreshParts({
-            refreshToken: "refresh-token",
-            projectId: "project-id",
-            managedProjectId: "managed-project-id",
-          }),
-          access: "access-token",
-          expires: now + 60_000,
-        }),
-        {
-          id: "google",
-          api: "https://generativelanguage.googleapis.com/v1beta",
-          npm: "@ai-sdk/google",
-          models: {},
-        },
-      );
-
-      const response = await (loader as { fetch: typeof fetch }).fetch(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent",
-        {
-          method: "POST",
-          body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "hello" }] }] }),
-        },
-      );
-
-      expect(response.status).toBe(200);
-      expect(fetchedUrls, JSON.stringify(fetchedUrls)).toContain(
-        "https://cloudcode-pa.googleapis.com/v1internal:generateContent",
-      );
-    } finally {
-      vi.unstubAllGlobals();
-    }
-  });
-
-  it("checks aggregate soft quota against the preferred Gemini CLI pool", async () => {
+  it("ignores the deprecated cli_first and checks soft quota against the Antigravity pool", async () => {
     const configDir = join(tmpdir(), `opencode-antigravity-cli-quota-${process.pid}-${Date.now()}`);
     mkdirSync(configDir, { recursive: true });
     writeFileSync(join(configDir, "antigravity.json"), JSON.stringify({
@@ -540,7 +440,7 @@ describe("createAntigravityPlugin auth.loader disk OAuth promotion", () => {
 
       await expect(
         (loader as { fetch: typeof fetch }).fetch(
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent",
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
           { method: "POST", body: "{}" },
         ),
       ).rejects.toThrow("All 1 account(s) rate-limited for gemini");
@@ -549,8 +449,8 @@ describe("createAntigravityPlugin auth.loader disk OAuth promotion", () => {
         "gemini",
         90,
         expect.any(Number),
-        "gemini-2.5-pro",
-        "gemini-cli",
+        "gemini-3.8-flash",
+        "antigravity",
       );
     } finally {
       selectionSpy.mockRestore();
@@ -1201,12 +1101,11 @@ describe("Gemini 4 Argon (Ultra-only)", () => {
     expect(isUltraModelRefused("free")).toBe(false);
   });
 
-  it("never falls back to the Gemini CLI quota, which does not serve Argon", () => {
-    const decision = __testExports.resolveHeaderRoutingDecision(ARGON_URL, "gemini", DEFAULT_CONFIG);
-    expect(decision.preferredHeaderStyle).toBe("antigravity");
-    expect(decision.allowQuotaFallback).toBe(false);
-    const flash = __testExports.resolveHeaderRoutingDecision(ARGON_URL.replace("4-argon", "3.8-flash"), "gemini", DEFAULT_CONFIG);
-    expect(flash.allowQuotaFallback).toBe(true);
+  it("goes to the Antigravity quota", () => {
+    expect(__testExports.resolveHeaderRoutingDecision(ARGON_URL)).toEqual({
+      preferredHeaderStyle: "antigravity",
+      explicitQuota: true,
+    });
   });
 });
 
@@ -1315,7 +1214,7 @@ describe("Gemini 3.5 Flash-Lite and 3.7 Flash through the plugin fetch", () => {
   });
 });
 
-describe("createAntigravityPlugin capacity-exhaustion header-style fallback (review fix 1)", () => {
+describe("createAntigravityPlugin capacity exhaustion (review fix 1)", () => {
   let tmpConfigHome: string;
   const savedEnv: Record<string, string | undefined> = {};
 
@@ -1327,7 +1226,7 @@ describe("createAntigravityPlugin capacity-exhaustion header-style fallback (rev
     savedEnv.GEMINI_API_KEY = process.env.GEMINI_API_KEY;
     savedEnv.GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
     process.env.XDG_CONFIG_HOME = tmpConfigHome;
-    // No API keys → no agy-sdk fallback path, isolating the header-style fallback.
+    // No API keys → no agy-sdk fallback path.
     delete process.env.OPENCODE_ANTIGRAVITY_API_KEYS;
     delete process.env.GEMINI_API_KEY;
     delete process.env.GOOGLE_API_KEY;
@@ -1370,7 +1269,7 @@ describe("createAntigravityPlugin capacity-exhaustion header-style fallback (rev
     return null;
   };
 
-  it("capacity-exhausted on antigravity retries gemini-cli quota on the SAME account before rotating", async () => {
+  it("capacity-exhausted on antigravity ends the request without falling back to the Gemini CLI quota", async () => {
     const now = Date.now();
     vi.mocked(storageModule.loadAccounts).mockResolvedValue({
       version: 4,
@@ -1467,14 +1366,14 @@ describe("createAntigravityPlugin capacity-exhaustion header-style fallback (rev
     for (let i = 0; i < 80 && !settled; i++) {
       await vi.advanceTimersByTimeAsync(10_000);
     }
-    const response = await fetchPromise;
+    await fetchPromise.catch(() => undefined);
     vi.useRealTimers();
 
-    // The request must ultimately SUCCEED via the gemini-cli quota on the same account,
-    // proving the capacity path fell back to the alternate quota pool before rotating.
-    expect(response.status, `antigravity=${antigravityContentCalls} geminiCli=${geminiCliContentCalls}`).toBe(200);
-    expect(antigravityContentCalls).toBeGreaterThan(0); // antigravity was tried and capacity-exhausted
-    expect(geminiCliContentCalls).toBeGreaterThan(0); // then gemini-cli was tried on the SAME account
+    // Google deprecated the Gemini CLI quota, so the request gives up instead of
+    // retrying it under the Gemini CLI headers.
+    expect(settled).toBe(true);
+    expect(antigravityContentCalls).toBeGreaterThan(0);
+    expect(geminiCliContentCalls).toBe(0);
   }, 20_000);
 
   it("switches to another account on a rate limit without waiting first", async () => {

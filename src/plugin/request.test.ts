@@ -718,7 +718,7 @@ it("removes API key headers", () => {
     });
 
     // Exactly what OpenCode 2.0.22 (desktop) attached to a real request.
-    it.each(["antigravity", "gemini-cli"] as const)("does not forward OpenCode's own headers to Google (%s)", (style) => {
+    it("does not forward OpenCode's own headers to Google", () => {
       const result = prepareAntigravityRequest(
         "https://generativelanguage.googleapis.com/v1beta/models/antigravity-gemini-3.8-flash:streamGenerateContent?alt=sse",
         {
@@ -740,7 +740,7 @@ it("removes API key headers", () => {
         mockAccessToken,
         mockProjectId,
         undefined,
-        style,
+        "antigravity",
       );
       const headers = result.init.headers as Headers;
       const names: string[] = [];
@@ -749,52 +749,6 @@ it("removes API key headers", () => {
       expect(headers.get("content-type")).toBe("application/json");
       expect(headers.get("accept")).toBe("text/event-stream");
       expect(headers.get("authorization")).toBe(`Bearer ${mockAccessToken}`);
-    });
-
-    it("removes x-goog-user-project header for gemini-cli headerStyle", () => {
-      const result = prepareAntigravityRequest(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-        { method: "POST", body: JSON.stringify({ contents: [] }), headers: { "x-goog-user-project": "my-project" } },
-        mockAccessToken,
-        mockProjectId,
-        undefined,
-        "gemini-cli"
-      );
-      const headers = result.init.headers as Headers;
-      expect(headers.get("x-goog-user-project")).toBeNull();
-    });
-
-    it("uses exact Code Assist headers for gemini-cli headerStyle", () => {
-      const result = prepareAntigravityRequest(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent",
-        { method: "POST", body: JSON.stringify({ contents: [] }) },
-        mockAccessToken,
-        mockProjectId,
-        undefined,
-        "gemini-cli"
-      );
-      const headers = result.init.headers as Headers;
-      expect(headers.get("User-Agent")).toBe("google-api-nodejs-client/9.15.1");
-      expect(headers.get("X-Goog-Api-Client")).toBe("gl-node/22.17.0");
-      expect(headers.get("Client-Metadata")).toBe("ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI");
-    });
-
-    it("builds gemini-cli wrapped body without antigravity-only fields", () => {
-      const result = prepareAntigravityRequest(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent",
-        { method: "POST", body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "hi" }] }] }) },
-        mockAccessToken,
-        "",
-        undefined,
-        "gemini-cli"
-      );
-      const parsed = JSON.parse(result.init.body as string);
-      expect(parsed).toHaveProperty("project", "");
-      expect(parsed).toHaveProperty("model");
-      expect(parsed).toHaveProperty("request");
-      expect(parsed.requestType).toBeUndefined();
-      expect(parsed.userAgent).toBeUndefined();
-      expect(parsed.requestId).toBeUndefined();
     });
 
     it("identifies Claude models correctly", () => {
@@ -1181,7 +1135,7 @@ it("removes API key headers", () => {
         mockAccessToken,
         mockProjectId,
         undefined,
-        "gemini-cli",
+        "antigravity",
       );
 
       const wrapped = JSON.parse(result.init.body as string);
@@ -1190,10 +1144,13 @@ it("removes API key headers", () => {
         role: "model",
         parts: [{ text: "kept" }],
       });
-      expect(wrapped.request.systemInstruction.parts).toEqual([{ text: "system kept" }]);
+      // Antigravity prepends its own system prompt; the invalid part is gone.
+      const systemParts = wrapped.request.systemInstruction.parts as Array<{ text: string }>;
+      expect(systemParts.every((part) => typeof part?.text === "string")).toBe(true);
+      expect(systemParts.at(-1)?.text.endsWith("system kept")).toBe(true);
     });
 
-    it("drops systemInstruction when all parts are invalid", () => {
+    it("drops every invalid systemInstruction part", () => {
       const result = prepareAntigravityRequest(
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
         {
@@ -1209,11 +1166,14 @@ it("removes API key headers", () => {
         mockAccessToken,
         mockProjectId,
         undefined,
-        "gemini-cli",
+        "antigravity",
       );
 
       const wrapped = JSON.parse(result.init.body as string);
-      expect(wrapped.request.systemInstruction).toBeUndefined();
+      // Only the system prompt Antigravity adds is left.
+      const systemParts = wrapped.request.systemInstruction.parts as Array<{ text?: string } | null>;
+      expect(systemParts).toHaveLength(1);
+      expect(systemParts[0]?.text).toContain("You are Antigravity");
     });
 
     it("preserves headerStyle in response", () => {
@@ -1223,9 +1183,9 @@ it("removes API key headers", () => {
         mockAccessToken,
         mockProjectId,
         undefined,
-        "gemini-cli"
+        "antigravity"
       );
-      expect(result.headerStyle).toBe("gemini-cli");
+      expect(result.headerStyle).toBe("antigravity");
     });
 
     describe("Issue #103: model name transformation during quota fallback", () => {
@@ -1509,109 +1469,23 @@ it("removes API key headers", () => {
         expect(wrapped.model).toBe("gemini-3.8-flash-high");
       });
 
-      it("transforms gemini-3-flash to gemini-3-flash-preview for gemini-cli headerStyle", () => {
-        const result = prepareAntigravityRequest(
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent",
-          { method: "POST", body: JSON.stringify({ contents: [] }) },
-          mockAccessToken,
-          mockProjectId,
-          undefined,
-          "gemini-cli"
-        );
-        expect(result.effectiveModel).toBe("gemini-3-flash-preview");
-      });
-
-      it("transforms gemini-3-pro-low to gemini-3-pro-preview for gemini-cli headerStyle", () => {
-        const result = prepareAntigravityRequest(
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-low:generateContent",
-          { method: "POST", body: JSON.stringify({ contents: [] }) },
-          mockAccessToken,
-          mockProjectId,
-          undefined,
-          "gemini-cli"
-        );
-        expect(result.effectiveModel).toBe("gemini-3-pro-preview");
-      });
-
-      it("transforms gemini-3.1-pro-low to gemini-3.1-pro (bare) for gemini-cli headerStyle", () => {
-        const result = prepareAntigravityRequest(
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-low:generateContent",
-          { method: "POST", body: JSON.stringify({ contents: [] }) },
-          mockAccessToken,
-          mockProjectId,
-          undefined,
-          "gemini-cli"
-        );
-        expect(result.effectiveModel).toBe("gemini-3.1-pro");
-      });
-
-      it("strips legacy gemini-3.1-pro-preview to bare name for gemini-cli headerStyle", () => {
-        const result = prepareAntigravityRequest(
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview:generateContent",
-          { method: "POST", body: JSON.stringify({ contents: [] }) },
-          mockAccessToken,
-          mockProjectId,
-          undefined,
-          "gemini-cli"
-        );
-        expect(result.effectiveModel).toBe("gemini-3.1-pro");
-      });
-
       it.each([
-        ["gemini-3.5-flash", "gemini-3.8-flash", "high"],
-        ["gemini-3.6-flash", "gemini-3.8-flash", "high"],
-        ["gemini-3.7-flash", "gemini-3.8-flash", "high"],
-        ["gemini-3.8-flash", "gemini-3.8-flash", "high"],
-        ["gemini-3.5-flash-lite", "gemini-3.8-flash", "high"],
-      ])("sends %s to the Gemini CLI as %s with its default thinking level", (model, sent, thinkingLevel) => {
+        ["gemini-2.5-flash", "gemini-3.8-flash-high"],
+        ["gemini-3.5-flash-lite", "gemini-3.8-flash-high"],
+        ["gemini-3.7-flash", "gemini-3.8-flash-high"],
+        ["gemini-3-flash-preview", "gemini-3.8-flash-high"],
+        ["gemini-3.1-pro-low", "gemini-3.8-flash-low"],
+        ["gemini-3.1-pro-preview-customtools", "gemini-3.8-flash-high"],
+      ])("sends %s to Antigravity as %s", (model, sent) => {
         const result = prepareAntigravityRequest(
           `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
           { method: "POST", body: JSON.stringify({ contents: [] }) },
           mockAccessToken,
           mockProjectId,
           undefined,
-          "gemini-cli"
-        );
-        expect(result.effectiveModel).toBe(sent);
-        const wrapped = JSON.parse(result.init.body as string);
-        expect(wrapped.request.generationConfig.thinkingConfig).toMatchObject({
-          thinkingLevel,
-          includeThoughts: true,
-        });
-      });
-
-      it("keeps gemini-3.1-pro-preview-customtools unchanged for gemini-cli headerStyle", () => {
-        const result = prepareAntigravityRequest(
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro-preview-customtools:generateContent",
-          { method: "POST", body: JSON.stringify({ contents: [] }) },
-          mockAccessToken,
-          mockProjectId,
-          undefined,
-          "gemini-cli"
-        );
-        expect(result.effectiveModel).toBe("gemini-3.1-pro-preview-customtools");
-      });
-
-      it("sends a Gemini 2 model as Gemini 3.8 Flash on either quota", () => {
-        const antigravity = prepareAntigravityRequest(
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-          { method: "POST", body: JSON.stringify({ contents: [] }) },
-          mockAccessToken,
-          mockProjectId,
-          undefined,
           "antigravity"
         );
-        expect(antigravity.effectiveModel).toBe("gemini-3.8-flash-high");
-
-        const cli = prepareAntigravityRequest(
-          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent",
-          { method: "POST", body: JSON.stringify({ contents: [] }) },
-          mockAccessToken,
-          mockProjectId,
-          undefined,
-          "gemini-cli"
-        );
-        expect(cli.effectiveModel).toBe("gemini-3.8-flash");
+        expect(result.effectiveModel).toBe(sent);
       });
     });
   });

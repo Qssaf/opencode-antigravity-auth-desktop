@@ -24,7 +24,7 @@ const DEAD_BACKEND_IDS = new Set([
   "gemini-pro-agent",
 ]);
 
-function send(model: string, thinkingConfig: Record<string, unknown> | undefined, headerStyle: "antigravity" | "gemini-cli" = "antigravity") {
+function send(model: string, thinkingConfig: Record<string, unknown> | undefined) {
   const result = prepareAntigravityRequest(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,
     {
@@ -37,7 +37,7 @@ function send(model: string, thinkingConfig: Record<string, unknown> | undefined
     "token",
     "project",
     undefined,
-    headerStyle,
+    "antigravity",
   );
   const body = JSON.parse(result.init.body as string);
   return { result, body, thinking: body.request.generationConfig?.thinkingConfig };
@@ -88,12 +88,11 @@ describe("retired and renamed Antigravity ids", () => {
 
 describe("models Antigravity no longer serves", () => {
   it.each(["gemini-3.1-pro", "gemini-3-pro-preview", "gemini-3-flash-preview"])(
-    "routes %s to the Gemini CLI quota first",
+    "serves the former Gemini CLI model %s on Antigravity as Gemini 3.8 Flash",
     (model) => {
       const result = resolveModelWithTier(model);
-      expect(result.quotaPreference).toBe("gemini-cli");
-      // Not explicit: when the Gemini CLI quota runs out it may fall back to Antigravity.
-      expect(result.explicitQuota).toBe(false);
+      expect(result.quotaPreference).toBe("antigravity");
+      expect(result.actualModel).toBe("gemini-3.8-flash");
     },
   );
 
@@ -101,23 +100,9 @@ describe("models Antigravity no longer serves", () => {
     expect(resolveModelWithTier(model).quotaPreference).toBe("antigravity");
   });
 
-  it("falls back to Antigravity as Gemini 3.8 Flash at the same tier", () => {
+  it("sends them as Gemini 3.8 Flash at the same tier", () => {
     expect(resolveModelForHeaderStyle("gemini-3-pro-preview", "antigravity").actualModel).toBe("gemini-3.8-flash-high");
     expect(resolveModelForHeaderStyle("gemini-3.1-pro-low", "antigravity").actualModel).toBe("gemini-3.8-flash-low");
-    expect(resolveModelForHeaderStyle("gemini-3.1-pro-low", "gemini-cli").actualModel).toBe("gemini-3.1-pro");
-  });
-
-  it("keeps Gemini 4 Argon on Antigravity even with cli_first, since Gemini CLI does not serve it", () => {
-    expect(resolveModelWithTier("gemini-4-argon", { cli_first: true }).quotaPreference).toBe("antigravity");
-  });
-
-  it("keeps a tier suffix as the thinking level on Gemini CLI", () => {
-    const pro = resolveModelForHeaderStyle("gemini-3.1-pro-low", "gemini-cli");
-    expect(pro.thinkingLevel).toBe("low");
-    // Pro takes only low and high.
-    expect(resolveModelForHeaderStyle("gemini-3.1-pro-medium", "gemini-cli").thinkingLevel).toBe("high");
-    const flash = resolveModelForHeaderStyle("gemini-3.8-flash-minimal", "gemini-cli");
-    expect(flash).toMatchObject({ actualModel: "gemini-3.8-flash", thinkingLevel: "minimal" });
   });
 
   it("does not resolve the retired 3.5 Flash Low id to a nonexistent backend id", () => {
@@ -146,11 +131,6 @@ describe("prepareAntigravityRequest wire model", () => {
   ])("sends %s %j to Antigravity as %s", (model, thinkingConfig, backend) => {
     const { body } = send(model, thinkingConfig);
     expect(body.model).toBe(backend);
-  });
-
-  it("does not rename the Gemini CLI model id", () => {
-    const { body } = send("antigravity-gemini-3.1-pro", { includeThoughts: true, thinkingLevel: "high" }, "gemini-cli");
-    expect(body.model).toBe("gemini-3.1-pro");
   });
 
   it.each(["antigravity-gemini-3.5-flash", "antigravity-gemini-3.6-flash", "antigravity-gemini-3.7-flash"])(
@@ -182,12 +162,6 @@ describe("prepareAntigravityRequest wire model", () => {
         const { body, thinking } = send(model, level ? { includeThoughts: true, thinkingLevel: level } : undefined);
         expect(body.model).toBe(backend);
         expect(thinking).toMatchObject({ thinkingLevel: sentLevel });
-      });
-
-      it(`sends ${model} to Gemini CLI as gemini-3.8-flash, keeping minimal`, () => {
-        const { body, thinking } = send(model, { includeThoughts: true, thinkingLevel: "minimal" }, "gemini-cli");
-        expect(body.model).toBe("gemini-3.8-flash");
-        expect(thinking).toMatchObject({ thinkingLevel: "minimal" });
       });
     }
 

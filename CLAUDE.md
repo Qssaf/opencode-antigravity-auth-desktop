@@ -57,7 +57,7 @@ Both exist because OpenCode may run several processes against one file. A change
 
 `liveAccountPool` identifies accounts by **refresh token, never by index**. The live pool can number accounts differently from the file (another process added or removed one since it loaded), so an index can land on the wrong account, and that account is then saved back to disk. The batch operations in `account-admin.ts` return the refresh tokens they changed for this reason.
 
-Gemini has **two quota pools per account** (Antigravity headers vs Gemini CLI headers) and the pipeline falls back between them before rotating accounts. The backend's answers depend on the `User-Agent` it sees — `getRandomizedHeaders("antigravity")` vs `getAntigravityHeaders()` are not interchangeable; the quota endpoints need the former.
+Every request uses the **Antigravity quota**: Google deprecated the Gemini CLI quota the plugin used to fall back to, so a rate-limited account means rotating accounts (or the API-key fallback). `"gemini-cli"` survives only as a legacy key in stored rate-limit state. The backend's answers depend on the `User-Agent` it sees — `getRandomizedHeaders("antigravity")` vs `getAntigravityHeaders()` are not interchangeable; the quota endpoints need the former.
 
 ### Account management surfaces
 

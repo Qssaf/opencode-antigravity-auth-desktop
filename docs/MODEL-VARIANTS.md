@@ -50,16 +50,16 @@ The plugin accepts different variant formats depending on the model family:
 
 Gemini 3 and Gemini 4 models use string-based thinking levels. Available levels differ by model:
 
-| Level | 3.8 Flash | 4 Argon | Gemini CLI 3 Flash / Pro | Description |
-|-------|-----------|---------|--------------------------|-------------|
-| `minimal` | sent as `low` | sent as `low` | Flash only | Minimal thinking, lowest latency |
-| `low` | ✅ | ✅ | ✅ | Light thinking |
-| `medium` | ✅ | ✅ | Flash only | Balanced thinking |
-| `high` | ✅ | ✅ | ✅ | Maximum thinking |
+| Level | 3.8 Flash | 4 Argon | Description |
+|-------|-----------|---------|-------------|
+| `minimal` | sent as `low` | sent as `low` | Minimal thinking, lowest latency |
+| `low` | ✅ | ✅ | Light thinking |
+| `medium` | ✅ | ✅ | Balanced thinking |
+| `high` | ✅ | ✅ | Maximum thinking |
 
 > **Note:** Antigravity serves only Gemini 3.8 Flash and Gemini 4 Argon, and rejects `"minimal"` on both, so the plugin sends `low`. Both default to `high`.
 > Gemini 4 Argon needs a Google AI Ultra subscription; see the README.
-> Any other Gemini model requested on Antigravity (3 Pro, 3.1 Pro, 3 Flash, 3.1 Flash-Lite, 2.5, and the dropped 3.5-3.7 Flash) is served as Gemini 3.8 Flash at the same tier.
+> Any other Gemini model (3 Pro, 3.1 Pro, 3 Flash, 3.1 Flash-Lite, 2.5, the dropped 3.5-3.7 Flash, and the former Gemini CLI models) is served as Gemini 3.8 Flash at the same tier.
 
 ### Gemini 3.8 Flash Example
 

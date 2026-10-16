@@ -1,4 +1,4 @@
-# Antigravity + Gemini CLI OAuth Plugin for Opencode
+# Antigravity OAuth Plugin for Opencode
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Fork of pieliesdie/opencode-antigravity-auth](https://img.shields.io/badge/fork%20of-pieliesdie%2Fopencode--antigravity--auth-blue)](https://github.com/pieliesdie/opencode-antigravity-auth)
@@ -19,10 +19,9 @@ Enable Opencode to authenticate against **Antigravity** (Google's IDE) via OAuth
 
 ## What You Get
 
-- **Gemini 4 Argon** (Google AI Ultra) and **Gemini 3.8 Flash** via Google OAuth (Antigravity), plus the Gemini CLI quota models
+- **Gemini 4 Argon** (Google AI Ultra) and **Gemini 3.8 Flash** via Google OAuth (Antigravity)
 - **Multi-account support** — add multiple Google accounts, auto-rotates when rate-limited
 - **Modern Gemini API support** — use Antigravity SDK-style API keys / Cloud Projects as Gemini backups or opt-in primary routing
-- **Legacy Gemini CLI quota support** — still available for compatibility and quota fallback
 - **Thinking models** — extended thinking for Claude and Gemini 3 with configurable budgets
 - **Google Search grounding** — enable web search for Gemini models (auto or always-on), or set `"google_search_tool": false` to leave web search to your other tools
 - **Auto-recovery** — handles session errors and tool failures automatically
@@ -146,29 +145,19 @@ opencode run "Hello" --model=google/antigravity-gemini-3.8-flash --variant=high
 
 > **Gemini 4 Argon needs a Google AI Ultra subscription.** The plugin cannot read your subscription, so it learns it from Google: an account Google refuses Argon for is skipped for an hour and the next account is tried. When no signed-in account has Ultra, the request is answered with a message saying so instead of an error. With an API key configured (`agy_sdk`), Argon is tried through the public Gemini API before that message.
 
-> Antigravity now serves only Gemini 3.8 Flash and Gemini 4 Argon. Google dropped Gemini 3.5, 3.6 and 3.7 Flash, Claude Sonnet 4.6, Claude Opus 4.6 and GPT-OSS from it, and no longer serves Gemini 3 Pro, 3.1 Pro, 3 Flash, 3.1 Flash-Lite or 2.5 there either. An `antigravity-` request for any of those (with or without a tier suffix) goes to Gemini 3.8 Flash at the same tier, so sessions still set to an old model keep working. Gemini 2 is gone from every route: a request for any Gemini 2 model is sent as Gemini 3.8 Flash. The Gemini CLI models below go to the Gemini CLI quota first, and fall back to Antigravity as Gemini 3.8 Flash when that runs out.
+> Antigravity now serves only Gemini 3.8 Flash and Gemini 4 Argon. Google dropped Gemini 3.5, 3.6 and 3.7 Flash, Claude Sonnet 4.6, Claude Opus 4.6 and GPT-OSS from it, and no longer serves Gemini 3 Pro, 3.1 Pro, 3 Flash, 3.1 Flash-Lite or 2.5 there either. An `antigravity-` request for any of those (with or without a tier suffix) goes to Gemini 3.8 Flash at the same tier, so sessions still set to an old model keep working. Gemini 2 is gone from every route: a request for any Gemini 2 model is sent as Gemini 3.8 Flash.
+
+> **The Gemini CLI quota is gone.** Google deprecated it in favour of Antigravity and the Antigravity CLI, which share the Antigravity quota. The former Gemini CLI models (`gemini-3.8-flash`, `gemini-3.1-pro`, `gemini-3-pro-preview`, `gemini-3-flash-preview`, `gemini-3.1-pro-preview-customtools`) are no longer listed, and a request for one is served on Antigravity as Gemini 3.8 Flash. `cli_first` is ignored.
 
 **Antigravity SDK / Gemini API projects** (API-key backed; used by API-key auth, or as OAuth fallback when configured):
 
 The official Antigravity SDK uses `GEMINI_API_KEY` for local Gemini access. This plugin now supports that path directly for Gemini models while keeping OAuth accounts for Antigravity.
 
-**Legacy Gemini CLI quota** (separate from Antigravity; used when `cli_first` is true or as fallback):
-
-| Model | Notes |
-|-------|-------|
-| `gemini-3-flash-preview` | Gemini 3 Flash (preview) |
-| `gemini-3.8-flash` | **Newest.** Gemini 3.8 Flash (high default) |
-| `gemini-3-pro-preview` | Gemini 3 Pro (preview) |
-| `gemini-3.1-pro` | Gemini 3.1 Pro |
-| `gemini-3.1-pro-preview-customtools` | Gemini 3.1 Pro Preview Custom Tools |
-
 > **Routing Behavior:**
 > - **OAuth Antigravity-first (default):** Gemini models use Antigravity quota across OAuth accounts.
 > - **Antigravity SDK / Gemini API:** API-key auth, `GEMINI_API_KEY`, or configured `agy_sdk.cloud_projects` route Gemini requests through the public Gemini API.
-> - **Legacy CLI-first (`cli_first: true`):** Gemini models use the legacy Gemini CLI quota first.
-> - When OAuth quota pools are exhausted, configured `agy_sdk.cloud_projects` are used as backup capacity before failing if `agy_sdk.enabled: true`, `agy_sdk.api_key_fallback: true`, and usable API-key credentials are present.
-> - Gemini 4 Argon and image models always use Antigravity (Argon is not on the Gemini CLI quota).
-> Model names are automatically transformed for the target API (e.g., `gemini-3-flash` → `gemini-3-flash-preview` for the Gemini CLI).
+> - When the OAuth Antigravity quota is exhausted on every account, configured `agy_sdk.cloud_projects` are used as backup capacity before failing if `agy_sdk.enabled: true`, `agy_sdk.api_key_fallback: true`, and usable API-key credentials are present.
+> - Gemini 4 Argon and image models always use Antigravity.
 
 **Using variants:**
 ```bash
@@ -208,36 +197,6 @@ Add this to your `~/.config/opencode/opencode.json`:
             "medium": { "thinkingLevel": "medium" },
             "high": { "thinkingLevel": "high" }
           }
-        },
-        "gemini-3-flash-preview": {
-          "name": "Gemini 3 Flash Preview (Gemini CLI)",
-          "limit": { "context": 1048576, "output": 65536 },
-          "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] }
-        },
-        "gemini-3.8-flash": {
-          "name": "Gemini 3.8 Flash (Gemini CLI)",
-          "limit": { "context": 1048576, "output": 65536 },
-          "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
-          "variants": {
-            "low": { "thinkingLevel": "low" },
-            "medium": { "thinkingLevel": "medium" },
-            "high": { "thinkingLevel": "high" }
-          }
-        },
-        "gemini-3-pro-preview": {
-          "name": "Gemini 3 Pro Preview (Gemini CLI)",
-          "limit": { "context": 1048576, "output": 65535 },
-          "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] }
-        },
-        "gemini-3.1-pro": {
-          "name": "Gemini 3.1 Pro (Gemini CLI)",
-          "limit": { "context": 1048576, "output": 65535 },
-          "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] }
-        },
-        "gemini-3.1-pro-preview-customtools": {
-          "name": "Gemini 3.1 Pro Preview Custom Tools (Gemini CLI)",
-          "limit": { "context": 1048576, "output": 65535 },
-          "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] }
         }
       }
     }
@@ -245,7 +204,7 @@ Add this to your `~/.config/opencode/opencode.json`:
 }
 ```
 
-> **Backward Compatibility:** Legacy model names with `antigravity-` prefix (e.g., `antigravity-gemini-3-flash`) still work; Antigravity serves them as Gemini 3.8 Flash. The plugin automatically handles model name transformation for both Antigravity and Gemini CLI APIs.
+> **Backward Compatibility:** Legacy model names with `antigravity-` prefix (e.g., `antigravity-gemini-3-flash`) still work; Antigravity serves them as Gemini 3.8 Flash. The plugin automatically handles model name transformation for Antigravity and the public Gemini API.
 
 </details>
 
@@ -275,7 +234,7 @@ prompted by OpenCode:
     Enable an account         Put an account back into rotation
     Disable an account        Keep an account stored but out of rotation
     Remove an account         Delete an account from the pool
-    Check quotas              Remaining Antigravity and Gemini CLI quota
+    Check quotas              Remaining Antigravity quota
     Verify access             Check accounts against the Antigravity backend
 
 ? Which account(s)?          (space to tick, enter to run)
@@ -336,7 +295,7 @@ The CLI edits `antigravity-accounts.json` directly, so quit OpenCode first: a
 running instance holds the pool in memory and can write its own copy back over a
 change made behind its back. The login menu has no such caveat.
 
-For details on load balancing, dual quota pools, and account storage, see [docs/MULTI-ACCOUNT.md](docs/MULTI-ACCOUNT.md).
+For details on load balancing, quota tracking, and account storage, see [docs/MULTI-ACCOUNT.md](docs/MULTI-ACCOUNT.md).
 
 ---
 
@@ -652,7 +611,7 @@ When copying `antigravity-accounts.json` to a new machine:
 3. If you get "API key missing" error, the refresh token may be invalid — re-authenticate
 
 ## Known Plugin Interactions
-For details on load balancing, dual quota pools, and account storage, see [docs/MULTI-ACCOUNT.md](docs/MULTI-ACCOUNT.md).
+For details on load balancing, quota tracking, and account storage, see [docs/MULTI-ACCOUNT.md](docs/MULTI-ACCOUNT.md).
 
 ---
 
@@ -712,10 +671,10 @@ Most users don't need to configure anything — defaults work well.
 |--------|---------|--------------
 | `keep_thinking` | `false` | Preserve Claude's thinking across turns. **Warning:** enabling may degrade model stability. |
 | `session_recovery` | `true` | Auto-recover from tool errors |
-| `cli_first` | `false` | Route Gemini models to the legacy Gemini CLI path first (Claude and image models stay on Antigravity). |
+| `cli_first` | `false` | Deprecated and ignored: the Gemini CLI quota is gone, so every model uses Antigravity. |
 | `agy_sdk.enabled` | `true` | Enables the Antigravity SDK / Gemini API key route for Gemini requests. |
 | `agy_sdk.prefer_for_gemini` | `false` | When API keys are configured, use the Gemini API route before OAuth-backed Antigravity for Gemini models. |
-| `agy_sdk.api_key_fallback` | `true` | Use configured API keys / Cloud Projects when OAuth Antigravity and legacy Gemini CLI quotas are unavailable. |
+| `agy_sdk.api_key_fallback` | `true` | Use configured API keys / Cloud Projects when the OAuth Antigravity quota is unavailable. |
 | `model_discovery.enabled` | `true` | Load provider models dynamically from Gemini API / Antigravity model APIs, with bundled static definitions as fallback. |
 
 ### Antigravity SDK / Gemini API keys
@@ -743,7 +702,7 @@ For multiple Cloud Projects / API keys, add them to `~/.config/opencode/antigrav
 
 Keep this file private: API keys are stored in your local OpenCode config and are sent to Gemini with the `x-goog-api-key` header, never in the request URL. Do not commit `antigravity.json` with real keys.
 
-Set `prefer_for_gemini: true` if you want Gemini models to use the newer Gemini API path before OAuth-backed Antigravity. OAuth multi-account rotation remains active for Antigravity/Claude and as fallback when `prefer_for_gemini` keys are unavailable. `cli_first` remains the legacy Gemini CLI compatibility mode.
+Set `prefer_for_gemini: true` if you want Gemini models to use the newer Gemini API path before OAuth-backed Antigravity. OAuth multi-account rotation remains active for Antigravity/Claude and as fallback when `prefer_for_gemini` keys are unavailable.
 
 ### Account Rotation
 
@@ -817,7 +776,7 @@ See the full [Troubleshooting Guide](docs/TROUBLESHOOTING.md) for solutions to c
 ## Documentation
 
 - [Configuration](docs/CONFIGURATION.md) — All configuration options
-- [Multi-Account](docs/MULTI-ACCOUNT.md) — Load balancing, dual quota pools, account storage
+- [Multi-Account](docs/MULTI-ACCOUNT.md) — Load balancing, quota tracking, account storage
 - [Model Variants](docs/MODEL-VARIANTS.md) — Thinking budgets and variant system
 - [Troubleshooting](docs/TROUBLESHOOTING.md) — Common issues and fixes
 - [Architecture](docs/ARCHITECTURE.md) — How the plugin works

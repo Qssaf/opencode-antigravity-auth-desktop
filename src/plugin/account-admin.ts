@@ -295,7 +295,7 @@ function renderRateLimitDetail(result: AccountQuotaResult): string[] {
   return lines;
 }
 
-/** The per-model Antigravity and Gemini CLI pools, under the rate-limit table. */
+/** The per-model Antigravity pools, under the rate-limit table. */
 function renderModelQuotaDetail(result: AccountQuotaResult): string[] {
   const lines: string[] = [];
   const groups = result.quota?.groups ?? {};
@@ -315,14 +315,6 @@ function renderModelQuotaDetail(result: AccountQuotaResult): string[] {
         `    ${name.padEnd(18)} ${formatPercent(data?.remainingFraction)}${countdown ? ` (resets in ${countdown})` : ""}`,
       );
     }
-  }
-
-  for (const model of result.geminiCliQuota?.models ?? []) {
-    const countdown = formatCountdown(model.resetTime);
-    lines.push(
-      `    ${`CLI ${model.modelId}`.padEnd(18)} ${formatPercent(model.remainingFraction)}` +
-        `${countdown ? ` (resets in ${countdown})` : ""}`,
-    );
   }
   return lines;
 }

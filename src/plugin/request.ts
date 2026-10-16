@@ -1,8 +1,6 @@
 import crypto from "node:crypto";
 import {
   ANTIGRAVITY_ENDPOINT,
-  GEMINI_CLI_ENDPOINT,
-  GEMINI_CLI_HEADERS,
   EMPTY_SCHEMA_PLACEHOLDER_NAME,
   EMPTY_SCHEMA_PLACEHOLDER_DESCRIPTION,
   SKIP_THOUGHT_SIGNATURE,
@@ -1273,7 +1271,7 @@ export function prepareAntigravityRequest(
   stripHostClientHeaders(headers);
   // Strip x-goog-user-project header to prevent 403 auth/license conflicts.
   // This header is added by OpenCode/AI SDK and can force project-level checks
-  // that are not required for Antigravity/Gemini CLI OAuth requests.
+  // that are not required for Antigravity OAuth requests.
   headers.delete("x-goog-user-project");
 
   const match = requestUrl.match(/\/models\/([^:]+):(\w+)/);
@@ -1293,9 +1291,7 @@ export function prepareAntigravityRequest(
   let effectiveModel = resolved.actualModel;
 
   const streaming = rawAction === STREAM_ACTION;
-  const defaultEndpoint =
-    headerStyle === "gemini-cli" ? GEMINI_CLI_ENDPOINT : ANTIGRAVITY_ENDPOINT;
-  const baseEndpoint = endpointOverride ?? defaultEndpoint;
+  const baseEndpoint = endpointOverride ?? ANTIGRAVITY_ENDPOINT;
   const transformedUrl = `${baseEndpoint}/v1internal:${rawAction}${streaming ? "?alt=sse" : ""}`;
 
   const isClaude = isClaudeModel(resolved.actualModel);
@@ -2287,11 +2283,6 @@ export function prepareAntigravityRequest(
     headers.set("User-Agent", ANTIGRAVITY_CLI_USER_AGENT);
     headers.delete("X-Goog-Api-Client");
     headers.delete("Client-Metadata");
-  } else {
-    // Gemini CLI mode: match opencode-gemini-auth Code Assist header set exactly
-    headers.set("User-Agent", GEMINI_CLI_HEADERS["User-Agent"]);
-    headers.set("X-Goog-Api-Client", GEMINI_CLI_HEADERS["X-Goog-Api-Client"]);
-    headers.set("Client-Metadata", GEMINI_CLI_HEADERS["Client-Metadata"]);
   }
   return {
     request: transformedUrl,

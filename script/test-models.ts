@@ -3,16 +3,10 @@ import { spawn } from "child_process";
 
 interface ModelTest {
   model: string;
-  category: "gemini-cli" | "antigravity-gemini";
+  category: "antigravity-gemini";
 }
 
 const MODELS: ModelTest[] = [
-  // Gemini CLI (direct Google API)
-  { model: "google/gemini-3-flash-preview", category: "gemini-cli" },
-  { model: "google/gemini-3.8-flash", category: "gemini-cli" },
-  { model: "google/gemini-3-pro-preview", category: "gemini-cli" },
-  { model: "google/gemini-3.1-pro", category: "gemini-cli" },
-
   // Antigravity Gemini
   { model: "google/antigravity-gemini-3.8-flash", category: "antigravity-gemini" },
   // Google AI Ultra only: other accounts get the "needs Ultra" message.
@@ -88,14 +82,14 @@ Usage:
 
 Options:
   --model <model>      Test specific model
-  --category <cat>     Test by category (gemini-cli, antigravity-gemini)
+  --category <cat>     Test by category (antigravity-gemini)
   --timeout <ms>       Timeout per model (default: 120000)
   --dry-run            List models without testing
   --help, -h           Show this help
 
 Examples:
   npx tsx script/test-models.ts --dry-run
-  npx tsx script/test-models.ts --model google/gemini-3.8-flash
+  npx tsx script/test-models.ts --model google/antigravity-gemini-3.8-flash
   npx tsx script/test-models.ts --category antigravity-gemini
 `);
 }

@@ -122,7 +122,6 @@ describe("renderQuota", () => {
     checkAccountsQuota.mockResolvedValue([
       quotaResult(0, "first@example.com", {
         quota: { groups: { claude: { remainingFraction: 0.4, modelCount: 2 } }, modelCount: 2 },
-        geminiCliQuota: { models: [{ modelId: "gemini-3-pro", remainingFraction: 0.8 }] },
       }),
     ]);
 
@@ -131,7 +130,6 @@ describe("renderQuota", () => {
     expect(output).toContain("Gemini models");
     expect(output).toContain("Claude and GPT models");
     expect(output).toContain("Model pools (5-hour)");
-    expect(output).toContain("CLI gemini-3-pro");
   });
 
   it("says so when no account is stored", async () => {

@@ -22,32 +22,24 @@ account again just refreshes the token of the account already in the pool.
 
 - **Sticky account selection** — Sticks to the same account until rate-limited (preserves Anthropic's prompt cache)
 - **Per-model-family limits** — Rate limits tracked separately for Claude and Gemini models
-- **Antigravity-first for Gemini** — Gemini requests use Antigravity quota first, then automatically fall back to Gemini CLI when exhausted across all accounts.
+- **Antigravity quota only** — Every request uses the Antigravity quota; the Gemini CLI quota Google deprecated is no longer used.
 - **Smart retry threshold** — Short rate limits (≤5s) are retried on same account
 - **Exponential backoff** — Increasing delays for consecutive rate limits
 
 ---
 
-## Dual Quota Pools
+## One Quota Pool
 
-For Gemini models, the plugin accesses **two independent quota pools** per account:
+Google deprecated the Gemini CLI quota in favour of Antigravity and the
+Antigravity CLI, which share the Antigravity quota. Every request uses that
+quota; there is no second pool to fall back to on the same account.
 
-| Quota Pool | When Used |
-|------------|-----------|
-| **Antigravity** | Default for all requests |
-| **Gemini CLI** | Automatic fallback between Antigravity and Gemini CLI in both directions |
+### When an Account Runs Out
 
-This effectively **doubles your Gemini quota** through automatic fallback between Antigravity and Gemini CLI pools.
-
-### How Quota Fallback Works
-
-1. Request uses Antigravity quota on current account
-2. If rate-limited, plugin checks if ANY other account has Antigravity available
-3. If yes → switch to that account (stay on Antigravity)
-4. If no (all accounts exhausted) → fall back to Gemini CLI quota on current account
-5. Model names are automatically transformed (e.g., `gemini-3-flash` → `gemini-3-flash-preview`)
-
-Automatic fallback between pools is always enabled for Gemini requests.
+1. Request uses the Antigravity quota on the current account
+2. If rate-limited, the plugin checks whether any other account still has quota
+3. If yes → switch to that account
+4. If no → try the API-key fallback (`agy_sdk`) when configured, otherwise wait or report the rate limit
 
 ---
 
@@ -74,7 +66,7 @@ global demand. Whichever empties first is what blocks a request:
 ```
 
 From a shell, `antigravity-accounts quota --detailed` adds every bucket and the
-per-model 5-hour pools (Claude, Gemini 3 Pro/Flash, Gemini CLI), and
+per-model 5-hour pools (Claude, Gemini 3 Pro/Flash), and
 `--json` prints the raw data.
 
 ### From a shell

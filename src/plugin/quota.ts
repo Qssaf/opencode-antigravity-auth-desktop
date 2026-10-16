@@ -13,7 +13,6 @@ import {
   getModelFamily,
   isGemini2Model,
   isGemini3OrLaterModel,
-  remapDroppedGeminiModel,
   remapRetiredAntigravityGeminiModel,
 } from "./transform/model-resolver";
 import { recordAntigravityAvailableModels } from "./model-catalog";
@@ -34,28 +33,6 @@ export interface QuotaSummary {
   groups: Partial<Record<QuotaGroup, QuotaGroupSummary>>;
   modelCount: number;
   error?: string;
-}
-
-// Gemini CLI quota types
-export interface GeminiCliQuotaModel {
-  modelId: string;
-  remainingFraction: number;
-  resetTime?: string;
-}
-
-export interface GeminiCliQuotaSummary {
-  models: GeminiCliQuotaModel[];
-  error?: string;
-}
-
-interface RetrieveUserQuotaResponse {
-  buckets?: {
-    remainingAmount?: string;
-    remainingFraction?: number;
-    resetTime?: string;
-    tokenType?: string;
-    modelId?: string;
-  }[];
 }
 
 /**
@@ -114,7 +91,6 @@ export interface AccountQuotaResult {
   error?: string;
   disabled?: boolean;
   quota?: QuotaSummary;
-  geminiCliQuota?: GeminiCliQuotaSummary;
   /** Weekly and 5-hour rate-limit buckets per model group. */
   rateLimits?: RateLimitSummary;
   updatedAccount?: AccountMetadataV3;
@@ -294,76 +270,6 @@ export async function fetchAvailableModels(
   );
 
   throw new Error(errors.join("; ") || "fetchAvailableModels failed");
-}
-
-async function fetchGeminiCliQuota(
-  accessToken: string,
-  projectId: string,
-): Promise<RetrieveUserQuotaResponse> {
-  const endpoint = ANTIGRAVITY_ENDPOINT_PROD;
-  // Use Gemini CLI user-agent to get CLI quota buckets (not Antigravity buckets)
-  const platform = process.platform || "darwin";
-  const arch = process.arch || "arm64";
-  const geminiCliUserAgent = `GeminiCLI/1.0.0/gemini-2.5-pro (${platform}; ${arch})`;
-
-  const body = projectId ? { project: projectId } : {};
-  
-  try {
-    const response = await fetchWithTimeout(`${endpoint}/v1internal:retrieveUserQuota`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-        "User-Agent": geminiCliUserAgent,
-      },
-      body: JSON.stringify(body),
-    });
-
-    if (response.ok) {
-      const data = (await response.json()) as RetrieveUserQuotaResponse;
-      return data;
-    }
-
-    // Non-OK response - return empty buckets
-    return { buckets: [] };
-  } catch {
-    // Network error or timeout - return empty buckets
-    return { buckets: [] };
-  }
-}
-
-function aggregateGeminiCliQuota(response: RetrieveUserQuotaResponse): GeminiCliQuotaSummary {
-  const models: GeminiCliQuotaModel[] = [];
-  
-  if (!response.buckets || response.buckets.length === 0) {
-    return { models };
-  }
-
-  for (const bucket of response.buckets) {
-    if (!bucket.modelId) {
-      continue;
-    }
-    
-    // Filter out models we don't care about for Gemini CLI quotas
-    // Only show Gemini 3 and later models, without the ones Google dropped
-    const modelId = bucket.modelId;
-    const isRelevantModel = isGemini3OrLaterModel(modelId) && remapDroppedGeminiModel(modelId) === modelId;
-    
-    if (!isRelevantModel) {
-      continue;
-    }
-    
-    models.push({
-      modelId: bucket.modelId,
-      remainingFraction: normalizeRemainingFraction(bucket.remainingFraction),
-      resetTime: bucket.resetTime,
-    });
-  }
-
-  // Sort by model ID for consistent display
-  models.sort((a, b) => a.modelId.localeCompare(b.modelId));
-
-  return { models };
 }
 
 function applyAccountUpdates(account: AccountMetadataV3, auth: OAuthAuthDetails): AccountMetadataV3 | undefined {
@@ -556,13 +462,10 @@ async function checkSingleAccountQuota(
     const updatedAccount = applyAccountUpdates(account, auth);
 
     let quotaResult: QuotaSummary;
-    let geminiCliQuotaResult: GeminiCliQuotaSummary;
 
-    // Fetch both Antigravity and Gemini CLI quotas in parallel
-    const [antigravityResponse, geminiCliResponse, rateLimitSummary] = await Promise.all([
+    const [antigravityResponse, rateLimitSummary] = await Promise.all([
       fetchAvailableModels(auth.access ?? "", projectContext.effectiveProjectId)
         .catch((): FetchAvailableModelsResponse => ({ models: undefined })),
-      fetchGeminiCliQuota(auth.access ?? "", projectContext.effectiveProjectId),
       fetchRateLimitSummary(auth.access ?? "", projectContext.effectiveProjectId),
     ]);
 
@@ -578,14 +481,6 @@ async function checkSingleAccountQuota(
       quotaResult = aggregateQuota(antigravityResponse.models);
     }
 
-    // Process Gemini CLI quota
-    geminiCliQuotaResult = aggregateGeminiCliQuota(geminiCliResponse);
-    if (geminiCliResponse.buckets === undefined || geminiCliResponse.buckets.length === 0) {
-      geminiCliQuotaResult.error = geminiCliQuotaResult.models.length === 0
-        ? "No Gemini CLI quota available"
-        : undefined;
-    }
-
     // Log quota status for each family
     for (const [family, groupQuota] of Object.entries(quotaResult.groups)) {
       const remainingPercent = (groupQuota.remainingFraction ?? 0) * 100;
@@ -598,7 +493,6 @@ async function checkSingleAccountQuota(
       status: "ok",
       disabled,
       quota: quotaResult,
-      geminiCliQuota: geminiCliQuotaResult,
       rateLimits: rateLimitSummary,
       updatedAccount,
     };
@@ -640,6 +534,5 @@ export async function checkAccountsQuota(
 
 export const __testExports = {
   aggregateQuota,
-  aggregateGeminiCliQuota,
   mapWithConcurrency,
 }

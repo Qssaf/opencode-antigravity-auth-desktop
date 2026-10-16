@@ -151,7 +151,7 @@ describe("Antigravity-first fallback", () => {
       expect(hasOther).toBe(true);
     });
 
-    it("returns false for Claude family (no gemini-cli fallback)", () => {
+    it("returns false for Claude family", () => {
       const stored: AccountStorageV4 = {
         version: 4,
         accounts: [
@@ -176,7 +176,7 @@ describe("Antigravity-first fallback", () => {
   });
 
   describe("Pre-check fallback logic", () => {
-    it("should switch to account with antigravity rather than fall back to gemini-cli", () => {
+    it("switches to an account that still has antigravity quota", () => {
       const stored: AccountStorageV4 = {
         version: 4,
         accounts: [
@@ -190,14 +190,13 @@ describe("Antigravity-first fallback", () => {
       const manager = new AccountManager(undefined, stored);
       const accounts = manager.getAccounts();
       
-      // Account 0's antigravity is rate-limited but gemini-cli is available
+      // Account 0's antigravity is rate-limited
       manager.markRateLimited(accounts[0]!, 60000, "gemini", "antigravity");
       
       // Account 1's antigravity is available
       // (not rate-limited for antigravity)
 
-      // When requesting with antigravity headerStyle:
-      // Should switch to account 1 (which has antigravity), NOT fall back to gemini-cli
+      // Should switch to account 1, which has antigravity quota
       
       const nextAccount = manager.getCurrentOrNextForFamily(
         "gemini",
@@ -210,7 +209,7 @@ describe("Antigravity-first fallback", () => {
       expect(manager.isRateLimitedForHeaderStyle(nextAccount!, "gemini", "antigravity")).toBe(false);
     });
 
-    it("should only fall back to gemini-cli when ALL accounts exhausted antigravity", () => {
+    it("leaves no account to switch to once every account exhausted antigravity", () => {
       const stored: AccountStorageV4 = {
         version: 4,
         accounts: [
@@ -232,9 +231,8 @@ describe("Antigravity-first fallback", () => {
       expect(manager.hasOtherAccountWithAntigravityAvailable(0, "gemini", null)).toBe(false);
       expect(manager.hasOtherAccountWithAntigravityAvailable(1, "gemini", null)).toBe(false);
 
-      // Account 0's gemini-cli should still be available for fallback
-      expect(manager.isRateLimitedForHeaderStyle(accounts[0]!, "gemini", "gemini-cli")).toBe(false);
-      expect(manager.getAvailableHeaderStyle(accounts[0]!, "gemini")).toBe("gemini-cli");
+      // There is no Gemini CLI quota to fall back to.
+      expect(manager.getCurrentOrNextForFamily("gemini", null, "sticky", "antigravity")).toBeNull();
     });
   });
 });

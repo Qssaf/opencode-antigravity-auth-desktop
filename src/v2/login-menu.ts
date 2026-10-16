@@ -45,7 +45,7 @@ const ACTION_OPTIONS: readonly FormOption[] = [
   { value: "enable", label: "Enable an account", description: "Put an account back into rotation" },
   { value: "disable", label: "Disable an account", description: "Keep an account stored but out of rotation" },
   { value: "remove", label: "Remove an account", description: "Delete an account from the pool" },
-  { value: "quota", label: "Check quotas", description: "Remaining Antigravity and Gemini CLI quota" },
+  { value: "quota", label: "Check quotas", description: "Remaining Antigravity quota" },
   { value: "verify", label: "Verify access", description: "Check accounts against the Antigravity backend" },
 ];
 

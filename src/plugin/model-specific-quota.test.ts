@@ -33,30 +33,15 @@ describe("Model-specific Gemini quota", () => {
     expect(manager.isRateLimitedForHeaderStyle(account, "gemini", "antigravity")).toBe(false);
   });
 
-  it("falls back to gemini-cli only for the specific model", () => {
-    const account = manager.getCurrentAccountForFamily("gemini")!;
-    const modelPro = "gemini-1.5-pro";
-    const modelFlash = "gemini-1.5-flash";
-
-    // Mark gemini-1.5-pro as rate limited on antigravity
-    manager.markRateLimited(account, 60000, "gemini", "antigravity", modelPro);
-
-    // Available header style for Pro should be gemini-cli
-    expect(manager.getAvailableHeaderStyle(account, "gemini", modelPro)).toBe("gemini-cli");
-
-    // Available header style for Flash should still be antigravity
-    expect(manager.getAvailableHeaderStyle(account, "gemini", modelFlash)).toBe("antigravity");
-  });
-
-  it("returns null when all header styles are exhausted for the specific model on a single account", () => {
+  it("returns null once the Antigravity quota for the specific model is used up on a single account", () => {
     const manager2 = new AccountManager(auth);
     
     const account = manager2.getCurrentAccountForFamily("gemini")!;
     const modelPro = "gemini-1.5-pro";
     const modelFlash = "gemini-1.5-flash";
 
+    // There is no Gemini CLI quota to fall back to.
     manager2.markRateLimited(account, 60000, "gemini", "antigravity", modelPro);
-    manager2.markRateLimited(account, 60000, "gemini", "gemini-cli", modelPro);
 
     // No other account available, so returns null for the rate-limited model
     expect(manager2.getCurrentOrNextForFamily("gemini", modelPro)).toBeNull();

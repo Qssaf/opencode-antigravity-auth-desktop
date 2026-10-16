@@ -52,17 +52,14 @@ const ERROR_PATTERNS = [
   "must remain as they were",
 ];
 
-// Antigravity serves only Gemini 3.8 Flash (and Ultra-only Gemini 4 Argon), so
-// the multi-model tests switch between it and Gemini 3.1 Pro on the Gemini CLI
-// quota.
+// Antigravity serves only Gemini 3.8 Flash (and Ultra-only Gemini 4 Argon), and
+// the Gemini CLI quota is deprecated, so every test runs on Gemini 3.8 Flash.
 const GEMINI_FLASH = "google/antigravity-gemini-3.8-flash";
-const GEMINI_FLASH_CLI_QUOTA = "google/gemini-3.8-flash";
-const GEMINI_PRO_CLI_QUOTA = "google/gemini-3.1-pro";
 
 const SANITY_TESTS: MultiTurnTest[] = [
   {
     name: "thinking-tool-use",
-    model: GEMINI_PRO_CLI_QUOTA,
+    model: GEMINI_FLASH,
     category: "thinking-order",
     suite: "sanity",
     turns: ["Read package.json and tell me the package name"],
@@ -71,7 +68,7 @@ const SANITY_TESTS: MultiTurnTest[] = [
   },
   {
     name: "thinking-bash-tool",
-    model: GEMINI_PRO_CLI_QUOTA,
+    model: GEMINI_FLASH,
     category: "thinking-order",
     suite: "sanity",
     turns: ["Run: echo 'hello' and tell me the output"],
@@ -80,7 +77,7 @@ const SANITY_TESTS: MultiTurnTest[] = [
   },
   {
     name: "tool-pairing-sequential",
-    model: GEMINI_PRO_CLI_QUOTA,
+    model: GEMINI_FLASH,
     category: "tool-pairing",
     suite: "sanity",
     turns: ["Run: echo 'first'", "Run: echo 'second'"],
@@ -98,7 +95,7 @@ const SANITY_TESTS: MultiTurnTest[] = [
   },
   {
     name: "thinking-modification-continue",
-    model: GEMINI_PRO_CLI_QUOTA,
+    model: GEMINI_FLASH,
     category: "thinking-order",
     suite: "sanity",
     turns: [
@@ -116,7 +113,7 @@ const SANITY_TESTS: MultiTurnTest[] = [
     suite: "sanity",
     turns: [
       { prompt: "What is 2+2? Answer briefly.", model: GEMINI_FLASH },
-      { prompt: "What is 3+3? Answer briefly.", model: GEMINI_PRO_CLI_QUOTA },
+      { prompt: "What is 3+3? Answer briefly.", model: GEMINI_FLASH },
       { prompt: "What is 4+4? Answer briefly.", model: GEMINI_FLASH },
     ],
     errorPatterns: ERROR_PATTERNS,
@@ -141,20 +138,20 @@ const HEAVY_TESTS: MultiTurnTest[] = [
     suite: "heavy",
     turns: [
       { prompt: "Read package.json and tell me the name", model: GEMINI_FLASH },
-      { prompt: "Now read tsconfig.json and tell me the target", model: GEMINI_PRO_CLI_QUOTA },
+      { prompt: "Now read tsconfig.json and tell me the target", model: GEMINI_FLASH },
       { prompt: "Run: ls -la src/plugin | head -5", model: GEMINI_FLASH },
-      { prompt: "Read src/plugin/auth.ts and summarize in 1 sentence", model: GEMINI_PRO_CLI_QUOTA },
+      { prompt: "Read src/plugin/auth.ts and summarize in 1 sentence", model: GEMINI_FLASH },
       { prompt: "Run: wc -l src/plugin/*.ts | tail -3", model: GEMINI_FLASH },
-      { prompt: "Read README.md first 50 lines and tell me what this project does", model: GEMINI_PRO_CLI_QUOTA },
+      { prompt: "Read README.md first 50 lines and tell me what this project does", model: GEMINI_FLASH },
       { prompt: "Run: git log --oneline -3", model: GEMINI_FLASH },
-      { prompt: "Summarize everything we discussed in 3 bullet points", model: GEMINI_PRO_CLI_QUOTA },
+      { prompt: "Summarize everything we discussed in 3 bullet points", model: GEMINI_FLASH },
     ],
     errorPatterns: ERROR_PATTERNS,
     timeout: 600000,
   },
   {
     name: "opencode-tools-comprehensive",
-    model: GEMINI_PRO_CLI_QUOTA,
+    model: GEMINI_FLASH,
     category: "multi-tool",
     suite: "heavy",
     turns: [
@@ -175,25 +172,25 @@ const HEAVY_TESTS: MultiTurnTest[] = [
     suite: "heavy",
     turns: [
       { prompt: "Read package.json and extract the version number only", model: GEMINI_FLASH },
-      { prompt: "Run: ls src/plugin/*.ts | head -3", model: GEMINI_PRO_CLI_QUOTA },
+      { prompt: "Run: ls src/plugin/*.ts | head -3", model: GEMINI_FLASH },
       { prompt: "Read src/plugin/auth.ts first 30 lines", model: GEMINI_FLASH },
-      { prompt: "Use grep to find 'export' in src/plugin/auth.ts", model: GEMINI_PRO_CLI_QUOTA },
+      { prompt: "Use grep to find 'export' in src/plugin/auth.ts", model: GEMINI_FLASH },
       { prompt: "Run: echo 'checkpoint 1' && date", model: GEMINI_FLASH },
-      { prompt: "Read tsconfig.json and tell me the module type", model: GEMINI_PRO_CLI_QUOTA },
+      { prompt: "Read tsconfig.json and tell me the module type", model: GEMINI_FLASH },
       { prompt: "Use glob to find all *.test.ts files", model: GEMINI_FLASH },
-      { prompt: "Read src/plugin/token.ts first 20 lines", model: GEMINI_PRO_CLI_QUOTA },
+      { prompt: "Read src/plugin/token.ts first 20 lines", model: GEMINI_FLASH },
       { prompt: "Run: wc -l src/plugin/*.ts | sort -n | tail -5", model: GEMINI_FLASH },
-      { prompt: "What files have we read so far? List them.", model: GEMINI_PRO_CLI_QUOTA },
+      { prompt: "What files have we read so far? List them.", model: GEMINI_FLASH },
       { prompt: "Read src/plugin/request.ts first 25 lines", model: GEMINI_FLASH },
-      { prompt: "Use grep to find 'async' in src/plugin/request.ts", model: GEMINI_PRO_CLI_QUOTA },
+      { prompt: "Use grep to find 'async' in src/plugin/request.ts", model: GEMINI_FLASH },
       { prompt: "Run: echo 'checkpoint 2' && pwd", model: GEMINI_FLASH },
-      { prompt: "Read src/plugin/storage.ts first 20 lines", model: GEMINI_PRO_CLI_QUOTA },
+      { prompt: "Read src/plugin/storage.ts first 20 lines", model: GEMINI_FLASH },
       { prompt: "Use lsp_diagnostics on src/plugin/token.ts", model: GEMINI_FLASH },
-      { prompt: "Read vitest.config.ts completely", model: GEMINI_PRO_CLI_QUOTA },
+      { prompt: "Read vitest.config.ts completely", model: GEMINI_FLASH },
       { prompt: "Run: git status --short | head -5", model: GEMINI_FLASH },
-      { prompt: "Read src/constants.ts completely", model: GEMINI_PRO_CLI_QUOTA },
+      { prompt: "Read src/constants.ts completely", model: GEMINI_FLASH },
       { prompt: "Run: echo 'final checkpoint' && echo 'all done'", model: GEMINI_FLASH },
-      { prompt: "Summarize this entire conversation in 5 bullet points", model: GEMINI_PRO_CLI_QUOTA },
+      { prompt: "Summarize this entire conversation in 5 bullet points", model: GEMINI_FLASH },
     ],
     errorPatterns: ERROR_PATTERNS,
     timeout: 900000,
@@ -213,15 +210,15 @@ function generateEnduranceTest(turnCount: number): TurnConfig[] {
   const turns: TurnConfig[] = [];
   const prompts = [
     { prompt: "What is {n} + {n}? Answer with just the number.", model: GEMINI_FLASH },
-    { prompt: "Run: echo 'turn {i}'", model: GEMINI_PRO_CLI_QUOTA },
+    { prompt: "Run: echo 'turn {i}'", model: GEMINI_FLASH },
     { prompt: "Read package.json and tell me one field", model: GEMINI_FLASH },
-    { prompt: "Run: pwd && echo 'ok'", model: GEMINI_PRO_CLI_QUOTA },
+    { prompt: "Run: pwd && echo 'ok'", model: GEMINI_FLASH },
     { prompt: "What turn number are we on? Just say the number.", model: GEMINI_FLASH },
-    { prompt: "Run: date +%H:%M:%S", model: GEMINI_PRO_CLI_QUOTA },
+    { prompt: "Run: date +%H:%M:%S", model: GEMINI_FLASH },
     { prompt: "Use glob to find one .ts file in src/", model: GEMINI_FLASH },
-    { prompt: "Run: echo 'checkpoint {i}'", model: GEMINI_PRO_CLI_QUOTA },
+    { prompt: "Run: echo 'checkpoint {i}'", model: GEMINI_FLASH },
     { prompt: "Read tsconfig.json and tell me target", model: GEMINI_FLASH },
-    { prompt: "What have we done in last 3 turns? Brief answer.", model: GEMINI_PRO_CLI_QUOTA },
+    { prompt: "What have we done in last 3 turns? Brief answer.", model: GEMINI_FLASH },
   ];
 
   for (let i = 0; i < turnCount; i++) {
@@ -234,7 +231,7 @@ function generateEnduranceTest(turnCount: number): TurnConfig[] {
 
   turns.push({
     prompt: `We completed ${turnCount} turns. Summarize this session in 3 sentences.`,
-    model: GEMINI_PRO_CLI_QUOTA,
+    model: GEMINI_FLASH,
   });
 
   return turns;

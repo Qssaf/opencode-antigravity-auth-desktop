@@ -21,11 +21,6 @@ describe("OPENCODE_MODEL_DEFINITIONS", () => {
     expect(modelNames).toEqual([
       "antigravity-gemini-3.8-flash",
       "antigravity-gemini-4-argon",
-      "gemini-3-flash-preview",
-      "gemini-3-pro-preview",
-      "gemini-3.1-pro",
-      "gemini-3.1-pro-preview-customtools",
-      "gemini-3.8-flash",
     ]);
   });
 
@@ -36,13 +31,6 @@ describe("OPENCODE_MODEL_DEFINITIONS", () => {
       high: { thinkingLevel: "high" },
     });
     expect(getModel("antigravity-gemini-3.8-flash").temperature).toBe(false);
-    expect(getModel("gemini-3.8-flash").temperature).toBe(false);
-    expect(getModel("gemini-3.8-flash").variants).toEqual({
-      minimal: { thinkingLevel: "minimal" },
-      low: { thinkingLevel: "low" },
-      medium: { thinkingLevel: "medium" },
-      high: { thinkingLevel: "high" },
-    });
   });
 
   it("offers Gemini 4 Argon with low, medium and high thinking and no temperature", () => {
