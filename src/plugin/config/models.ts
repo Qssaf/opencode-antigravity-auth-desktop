@@ -61,10 +61,13 @@ const DEFAULT_MODALITIES: ModelModalities = {
 };
 
 export const OPENCODE_MODEL_DEFINITIONS: OpencodeModelDefinitions = {
+  // Antigravity runs 3.8 Flash with a 256K working context and compacts past
+  // it. OpenCode compacts at the advertised limit, so 1M let sessions reach
+  // 300K+ tokens, where a request without a warm prompt cache takes 10-30s.
   "antigravity-gemini-3.8-flash": {
     name: "Gemini 3.8 Flash (Antigravity)",
     temperature: false,
-    limit: { context: 1048576, output: 65536 },
+    limit: { context: 262144, output: 65536 },
     modalities: DEFAULT_MODALITIES,
     variants: {
       low: { thinkingLevel: "low" },
@@ -151,7 +154,9 @@ function mergeWithStaticDefinition(
   return {
     ...existing,
     ...discovered,
-    limit: discovered.limit ?? existing.limit,
+    // Curated limits win: the registry's maxTokens is the API's 1M, not the
+    // working context Antigravity uses (256K for 3.8 Flash and Argon).
+    limit: existing.limit,
     modalities: discovered.modalities ?? existing.modalities,
     variants: existing.variants ?? discovered.variants,
   };

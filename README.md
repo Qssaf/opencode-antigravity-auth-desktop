@@ -180,7 +180,7 @@ Add this to your `~/.config/opencode/opencode.json`:
       "models": {
         "antigravity-gemini-3.8-flash": {
           "name": "Gemini 3.8 Flash (Antigravity)",
-          "limit": { "context": 1048576, "output": 65536 },
+          "limit": { "context": 262144, "output": 65536 },
           "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
           "variants": {
             "low": { "thinkingLevel": "low" },
@@ -708,8 +708,8 @@ Set `prefer_for_gemini: true` if you want Gemini models to use the newer Gemini 
 
 | Your Setup | Recommended Config |
 |------------|-------------------|
-| **1 account** | `"account_selection_strategy": "sticky"` |
-| **2-5 accounts** | Default (`"hybrid"`) works great |
+| **1-5 accounts** | Default (`"sticky"`): one account until it is rate-limited, which keeps the prompt cache warm |
+| **Spread load across accounts** | `"account_selection_strategy": "hybrid"` (each switch costs a cold prompt cache) |
 | **5+ accounts** | `"account_selection_strategy": "round-robin"` |
 | **Parallel agents** | Add `"pid_offset_enabled": true` |
 

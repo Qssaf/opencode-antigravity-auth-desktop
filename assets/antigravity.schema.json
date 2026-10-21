@@ -238,7 +238,7 @@
       "additionalProperties": false
     },
     "account_selection_strategy": {
-      "default": "hybrid",
+      "default": "sticky",
       "type": "string",
       "enum": [
         "sticky",

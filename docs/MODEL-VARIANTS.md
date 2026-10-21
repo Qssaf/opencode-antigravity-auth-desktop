@@ -67,7 +67,7 @@ Gemini 3 and Gemini 4 models use string-based thinking levels. Available levels 
 {
   "antigravity-gemini-3.8-flash": {
     "name": "Gemini 3.8 Flash (Antigravity)",
-    "limit": { "context": 1048576, "output": 65536 },
+    "limit": { "context": 262144, "output": 65536 },
     "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
     "variants": {
       "low": { "thinkingLevel": "low" },

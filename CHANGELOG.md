@@ -18,6 +18,10 @@
 
 ### Changed
 
+- **Accounts are sticky by default** - `account_selection_strategy` now defaults to `sticky` instead of `hybrid`. Gemini's prompt cache belongs to one account, and hybrid switched accounts at the start of most turns and every few dozen steps, so the request after each switch re-read the whole conversation: 10-30s at 300K tokens instead of about 5s. Sticky keeps one account until it is rate-limited. Set `"account_selection_strategy": "hybrid"` to spread load across accounts again.
+
+- **Gemini 3.8 Flash has a 256K context window** - It was 1M, so OpenCode only compacted a session near a million tokens and long sessions ran at 300K+ tokens per request. Antigravity itself works within 256K for this model. A config that sets its own `limit` keeps it. Model discovery no longer replaces a curated model's limit with the registry's 1M, which had also undone Gemini 4 Argon's 256K.
+
 - **Session titles use low thinking on OpenCode 2.x** - OpenCode 2.x writes a session's title with the session's own model and variant, so a Gemini 3 model on high thinking spent a full high-thinking call on a few words, slowing the first reply's title and using shared quota. Title requests to Gemini 3 models now go out at low thinking with thoughts hidden. Claude titles and every other request are unchanged.
 
 - **Gemini 3.8 Flash defaults to high thinking** - With no variant picked it used `medium` (`gemini-3.8-flash-medium`). It now uses `high` for stronger answers in agent work. Answers are slower and use more of the shared Gemini quota; pick the `medium` or `low` variant to go back.

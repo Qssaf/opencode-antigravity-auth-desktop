@@ -2209,10 +2209,13 @@ var DEFAULT_MODALITIES = {
   output: ["text"]
 };
 var OPENCODE_MODEL_DEFINITIONS = {
+  // Antigravity runs 3.8 Flash with a 256K working context and compacts past
+  // it. OpenCode compacts at the advertised limit, so 1M let sessions reach
+  // 300K+ tokens, where a request without a warm prompt cache takes 10-30s.
   "antigravity-gemini-3.8-flash": {
     name: "Gemini 3.8 Flash (Antigravity)",
     temperature: false,
-    limit: { context: 1048576, output: 65536 },
+    limit: { context: 262144, output: 65536 },
     modalities: DEFAULT_MODALITIES,
     variants: {
       low: { thinkingLevel: "low" },
@@ -2285,7 +2288,9 @@ function mergeWithStaticDefinition(modelId, discovered) {
   return {
     ...existing,
     ...discovered,
-    limit: discovered.limit ?? existing.limit,
+    // Curated limits win: the registry's maxTokens is the API's 1M, not the
+    // working context Antigravity uses (256K for 3.8 Flash and Argon).
+    limit: existing.limit,
     modalities: discovered.modalities ?? existing.modalities,
     variants: existing.variants ?? discovered.variants
   };
@@ -3483,9 +3488,14 @@ var AntigravityConfigSchema = z2.object({
   }),
   /**
    * Strategy for selecting accounts when making requests.
-   * @default "hybrid"
+   *
+   * Sticky by default: Gemini's prompt cache is per account, so every switch
+   * makes the next request re-read the whole conversation (10-30s at a few
+   * hundred thousand tokens instead of ~5s). Sticky still switches on a rate
+   * limit.
+   * @default "sticky"
    */
-  account_selection_strategy: AccountSelectionStrategySchema.default("hybrid"),
+  account_selection_strategy: AccountSelectionStrategySchema.default("sticky"),
   /**
    * Enable PID-based account offset for multi-session distribution.
    * 
@@ -3642,7 +3652,7 @@ var DEFAULT_CONFIG = {
     gemini_api: true,
     antigravity: true
   },
-  account_selection_strategy: "hybrid",
+  account_selection_strategy: "sticky",
   pid_offset_enabled: false,
   switch_on_first_rate_limit: true,
   scheduling_mode: "cache_first",

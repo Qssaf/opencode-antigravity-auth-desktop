@@ -79,7 +79,7 @@ Settings for managing multiple Google accounts.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `account_selection_strategy` | `"hybrid"` | How to select accounts |
+| `account_selection_strategy` | `"sticky"` | How to select accounts |
 | `switch_on_first_rate_limit` | `true` | Switch account immediately on first 429 |
 | `pid_offset_enabled` | `false` | Distribute sessions across accounts (for parallel agents) |
 | `quota_fallback` | `false` | Deprecated (ignored). Kept for backward compatibility; Gemini fallback is automatic |
@@ -88,8 +88,8 @@ Settings for managing multiple Google accounts.
 
 | Your Setup | Recommended Strategy | Why |
 |------------|---------------------|-----|
-| **1 account** | `"sticky"` | No rotation needed, preserve prompt cache |
-| **2-3 accounts** | `"hybrid"` (default) | Smart rotation with health scoring |
+| **1-3 accounts** | `"sticky"` (default) | Switch only on rate limit, preserve prompt cache |
+| **Spread load** | `"hybrid"` | Rotation with health scoring; each switch starts a cold prompt cache |
 | **4+ accounts** | `"round-robin"` | Maximum throughput |
 | **Parallel agents** | `"round-robin"` + `pid_offset_enabled: true` | Distribute across accounts |
 

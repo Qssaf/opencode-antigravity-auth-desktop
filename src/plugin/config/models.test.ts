@@ -137,6 +137,8 @@ describe("dynamic model discovery helpers", () => {
       medium: { thinkingLevel: "medium" },
       high: { thinkingLevel: "high" },
     });
+    // Antigravity's own working context for 3.8 Flash; OpenCode compacts at it.
+    expect(models["antigravity-gemini-3.8-flash"]?.limit).toEqual({ context: 262144, output: 65536 });
     // Inferred variants for dynamically discovered models not in static table
     expect(models["antigravity-gemini-3.8-pro"]?.variants).toEqual({
       low: { thinkingLevel: "low" },

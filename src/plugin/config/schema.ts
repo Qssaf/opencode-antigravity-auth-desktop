@@ -361,9 +361,14 @@ export const AntigravityConfigSchema = z.object({
   
   /**
    * Strategy for selecting accounts when making requests.
-   * @default "hybrid"
+   *
+   * Sticky by default: Gemini's prompt cache is per account, so every switch
+   * makes the next request re-read the whole conversation (10-30s at a few
+   * hundred thousand tokens instead of ~5s). Sticky still switches on a rate
+   * limit.
+   * @default "sticky"
    */
-  account_selection_strategy: AccountSelectionStrategySchema.default('hybrid'),
+  account_selection_strategy: AccountSelectionStrategySchema.default('sticky'),
   
   /**
    * Enable PID-based account offset for multi-session distribution.
@@ -545,7 +550,7 @@ export const DEFAULT_CONFIG: AntigravityConfig = {
     gemini_api: true,
     antigravity: true,
   },
-  account_selection_strategy: 'hybrid',
+  account_selection_strategy: 'sticky',
   pid_offset_enabled: false,
   switch_on_first_rate_limit: true,
   scheduling_mode: 'cache_first',

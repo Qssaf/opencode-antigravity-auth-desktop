@@ -1,7 +1,14 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { AgySdkCloudProjectSchema, DEFAULT_CONFIG } from "./schema";
+import { AgySdkCloudProjectSchema, AntigravityConfigSchema, DEFAULT_CONFIG } from "./schema";
+
+describe("account_selection_strategy config", () => {
+  it("defaults to sticky so the per-account prompt cache stays warm", () => {
+    expect(DEFAULT_CONFIG.account_selection_strategy).toBe("sticky");
+    expect(AntigravityConfigSchema.parse({}).account_selection_strategy).toBe("sticky");
+  });
+});
 
 describe("cli_first config", () => {
   it("includes cli_first default in DEFAULT_CONFIG", () => {
