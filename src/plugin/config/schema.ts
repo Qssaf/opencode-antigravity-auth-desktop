@@ -232,6 +232,20 @@ export const AntigravityConfigSchema = z.object({
    * @default 2000
    */
   empty_response_retry_delay_ms: z.number().min(500).max(10000).default(2000),
+
+  /**
+   * Seconds to wait for a streamed answer's first content before sending the
+   * same request once more and keeping whichever answers first.
+   *
+   * Antigravity sometimes holds a request for 15-60s before streaming anything,
+   * while a repeat on the same account (warm prompt cache) usually answers in a
+   * few seconds. A model that is thinking streams its first thought well before
+   * this, so only stalled requests are repeated. Each repeat counts as one more
+   * request against quota. 0 disables.
+   *
+   * @default 10
+   */
+  hedge_stalled_requests_after_seconds: z.number().min(0).max(120).default(10),
   
   // =========================================================================
   // Tool ID Recovery (ported from LLM-API-Key-Proxy)
@@ -530,6 +544,7 @@ export const DEFAULT_CONFIG: AntigravityConfig = {
   resume_text: "continue",
   empty_response_max_attempts: 4,
   empty_response_retry_delay_ms: 2000,
+  hedge_stalled_requests_after_seconds: 10,
   tool_id_recovery: true,
   claude_tool_hardening: true,
   claude_prompt_auto_caching: false,

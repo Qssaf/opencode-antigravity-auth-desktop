@@ -2,10 +2,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, rmSync, writeFileSync, promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
 
 import type { PluginClient } from "./plugin/types";
 import { AccountManager } from "./plugin/accounts";
 import { DEFAULT_CONFIG } from "./plugin/config";
+
+/** The JSON a mocked fetch was sent. Antigravity request bodies go out gzipped. */
+function sentJson(init?: RequestInit): unknown {
+  const body = init?.body;
+  if (body === undefined || body === null) return {};
+  return JSON.parse(typeof body === "string" ? body : gunzipSync(body as Uint8Array).toString("utf8"));
+}
 
 vi.mock("@opencode-ai/plugin", () => ({
   tool: Object.assign(
@@ -988,7 +996,7 @@ describe("Gemini 4 Argon (Ultra-only)", () => {
     const fetchMock = vi.fn(async (input: RequestInfo, init?: RequestInit) => {
       const url = typeof input === "string" ? input : (input as Request).url;
       if (url.includes("cloudcode-pa") && url.includes("GenerateContent")) {
-        const body = JSON.parse(String(init?.body ?? "{}")) as { project?: string; model?: string };
+        const body = sentJson(init) as { project?: string; model?: string };
         argonRequests.push({ project: body.project ?? "", model: body.model ?? "" });
         if (ultraProjects.includes(body.project ?? "")) {
           return new Response(SSE_BODY, { status: 200, headers: { "content-type": "text/event-stream" } });
@@ -1160,7 +1168,8 @@ describe("Gemini 3.5 Flash-Lite and 3.7 Flash through the plugin fetch", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo, init?: RequestInit) => {
       const url = typeof input === "string" ? input : (input as Request).url;
       if (url.includes("cloudcode-pa") && url.includes("GenerateContent")) {
-        const body = JSON.parse(String(init?.body ?? "{}")) as {
+        expect(new Headers(init?.headers).get("content-encoding")).toBe("gzip");
+        const body = sentJson(init) as {
           model?: string;
           request?: { generationConfig?: { thinkingConfig?: { thinkingLevel?: string } } };
         };
@@ -1211,6 +1220,107 @@ describe("Gemini 3.5 Flash-Lite and 3.7 Flash through the plugin fetch", () => {
     expect(text).toContain("hi");
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ model: backend, thinkingLevel: sentLevel });
+  });
+});
+
+describe("stalled requests through the plugin fetch", () => {
+  let tmpConfigDir: string;
+  const savedEnv: Record<string, string | undefined> = {};
+  const SSE_BODY =
+    'data: {"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"},"finishReason":"STOP","index":0}]}\n\n';
+
+  beforeEach(() => {
+    tmpConfigDir = join(tmpdir(), `opencode-antigravity-hedge-${process.pid}-${Date.now()}`);
+    mkdirSync(tmpConfigDir, { recursive: true });
+    // 50ms, so a first event 300ms in counts as stalled.
+    writeFileSync(join(tmpConfigDir, "antigravity.json"), JSON.stringify({ hedge_stalled_requests_after_seconds: 0.05 }));
+    for (const key of ["OPENCODE_CONFIG_DIR", "OPENCODE_ANTIGRAVITY_API_KEYS", "GEMINI_API_KEY", "GOOGLE_API_KEY"]) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+    process.env.OPENCODE_CONFIG_DIR = tmpConfigDir;
+    vi.mocked(storageModule.loadAccounts).mockReset();
+    vi.mocked(storageModule.saveAccounts).mockReset();
+    vi.mocked(storageModule.loadAccounts).mockResolvedValue({
+      version: 4,
+      accounts: [{
+        email: "a@example.com",
+        refreshToken: "a",
+        projectId: "p-a",
+        managedProjectId: "p-a",
+        addedAt: 0,
+        lastUsed: 0,
+        enabled: true,
+      }],
+      activeIndex: 0,
+    });
+  });
+
+  afterEach(() => {
+    for (const [key, val] of Object.entries(savedEnv)) {
+      if (val === undefined) delete process.env[key];
+      else process.env[key] = val;
+    }
+    vi.unstubAllGlobals();
+    rmSync(tmpConfigDir, { recursive: true, force: true });
+  });
+
+  /** Streams one request for `model` whose every upstream attempt answers 300ms in. */
+  async function streamThrough(model: string): Promise<{ status: number; text: string; attempts: number }> {
+    let attempts = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url.includes("cloudcode-pa") && url.includes("GenerateContent")) {
+        attempts += 1;
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            setTimeout(() => {
+              controller.enqueue(new TextEncoder().encode(SSE_BODY));
+              controller.close();
+            }, 300);
+          },
+        });
+        return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+      }
+      if (url.includes("oauth2.googleapis.com")) {
+        return new Response(JSON.stringify({ access_token: "valid-access-token", expires_in: 3600 }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ models: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+
+    const plugin = await createAntigravityPlugin("google")({ client, directory: tmpConfigDir });
+    const loader = await plugin.auth.loader(async () => ({
+      type: "oauth" as const,
+      refresh: formatRefreshParts({ refreshToken: "a", projectId: "p-a", managedProjectId: "p-a" }),
+      access: "valid-access-token",
+      expires: Date.now() + 3_600_000,
+    }), {
+      id: "google",
+      api: "https://generativelanguage.googleapis.com/v1beta",
+      npm: "@ai-sdk/google",
+      models: {},
+    });
+    const res = await (loader as { fetch: typeof fetch }).fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,
+      { method: "POST", body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "hi" }] }] }) },
+    );
+    return { status: res.status, text: await res.text(), attempts };
+  }
+
+  it("sends a Gemini request again when it has produced nothing after the hedge delay", async () => {
+    const result = await streamThrough("antigravity-gemini-3.8-flash");
+    expect(result.status).toBe(200);
+    expect(result.text).toContain("hi");
+    expect(result.attempts).toBe(2);
+  });
+
+  it("does not repeat image generation, which can take that long", async () => {
+    const result = await streamThrough("gemini-3-pro-image");
+    expect(result.status).toBe(200);
+    expect(result.attempts).toBe(1);
   });
 });
 

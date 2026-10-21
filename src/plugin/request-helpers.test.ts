@@ -1,3 +1,5 @@
+import { gunzipSync } from "node:zlib";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -25,6 +27,8 @@ import {
   recursivelyParseJsonStrings,
   getThinkingText,
   peekSseForContent,
+  fetchStreamWithHedge,
+  withGzipBody,
 } from "./request-helpers";
 import { deduplicateThinkingText, createThoughtBuffer } from "./core/streaming/transformer";
 
@@ -2205,5 +2209,141 @@ describe("peekSseForContent", () => {
     const image = sse({ candidates: [{ content: { parts: [{ inlineData: { mimeType: "image/png", data: "AA==" } }] } }] });
     expect((await peekSseForContent(streamOf([call]))).empty).toBe(false);
     expect((await peekSseForContent(streamOf([image]))).empty).toBe(false);
+  });
+});
+
+describe("fetchStreamWithHedge", () => {
+  const encoder = new TextEncoder();
+  const textEvent = `data: ${JSON.stringify({ response: { candidates: [{ content: { parts: [{ text: "hi" }] } }] } })}\n\n`;
+  const emptyEvent = `data: ${JSON.stringify({ response: { candidates: [{ content: { parts: [] }, finishReason: "STOP" }] } })}\n\n`;
+
+  /**
+   * Fake upstream: attempt N streams `plan[N].event` after `plan[N].delayMs`, and
+   * records its name in `aborted` when its signal fires first.
+   */
+  const upstream = (plan: Array<{ name: string; event: string; delayMs: number }>) => {
+    const aborted: string[] = [];
+    let calls = 0;
+    const send = (signal: AbortSignal) => {
+      const step = plan[calls++]!;
+      return Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              const timer = setTimeout(() => {
+                controller.enqueue(encoder.encode(step.event));
+                controller.close();
+              }, step.delayMs);
+              signal.addEventListener("abort", () => {
+                clearTimeout(timer);
+                aborted.push(step.name);
+                controller.error(signal.reason);
+              });
+            },
+          }),
+          { status: 200 },
+        ),
+      );
+    };
+    return { send, aborted, calls: () => calls };
+  };
+
+  it("does not repeat a request that answers before the hedge delay", async () => {
+    const up = upstream([{ name: "original", event: textEvent, delayMs: 5 }]);
+    const events: string[] = [];
+    const response = await fetchStreamWithHedge(up.send, 200, undefined, (e) => events.push(e));
+    expect(await response.text()).toBe(textEvent);
+    expect(up.calls()).toBe(1);
+    expect(events).toEqual([]);
+  });
+
+  it("sends a request once when the hedge delay is 0", async () => {
+    const up = upstream([{ name: "original", event: textEvent, delayMs: 50 }]);
+    expect(await (await fetchStreamWithHedge(up.send, 0)).text()).toBe(textEvent);
+    expect(up.calls()).toBe(1);
+  });
+
+  it("repeats a stalled request and keeps the repeat when it answers first", async () => {
+    const up = upstream([
+      { name: "original", event: textEvent, delayMs: 5_000 },
+      { name: "repeat", event: textEvent, delayMs: 10 },
+    ]);
+    const events: string[] = [];
+    const response = await fetchStreamWithHedge(up.send, 30, undefined, (e) => events.push(e));
+    expect(await response.text()).toBe(textEvent);
+    expect(events).toEqual(["sent", "won"]);
+    expect(up.aborted).toEqual(["original"]);
+  });
+
+  it("keeps the original when it answers after the repeat was sent", async () => {
+    const up = upstream([
+      { name: "original", event: textEvent, delayMs: 60 },
+      { name: "repeat", event: textEvent, delayMs: 5_000 },
+    ]);
+    const events: string[] = [];
+    const response = await fetchStreamWithHedge(up.send, 20, undefined, (e) => events.push(e));
+    expect(await response.text()).toBe(textEvent);
+    expect(events).toEqual(["sent"]);
+    expect(up.aborted).toEqual(["repeat"]);
+  });
+
+  it("waits for the repeat when the original ends empty", async () => {
+    const up = upstream([
+      { name: "original", event: emptyEvent, delayMs: 40 },
+      { name: "repeat", event: textEvent, delayMs: 60 },
+    ]);
+    expect(await (await fetchStreamWithHedge(up.send, 20)).text()).toBe(textEvent);
+  });
+
+  it("returns the original's outcome when neither request has content", async () => {
+    let calls = 0;
+    // The repeat fails first, but the caller must see the original's 429.
+    const response = await fetchStreamWithHedge(async () => {
+      const original = calls++ === 0;
+      await new Promise((resolve) => setTimeout(resolve, original ? 60 : 10));
+      return new Response("busy", { status: original ? 429 : 503 });
+    }, 20);
+    expect(response.status).toBe(429);
+  });
+
+  it("rethrows the original's network error when neither request has content", async () => {
+    let calls = 0;
+    await expect(
+      fetchStreamWithHedge(async () => {
+        const call = ++calls;
+        await new Promise((resolve) => setTimeout(resolve, call === 1 ? 60 : 10));
+        throw new Error(`down ${call}`);
+      }, 20),
+    ).rejects.toThrow("down 1");
+  });
+
+  it("stops both requests when the caller aborts", async () => {
+    const up = upstream([
+      { name: "original", event: textEvent, delayMs: 5_000 },
+      { name: "repeat", event: textEvent, delayMs: 5_000 },
+    ]);
+    const caller = new AbortController();
+    setTimeout(() => caller.abort(new Error("cancelled")), 50);
+    await expect(fetchStreamWithHedge(up.send, 20, caller.signal)).rejects.toThrow("cancelled");
+    expect(up.aborted.sort()).toEqual(["original", "repeat"]);
+  });
+});
+
+describe("withGzipBody", () => {
+  it("sends the body gzipped and keeps the other request options", async () => {
+    const original: RequestInit = {
+      method: "POST",
+      headers: new Headers({ "Content-Type": "application/json" }),
+      body: "{\"a\":1}",
+    };
+    const init = withGzipBody(original, "{\"a\":1}");
+    const headers = new Headers(init.headers);
+    expect(headers.get("content-encoding")).toBe("gzip");
+    expect(headers.get("content-type")).toBe("application/json");
+    expect(init.method).toBe("POST");
+    expect(gunzipSync(init.body as Uint8Array).toString("utf8")).toBe("{\"a\":1}");
+    // The caller's init is left as it was.
+    expect(new Headers(original.headers).get("content-encoding")).toBeNull();
+    expect(original.body).toBe("{\"a\":1}");
   });
 });

@@ -113,6 +113,13 @@
       "maximum": 10000,
       "description": "Delay in milliseconds between empty response retries."
     },
+    "hedge_stalled_requests_after_seconds": {
+      "default": 10,
+      "type": "number",
+      "minimum": 0,
+      "maximum": 120,
+      "description": "Seconds to wait for a streamed answer's first content before sending the request once more and keeping whichever answers first. Each repeat counts against quota. 0 disables."
+    },
     "tool_id_recovery": {
       "default": true,
       "type": "boolean",

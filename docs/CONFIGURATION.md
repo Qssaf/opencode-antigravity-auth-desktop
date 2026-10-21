@@ -204,6 +204,7 @@ These settings are `false` by default:
 |--------|---------|-------------|
 | `empty_response_max_attempts` | `4` | Retries for empty API responses |
 | `empty_response_retry_delay_ms` | `2000` | Delay between retries |
+| `hedge_stalled_requests_after_seconds` | `10` | Send a streamed request once more when it has produced nothing after this many seconds; the first answer wins. Image generation is never repeated. Each repeat counts against quota. `0` disables |
 | `tool_id_recovery` | `true` | Fix mismatched tool IDs from context compaction |
 | `claude_tool_hardening` | `true` | Prevent tool parameter hallucination |
 | `max_rate_limit_wait_seconds` | `300` | Max wait time when rate limited (0=unlimited) |

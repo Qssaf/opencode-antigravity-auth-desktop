@@ -3370,6 +3370,19 @@ var AntigravityConfigSchema = z2.object({
    * @default 2000
    */
   empty_response_retry_delay_ms: z2.number().min(500).max(1e4).default(2e3),
+  /**
+   * Seconds to wait for a streamed answer's first content before sending the
+   * same request once more and keeping whichever answers first.
+   *
+   * Antigravity sometimes holds a request for 15-60s before streaming anything,
+   * while a repeat on the same account (warm prompt cache) usually answers in a
+   * few seconds. A model that is thinking streams its first thought well before
+   * this, so only stalled requests are repeated. Each repeat counts as one more
+   * request against quota. 0 disables.
+   *
+   * @default 10
+   */
+  hedge_stalled_requests_after_seconds: z2.number().min(0).max(120).default(10),
   // =========================================================================
   // Tool ID Recovery (ported from LLM-API-Key-Proxy)
   // =========================================================================
@@ -3627,6 +3640,7 @@ var DEFAULT_CONFIG = {
   resume_text: "continue",
   empty_response_max_attempts: 4,
   empty_response_retry_delay_ms: 2e3,
+  hedge_stalled_requests_after_seconds: 10,
   tool_id_recovery: true,
   claude_tool_hardening: true,
   claude_prompt_auto_caching: false,
@@ -4108,6 +4122,7 @@ function createSignatureStore() {
 var defaultSignatureStore = createSignatureStore();
 
 // src/plugin/request-helpers.ts
+import { gzipSync } from "node:zlib";
 var log6 = createLogger("request-helpers");
 var ANTIGRAVITY_PREVIEW_LINK = "https://goo.gle/enable-preview-features";
 var UNSUPPORTED_CONSTRAINTS = [
@@ -5348,6 +5363,56 @@ async function peekSseForContent(response) {
     }),
     empty: !meaningful
   };
+}
+async function fetchStreamWithHedge(send, hedgeAfterMs, signal, onRepeat) {
+  const attempt = () => {
+    const controller = new AbortController();
+    const linked = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    const outcome = send(linked).then(async (response) => {
+      if (!response.ok) return { response, hasContent: false };
+      const peeked = await peekSseForContent(response);
+      return { response: peeked.response, hasContent: !peeked.empty };
+    }).catch((error) => ({ error }));
+    return { controller, outcome };
+  };
+  const unwrap = (outcome) => {
+    if ("error" in outcome) throw outcome.error;
+    return outcome.response;
+  };
+  const discard = (loser) => {
+    loser.controller.abort();
+    void loser.outcome.then((o) => "error" in o ? void 0 : o.response.body?.cancel()).catch(() => {
+    });
+  };
+  const original = attempt();
+  if (hedgeAfterMs <= 0) return unwrap(await original.outcome);
+  let timer;
+  const stalled = new Promise((resolve) => {
+    timer = setTimeout(() => resolve(void 0), hedgeAfterMs);
+  });
+  const early = await Promise.race([original.outcome, stalled]);
+  clearTimeout(timer);
+  if (early || signal?.aborted) return unwrap(early ?? await original.outcome);
+  onRepeat?.("sent");
+  const repeat = attempt();
+  const pending = /* @__PURE__ */ new Set([original, repeat]);
+  while (pending.size > 0) {
+    const settled = await Promise.race([...pending].map((a) => a.outcome.then(() => a)));
+    pending.delete(settled);
+    const outcome = await settled.outcome;
+    if (!("error" in outcome) && outcome.hasContent) {
+      discard(settled === original ? repeat : original);
+      if (settled === repeat) onRepeat?.("won");
+      return outcome.response;
+    }
+  }
+  discard(repeat);
+  return unwrap(await original.outcome);
+}
+function withGzipBody(init, body) {
+  const headers = new Headers(init.headers);
+  headers.set("Content-Encoding", "gzip");
+  return { ...init, headers, body: gzipSync(body, { level: 3 }) };
 }
 var SKIP_PARSE_KEYS = /* @__PURE__ */ new Set([
   "oldString",
@@ -14362,7 +14427,16 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                     if (config.account_selection_strategy === "hybrid") {
                       tokenConsumed = getTokenTracker().consume(account.index);
                     }
-                    let response = await fetch(prepared.request, prepared.init);
+                    const requestBody = prepared.init.body;
+                    const sendInit = typeof requestBody === "string" ? withGzipBody(prepared.init, requestBody) : prepared.init;
+                    const hedgeAfterMs = isImageGenerationModel(prepared.effectiveModel ?? "") ? 0 : config.hedge_stalled_requests_after_seconds * 1e3;
+                    const hedgeLabel = debugContext?.id ?? "request";
+                    let response = prepared.streaming && typeof requestBody === "string" ? await fetchStreamWithHedge(
+                      (signal) => fetch(prepared.request, { ...sendInit, signal }),
+                      hedgeAfterMs,
+                      sendInit.signal,
+                      (event) => debugLogToFile(event === "sent" ? `[Hedge] ${hedgeLabel}: no content after ${hedgeAfterMs}ms, sending the request again` : `[Hedge] ${hedgeLabel}: the repeat answered first`)
+                    ) : await fetch(prepared.request, sendInit);
                     pushDebug(`status=${response.status} ${response.statusText}`);
                     if (response.status === 429 || response.status === 503 || response.status === 529) {
                       if (tokenConsumed) {

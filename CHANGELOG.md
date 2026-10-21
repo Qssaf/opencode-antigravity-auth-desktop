@@ -4,6 +4,8 @@
 
 ### Added
 
+- **Stalled requests are sent again** - Antigravity sometimes streams nothing for 15-60s, then answers with a few dozen tokens of thought, or with nothing at all. On a live session 4 of 52 requests waited 13-58s for their first content while the median was 5.4s. When a streamed request has produced nothing after `hedge_stalled_requests_after_seconds` (default 10), it is sent once more on the same account, whose prompt cache is warm, and the first answer with content is used; the other request is cancelled. A model that is thinking streams its first thought well before that, so only stalled requests are repeated; image generation, which can take that long, never is. When neither answers with content, the original request's error or empty answer is handled as before. Each repeat counts as one more request against quota; `0` turns this off.
+
 - **Gemini 4 Argon** (`antigravity-gemini-4-argon`, variants `low`, `medium`, `high`, `high` by default) - Google's new model, served on Antigravity only to Google AI Ultra subscribers. It goes out as `gemini-4-argon-<level>`, the tier-specific backend ids a community analysis of Antigravity 2.23.0 found; they have not been checked against a live Ultra account yet. The plugin cannot read an account's subscription, so it learns it from Google: an account Antigravity refuses Argon for (404, the "permission denied on project" 403, or a 403 or 400 naming the subscription) is skipped for an hour and the next account is tried. When no signed-in account has Ultra, the request is answered with a message saying Argon needs Google AI Ultra, after trying the API-key fallback if one is configured. The context window is set to 256K tokens, Antigravity's reported default for Argon, so OpenCode compacts before the backend refuses a long session.
 
 ### Removed
@@ -17,6 +19,8 @@
 - **Every other Antigravity Gemini model** - Antigravity now serves only Gemini 3.8 Flash and Gemini 4 Argon. `antigravity-gemini-3.1-pro`, `antigravity-gemini-3-flash` and `antigravity-gemini-3.1-flash-lite` are gone from the model list, and an `antigravity-` request for any retired generation (2.0, 2.5, 3, 3.1, 3.5-3.7; Pro, Flash or Flash-Lite) is served as Gemini 3.8 Flash at the same tier. The retired list is explicit, so a model Google adds later is still discovered and routed to Antigravity.
 
 ### Changed
+
+- **Request bodies are sent gzipped** - Antigravity's endpoints accept `Content-Encoding: gzip`. A long session's request is several hundred KB of JSON, which shrinks about 4x (1MB to 223KB), saving up to half a second of upload per request on a 10 Mbit/s uplink.
 
 - **Accounts are sticky by default** - `account_selection_strategy` now defaults to `sticky` instead of `hybrid`. Gemini's prompt cache belongs to one account, and hybrid switched accounts at the start of most turns and every few dozen steps, so the request after each switch re-read the whole conversation: 10-30s at 300K tokens instead of about 5s. Sticky keeps one account until it is rate-limited. Set `"account_selection_strategy": "hybrid"` to spread load across accounts again.
 

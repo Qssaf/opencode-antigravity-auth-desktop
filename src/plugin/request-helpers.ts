@@ -1,3 +1,5 @@
+import { gzipSync } from "node:zlib";
+
 import { getKeepThinking } from "./config";
 import { createLogger } from "./logger";
 import { cacheSignature } from "./cache";
@@ -2038,6 +2040,87 @@ export async function peekSseForContent(
     }),
     empty: !meaningful,
   };
+}
+
+type HedgeOutcome = { response: Response; hasContent: boolean } | { error: unknown };
+
+/**
+ * Sends a streaming request and, when no content has arrived after
+ * `hedgeAfterMs`, sends it once more. The first answer with content wins and
+ * the other request is cancelled. When neither has content (an error status,
+ * an empty stream or a network error), the original request's outcome is
+ * returned, so the caller handles it as if the repeat had never been sent.
+ *
+ * `send` is called once per attempt, so the request body must be re-sendable.
+ * 0 sends the request once.
+ */
+export async function fetchStreamWithHedge(
+  send: (signal: AbortSignal) => Promise<Response>,
+  hedgeAfterMs: number,
+  signal?: AbortSignal | null,
+  onRepeat?: (event: "sent" | "won") => void,
+): Promise<Response> {
+  const attempt = () => {
+    const controller = new AbortController();
+    const linked = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    const outcome: Promise<HedgeOutcome> = send(linked)
+      .then(async (response) => {
+        if (!response.ok) return { response, hasContent: false };
+        const peeked = await peekSseForContent(response);
+        return { response: peeked.response, hasContent: !peeked.empty };
+      })
+      .catch((error: unknown) => ({ error }));
+    return { controller, outcome };
+  };
+  type Attempt = ReturnType<typeof attempt>;
+  const unwrap = (outcome: HedgeOutcome): Response => {
+    if ("error" in outcome) throw outcome.error;
+    return outcome.response;
+  };
+  const discard = (loser: Attempt) => {
+    loser.controller.abort();
+    void loser.outcome.then((o) => ("error" in o ? undefined : o.response.body?.cancel())).catch(() => {});
+  };
+
+  const original = attempt();
+  if (hedgeAfterMs <= 0) return unwrap(await original.outcome);
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const stalled = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), hedgeAfterMs);
+  });
+  const early = await Promise.race([original.outcome, stalled]);
+  clearTimeout(timer);
+  if (early || signal?.aborted) return unwrap(early ?? (await original.outcome));
+
+  onRepeat?.("sent");
+  const repeat = attempt();
+  // Take the attempts as they settle, one at a time, so a tie is decided once.
+  const pending = new Set([original, repeat]);
+  while (pending.size > 0) {
+    const settled = await Promise.race([...pending].map((a) => a.outcome.then(() => a)));
+    pending.delete(settled);
+    const outcome = await settled.outcome;
+    if (!("error" in outcome) && outcome.hasContent) {
+      discard(settled === original ? repeat : original);
+      if (settled === repeat) onRepeat?.("won");
+      return outcome.response;
+    }
+  }
+  discard(repeat);
+  return unwrap(await original.outcome);
+}
+
+/**
+ * Returns `init` sending `body` gzip-compressed. Antigravity's endpoints accept
+ * `Content-Encoding: gzip`, and a long session's request body (several hundred
+ * KB of JSON) shrinks about 4x, which saves up to half a second of upload per
+ * request. Level 3 costs ~10ms for 1MB; higher levels barely shrink it more.
+ */
+export function withGzipBody(init: RequestInit, body: string): RequestInit {
+  const headers = new Headers(init.headers);
+  headers.set("Content-Encoding", "gzip");
+  return { ...init, headers, body: gzipSync(body, { level: 3 }) };
 }
 
 // ============================================================================

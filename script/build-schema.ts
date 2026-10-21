@@ -35,6 +35,8 @@ const optionDescriptions: Record<string, string> = {
     "Maximum retry attempts when Antigravity returns an empty response (no candidates).",
   empty_response_retry_delay_ms:
     "Delay in milliseconds between empty response retries.",
+  hedge_stalled_requests_after_seconds:
+    "Seconds to wait for a streamed answer's first content before sending the request once more and keeping whichever answers first. Each repeat counts against quota. 0 disables.",
   tool_id_recovery:
     "Enable tool ID orphan recovery. Matches mismatched tool responses by function name or creates placeholders.",
   claude_tool_hardening:

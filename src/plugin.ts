@@ -21,6 +21,7 @@ import {
   logRateLimitSnapshot,
   logResponseBody,
   logModelFamily,
+  debugLogToFile,
   isDebugEnabled,
   getLogFilePath,
   initializeDebug,
@@ -36,6 +37,7 @@ import {
   isGemini4ArgonModel,
   resolveModelWithTier,
 } from "./plugin/transform/model-resolver";
+import { isImageGenerationModel } from "./plugin/transform/gemini";
 import {
   isUltraEntitlementRefusal,
   isUltraModelRefused,
@@ -46,6 +48,8 @@ import {
   isEmptyResponseBody,
   createSyntheticErrorResponse,
   peekSseForContent,
+  fetchStreamWithHedge,
+  withGzipBody,
 } from "./plugin/request-helpers";
 import { EmptyResponseError } from "./plugin/errors";
 import { AntigravityTokenRefreshError, isRevokedRefreshToken, refreshAccessToken } from "./plugin/token";
@@ -2829,7 +2833,27 @@ export const createAntigravityRuntime = (providerId: string) => async (
                   tokenConsumed = getTokenTracker().consume(account.index);
                 }
 
-                let response = await fetch(prepared.request, prepared.init);
+                // A string body is gzipped (Antigravity accepts it; a long session's
+                // JSON uploads ~4x faster) and can be sent twice, so a streamed
+                // request with no content after the hedge delay is repeated. Image
+                // generation is not: it can take that long, and repeats would spend
+                // image quota.
+                const requestBody = prepared.init.body;
+                const sendInit = typeof requestBody === "string" ? withGzipBody(prepared.init, requestBody) : prepared.init;
+                const hedgeAfterMs = isImageGenerationModel(prepared.effectiveModel ?? "")
+                  ? 0
+                  : config.hedge_stalled_requests_after_seconds * 1000;
+                const hedgeLabel = debugContext?.id ?? "request";
+                let response = prepared.streaming && typeof requestBody === "string"
+                  ? await fetchStreamWithHedge(
+                      (signal) => fetch(prepared.request, { ...sendInit, signal }),
+                      hedgeAfterMs,
+                      sendInit.signal,
+                      (event) => debugLogToFile(event === "sent"
+                        ? `[Hedge] ${hedgeLabel}: no content after ${hedgeAfterMs}ms, sending the request again`
+                        : `[Hedge] ${hedgeLabel}: the repeat answered first`),
+                    )
+                  : await fetch(prepared.request, sendInit);
                 pushDebug(`status=${response.status} ${response.statusText}`);
 
 
