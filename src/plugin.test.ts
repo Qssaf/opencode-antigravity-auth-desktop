@@ -1080,7 +1080,7 @@ describe("Gemini 4 Argon (Ultra-only)", () => {
     const res = await fetchFn(ARGON_URL, argonRequest());
     const text = await res.text();
 
-    expect(text).toContain("Gemini 4 Argon needs a Google AI Ultra subscription");
+    expect(text).toContain("Gemini 4 Argon needs a paid Google AI Pro or Google AI Ultra subscription");
     expect(text).toContain("all 2 signed-in accounts");
     expect(new Set(argonRequests.map((r) => r.project))).toEqual(new Set(["p-free", "p-pro"]));
 

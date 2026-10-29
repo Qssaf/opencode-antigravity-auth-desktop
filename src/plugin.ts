@@ -1442,7 +1442,7 @@ export function createNoUsableCredentialsResponse(urlString: string, detail: str
 }
 
 /**
- * Answers a request for an Ultra-only model (Gemini 4 Argon) once Google has
+ * Answers a request for Gemini 4 Argon (paid Pro or Ultra only) once Google has
  * refused it for every signed-in account. See ultra-gate.ts.
  */
 export function createUltraRequiredResponse(urlString: string, accountCount: number): Response {
@@ -2208,8 +2208,8 @@ export const createAntigravityRuntime = (providerId: string) => async (
           // Empty answers retried within THIS request. Per request, so concurrent
           // requests (and ones aborted mid-retry) do not spend each other's budget.
           let emptyResponseAttempts = 0;
-          // Gemini 4 Argon is Ultra-only: accounts Google refused it for are
-          // skipped, and when none is left the request gets the Ultra message.
+          // Gemini 4 Argon needs paid Pro or Ultra: accounts Google refused it for
+          // are skipped, and when none is left the request gets the plan message.
           const isUltraOnlyRequest = isGemini4ArgonModel(model ?? "");
           const allAccountsRefusedUltra = (): boolean => {
             const enabled = accountManager.getEnabledAccounts();

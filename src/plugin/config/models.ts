@@ -61,13 +61,10 @@ const DEFAULT_MODALITIES: ModelModalities = {
 };
 
 export const OPENCODE_MODEL_DEFINITIONS: OpencodeModelDefinitions = {
-  // Antigravity runs 3.8 Flash with a 256K working context and compacts past
-  // it. OpenCode compacts at the advertised limit, so 1M let sessions reach
-  // 300K+ tokens, where a request without a warm prompt cache takes 10-30s.
   "antigravity-gemini-3.8-flash": {
     name: "Gemini 3.8 Flash (Antigravity)",
     temperature: false,
-    limit: { context: 262144, output: 65536 },
+    limit: { context: 1048576, output: 65536 },
     modalities: DEFAULT_MODALITIES,
     variants: {
       low: { thinkingLevel: "low" },
@@ -75,13 +72,13 @@ export const OPENCODE_MODEL_DEFINITIONS: OpencodeModelDefinitions = {
       high: { thinkingLevel: "high" },
     },
   },
-  // Google AI Ultra only. Antigravity serves it as gemini-4-argon-{low,medium,high}
-  // (see resolveAntigravityGemini4ArgonBackendModel). Antigravity's default
-  // context window for it is 256K tokens, smaller than the API's 1M.
+  // Google AI Ultra and paid (non-trial) Google AI Pro only. Antigravity serves
+  // it as gemini-4-argon-{low,medium,high} (see
+  // resolveAntigravityGemini4ArgonBackendModel), with a 1M context like the API.
   "antigravity-gemini-4-argon": {
-    name: "Gemini 4 Argon (Antigravity, Ultra)",
+    name: "Gemini 4 Argon (Antigravity)",
     temperature: false,
-    limit: { context: 262144, output: 65536 },
+    limit: { context: 1048576, output: 65536 },
     modalities: DEFAULT_MODALITIES,
     variants: {
       low: { thinkingLevel: "low" },
@@ -154,8 +151,8 @@ function mergeWithStaticDefinition(
   return {
     ...existing,
     ...discovered,
-    // Curated limits win: the registry's maxTokens is the API's 1M, not the
-    // working context Antigravity uses (256K for 3.8 Flash and Argon).
+    // Curated limits win, so a registry entry cannot shrink a curated model's
+    // context.
     limit: existing.limit,
     modalities: discovered.modalities ?? existing.modalities,
     variants: existing.variants ?? discovered.variants,

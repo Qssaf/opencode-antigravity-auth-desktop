@@ -78,7 +78,7 @@ Accept: text/event-stream
 
 | Model Name | Model ID | Type | Status |
 |------------|----------|------|--------|
-| Gemini 4 Argon Low / Medium / High | `gemini-4-argon-low` / `-medium` / `-high` | Google | ⚠️ Google AI Ultra only; ids from a community analysis of Antigravity 2.23.0, not yet verified live |
+| Gemini 4 Argon Low / Medium / High | `gemini-4-argon-low` / `-medium` / `-high` | Google | ⚠️ Paid Google AI Pro or Ultra only; served only to a new enough client User-Agent (`antigravity/cli/1.3.4 ...`); the bare `gemini-4-argon` id is not served |
 | Gemini 3.8 Flash Low / Medium / High | `gemini-3.8-flash-low` / `-medium` / `-high` | Google | ✅ Verified |
 | Gemini 3.1 Pro High / Low | `gemini-pro-agent` / `gemini-3.1-pro-low` | Google | ❌ No longer served |
 | Gemini 3 Flash, 3.1 Flash-Lite, 2.5 | `gemini-3-flash`, `gemini-3.1-flash-lite`, ... | Google | ❌ No longer served |
