@@ -71,6 +71,17 @@ export const ANTIGRAVITY_DEFAULT_PROJECT_ID = "default-cli-project";
 export const ANTIGRAVITY_CLI_USER_AGENT =
   "antigravity/cli/1.1.13 (aidev_client; os_type=linux; arch=amd64; cl=964361259; auth_method=consumer)";
 
+/**
+ * User-Agent of a newer Antigravity CLI, sent for Gemini 4 Argon requests only.
+ * The backend serves Argon only to new enough clients: other Antigravity
+ * clients report 404 "Requested entity was not found" for every
+ * gemini-4-argon-* id from older client versions, on Ultra and paid Pro
+ * accounts alike, and 200 with this one. Other models keep the CLI UA above,
+ * which is known to serve them.
+ */
+export const ANTIGRAVITY_ARGON_USER_AGENT =
+  "antigravity/cli/1.3.4 (os_type=linux; arch=amd64; aidev_client; auth_method=oauth)";
+
 export const ANTIGRAVITY_VERSION_FALLBACK = "1.18.3";
 let antigravityVersion = ANTIGRAVITY_VERSION_FALLBACK;
 let versionLocked = false;

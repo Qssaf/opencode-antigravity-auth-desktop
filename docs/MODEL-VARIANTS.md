@@ -21,8 +21,8 @@ Define variants in your model configuration:
 ```json
 {
   "antigravity-gemini-4-argon": {
-    "name": "Gemini 4 Argon (Antigravity, Ultra)",
-    "limit": { "context": 262144, "output": 65536 },
+    "name": "Gemini 4 Argon (Antigravity)",
+    "limit": { "context": 1048576, "output": 65536 },
     "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
     "variants": {
       "low": { "thinkingLevel": "low" },
@@ -58,7 +58,7 @@ Gemini 3 and Gemini 4 models use string-based thinking levels. Available levels 
 | `high` | ✅ | ✅ | Maximum thinking |
 
 > **Note:** Antigravity serves only Gemini 3.8 Flash and Gemini 4 Argon, and rejects `"minimal"` on both, so the plugin sends `low`. Both default to `high`.
-> Gemini 4 Argon needs a Google AI Ultra subscription; see the README.
+> Gemini 4 Argon needs a paid Google AI Pro or Google AI Ultra subscription; see the README.
 > Any other Gemini model (3 Pro, 3.1 Pro, 3 Flash, 3.1 Flash-Lite, 2.5, the dropped 3.5-3.7 Flash, and the former Gemini CLI models) is served as Gemini 3.8 Flash at the same tier.
 
 ### Gemini 3.8 Flash Example
@@ -67,7 +67,7 @@ Gemini 3 and Gemini 4 models use string-based thinking levels. Available levels 
 {
   "antigravity-gemini-3.8-flash": {
     "name": "Gemini 3.8 Flash (Antigravity)",
-    "limit": { "context": 262144, "output": 65536 },
+    "limit": { "context": 1048576, "output": 65536 },
     "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
     "variants": {
       "low": { "thinkingLevel": "low" },

@@ -41,7 +41,9 @@ describe("OPENCODE_MODEL_DEFINITIONS", () => {
       high: { thinkingLevel: "high" },
     });
     expect(argon.temperature).toBe(false);
-    expect(argon.name).toContain("Ultra");
+    // Paid Pro accounts get it too, so the name no longer says Ultra.
+    expect(argon.name).toBe("Gemini 4 Argon (Antigravity)");
+    expect(argon.limit).toEqual({ context: 1048576, output: 65536 });
   });
 });
 
@@ -137,8 +139,7 @@ describe("dynamic model discovery helpers", () => {
       medium: { thinkingLevel: "medium" },
       high: { thinkingLevel: "high" },
     });
-    // Antigravity's own working context for 3.8 Flash; OpenCode compacts at it.
-    expect(models["antigravity-gemini-3.8-flash"]?.limit).toEqual({ context: 262144, output: 65536 });
+    expect(models["antigravity-gemini-3.8-flash"]?.limit).toEqual({ context: 1048576, output: 65536 });
     // Inferred variants for dynamically discovered models not in static table
     expect(models["antigravity-gemini-3.8-pro"]?.variants).toEqual({
       low: { thinkingLevel: "low" },

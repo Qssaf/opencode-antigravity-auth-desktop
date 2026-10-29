@@ -1,11 +1,12 @@
 /**
- * Gemini 4 Argon is served on Antigravity only to Google AI Ultra subscribers.
- * The plugin cannot read an account's subscription, so it learns it from the
- * backend: an account the backend refuses for Argon is remembered here, skipped
- * for later Argon requests, and once no account is left the request is
- * answered with a message saying Ultra is required.
+ * Gemini 4 Argon is served on Antigravity only to Google AI Ultra and paid
+ * (non-trial) Google AI Pro subscribers. The plugin cannot read an account's
+ * subscription, so it learns it from the backend: an account the backend
+ * refuses for Argon is remembered here, skipped for later Argon requests, and
+ * once no account is left the request is answered with a message saying which
+ * plans include it.
  *
- * Refusals expire, so an account that upgrades to Ultra is tried again without
+ * Refusals expire, so an account that upgrades is tried again without
  * restarting OpenCode.
  */
 
@@ -62,11 +63,12 @@ export function isUltraEntitlementRefusal(
 export function ultraRequiredMessage(modelLabel: string, accountCount: number): string {
   const accounts = accountCount === 1 ? "your signed-in account" : `all ${accountCount} signed-in accounts`;
   return [
-    `[Antigravity Error] ${modelLabel} needs a Google AI Ultra subscription.`,
-    `Google refused it for ${accounts}, so none of them has Ultra.`,
+    `[Antigravity Error] ${modelLabel} needs a paid Google AI Pro or Google AI Ultra subscription.`,
+    `Google refused it for ${accounts}. Free plans, Google AI Plus and Pro free trials`,
+    "do not include it.",
     "",
-    "Pick Gemini 3.8 Flash instead, or sign in an Ultra account with",
+    "Pick Gemini 3.8 Flash instead, or sign in a paid Pro or Ultra account with",
     "`opencode auth login`. Accounts are tried again after an hour,",
-    "so an account that upgrades to Ultra starts working without a restart.",
+    "so an account that upgrades starts working without a restart.",
   ].join("\n");
 }

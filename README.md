@@ -19,7 +19,7 @@ Enable Opencode to authenticate against **Antigravity** (Google's IDE) via OAuth
 
 ## What You Get
 
-- **Gemini 4 Argon** (Google AI Ultra) and **Gemini 3.8 Flash** via Google OAuth (Antigravity)
+- **Gemini 4 Argon** (paid Google AI Pro or Ultra) and **Gemini 3.8 Flash** via Google OAuth (Antigravity)
 - **Multi-account support** — add multiple Google accounts, auto-rotates when rate-limited
 - **Modern Gemini API support** — use Antigravity SDK-style API keys / Cloud Projects as Gemini backups or opt-in primary routing
 - **Thinking models** — extended thinking for Claude and Gemini 3 with configurable budgets
@@ -141,9 +141,9 @@ opencode run "Hello" --model=google/antigravity-gemini-3.8-flash --variant=high
 | Model | Variants | Notes |
 |-------|----------|-------|
 | `antigravity-gemini-3.8-flash` | low, medium, high | Gemini 3.8 Flash with thinking (high default) |
-| `antigravity-gemini-4-argon` | low, medium, high | **Newest. Google AI Ultra only.** Gemini 4 Argon with thinking (high default, 256K context) |
+| `antigravity-gemini-4-argon` | low, medium, high | **Newest. Paid Google AI Pro or Ultra only.** Gemini 4 Argon with thinking (high default, 1M context) |
 
-> **Gemini 4 Argon needs a Google AI Ultra subscription.** The plugin cannot read your subscription, so it learns it from Google: an account Google refuses Argon for is skipped for an hour and the next account is tried. When no signed-in account has Ultra, the request is answered with a message saying so instead of an error. With an API key configured (`agy_sdk`), Argon is tried through the public Gemini API before that message.
+> **Gemini 4 Argon needs a paid Google AI Pro or Google AI Ultra subscription.** Free plans, Google AI Plus and Pro free trials do not include it. The plugin cannot read your subscription, so it learns it from Google: an account Google refuses Argon for is skipped for an hour and the next account is tried. When no signed-in account may use it, the request is answered with a message saying so instead of an error. With an API key configured (`agy_sdk`), Argon is tried through the public Gemini API before that message.
 
 > Antigravity now serves only Gemini 3.8 Flash and Gemini 4 Argon. Google dropped Gemini 3.5, 3.6 and 3.7 Flash, Claude Sonnet 4.6, Claude Opus 4.6 and GPT-OSS from it, and no longer serves Gemini 3 Pro, 3.1 Pro, 3 Flash, 3.1 Flash-Lite or 2.5 there either. An `antigravity-` request for any of those (with or without a tier suffix) goes to Gemini 3.8 Flash at the same tier, so sessions still set to an old model keep working. Gemini 2 is gone from every route: a request for any Gemini 2 model is sent as Gemini 3.8 Flash.
 
@@ -180,7 +180,7 @@ Add this to your `~/.config/opencode/opencode.json`:
       "models": {
         "antigravity-gemini-3.8-flash": {
           "name": "Gemini 3.8 Flash (Antigravity)",
-          "limit": { "context": 262144, "output": 65536 },
+          "limit": { "context": 1048576, "output": 65536 },
           "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
           "variants": {
             "low": { "thinkingLevel": "low" },
@@ -189,8 +189,8 @@ Add this to your `~/.config/opencode/opencode.json`:
           }
         },
         "antigravity-gemini-4-argon": {
-          "name": "Gemini 4 Argon (Antigravity, Ultra)",
-          "limit": { "context": 262144, "output": 65536 },
+          "name": "Gemini 4 Argon (Antigravity)",
+          "limit": { "context": 1048576, "output": 65536 },
           "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
           "variants": {
             "low": { "thinkingLevel": "low" },

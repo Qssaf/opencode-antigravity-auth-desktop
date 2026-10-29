@@ -8,7 +8,7 @@ import {
 } from "./request";
 import { DEFAULT_CONFIG } from "./config";
 import { initializeDebug } from "./debug";
-import { SKIP_THOUGHT_SIGNATURE } from "../constants";
+import { ANTIGRAVITY_ARGON_USER_AGENT, ANTIGRAVITY_CLI_USER_AGENT, SKIP_THOUGHT_SIGNATURE } from "../constants";
 import { cacheSignature, getCachedSignature, clearSignatureCache } from "./cache";
 import * as config from "./config";
 import type { SignatureStore, ThoughtBuffer, StreamingCallbacks, StreamingOptions } from "./core/streaming/types";
@@ -600,6 +600,22 @@ describe("request.ts", () => {
         mockProjectId
       );
       expect(result.streaming).toBe(false);
+    });
+
+    it("sends Gemini 4 Argon with the newer CLI User-Agent and other models with the usual one", () => {
+      const userAgentFor = (model: string) => {
+        const result = prepareAntigravityRequest(
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,
+          { method: "POST", body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "hi" }] }] }) },
+          mockAccessToken,
+          mockProjectId,
+        );
+        return (result.init.headers as Headers).get("User-Agent");
+      };
+
+      expect(userAgentFor("antigravity-gemini-4-argon")).toBe(ANTIGRAVITY_ARGON_USER_AGENT);
+      expect(userAgentFor("antigravity-gemini-4-argon-low")).toBe(ANTIGRAVITY_ARGON_USER_AGENT);
+      expect(userAgentFor("antigravity-gemini-3.8-flash")).toBe(ANTIGRAVITY_CLI_USER_AGENT);
     });
 
     it("intercepts Request object inputs for generative language URLs", async () => {
