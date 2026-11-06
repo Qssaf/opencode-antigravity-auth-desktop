@@ -708,8 +708,8 @@ Set `prefer_for_gemini: true` if you want Gemini models to use the newer Gemini 
 
 | Your Setup | Recommended Config |
 |------------|-------------------|
-| **1-5 accounts** | Default (`"sticky"`): one account until it is rate-limited, which keeps the prompt cache warm |
-| **Spread load across accounts** | `"account_selection_strategy": "hybrid"` (each switch costs a cold prompt cache) |
+| **2-5 accounts** | Default (`"hybrid"`): spreads use across accounts by health, token bucket and least-recent use (each switch costs a cold prompt cache) |
+| **1 account** | `"account_selection_strategy": "sticky"` |
 | **5+ accounts** | `"account_selection_strategy": "round-robin"` |
 | **Parallel agents** | Add `"pid_offset_enabled": true` |
 

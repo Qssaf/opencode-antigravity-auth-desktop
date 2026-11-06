@@ -114,7 +114,7 @@
       "description": "Delay in milliseconds between empty response retries."
     },
     "hedge_stalled_requests_after_seconds": {
-      "default": 10,
+      "default": 0,
       "type": "number",
       "minimum": 0,
       "maximum": 120,
@@ -245,7 +245,7 @@
       "additionalProperties": false
     },
     "account_selection_strategy": {
-      "default": "sticky",
+      "default": "hybrid",
       "type": "string",
       "enum": [
         "sticky",

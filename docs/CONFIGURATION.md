@@ -79,7 +79,7 @@ Settings for managing multiple Google accounts.
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `account_selection_strategy` | `"sticky"` | How to select accounts |
+| `account_selection_strategy` | `"hybrid"` | How to select accounts |
 | `switch_on_first_rate_limit` | `true` | Switch account immediately on first 429 |
 | `pid_offset_enabled` | `false` | Distribute sessions across accounts (for parallel agents) |
 | `quota_fallback` | `false` | Deprecated (ignored). Kept for backward compatibility; Gemini fallback is automatic |
@@ -88,8 +88,8 @@ Settings for managing multiple Google accounts.
 
 | Your Setup | Recommended Strategy | Why |
 |------------|---------------------|-----|
-| **1-3 accounts** | `"sticky"` (default) | Switch only on rate limit, preserve prompt cache |
-| **Spread load** | `"hybrid"` | Rotation with health scoring; each switch starts a cold prompt cache |
+| **2+ accounts** | `"hybrid"` (default) | Spreads use with health scoring; each switch starts a cold prompt cache |
+| **1 account** | `"sticky"` | Switch only on rate limit, preserve prompt cache |
 | **4+ accounts** | `"round-robin"` | Maximum throughput |
 | **Parallel agents** | `"round-robin"` + `pid_offset_enabled: true` | Distribute across accounts |
 
@@ -204,7 +204,7 @@ These settings are `false` by default:
 |--------|---------|-------------|
 | `empty_response_max_attempts` | `4` | Retries for empty API responses |
 | `empty_response_retry_delay_ms` | `2000` | Delay between retries |
-| `hedge_stalled_requests_after_seconds` | `10` | Send a streamed request once more when it has produced nothing after this many seconds; the first answer wins. Image generation is never repeated. Each repeat counts against quota. `0` disables |
+| `hedge_stalled_requests_after_seconds` | `0` | Send a streamed request once more when it has produced nothing after this many seconds; the first answer wins. Image generation is never repeated. Each repeat counts against quota. `0` disables |
 | `tool_id_recovery` | `true` | Fix mismatched tool IDs from context compaction |
 | `claude_tool_hardening` | `true` | Prevent tool parameter hallucination |
 | `max_rate_limit_wait_seconds` | `300` | Max wait time when rate limited (0=unlimited) |

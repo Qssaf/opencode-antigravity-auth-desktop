@@ -3383,9 +3383,12 @@ var AntigravityConfigSchema = z2.object({
    * this, so only stalled requests are repeated. Each repeat counts as one more
    * request against quota. 0 disables.
    *
-   * @default 10
+   * Off by default: two identical requests in parallel from one account is
+   * traffic the Antigravity app never sends.
+   *
+   * @default 0
    */
-  hedge_stalled_requests_after_seconds: z2.number().min(0).max(120).default(10),
+  hedge_stalled_requests_after_seconds: z2.number().min(0).max(120).default(0),
   // =========================================================================
   // Tool ID Recovery (ported from LLM-API-Key-Proxy)
   // =========================================================================
@@ -3500,13 +3503,13 @@ var AntigravityConfigSchema = z2.object({
   /**
    * Strategy for selecting accounts when making requests.
    *
-   * Sticky by default: Gemini's prompt cache is per account, so every switch
-   * makes the next request re-read the whole conversation (10-30s at a few
-   * hundred thousand tokens instead of ~5s). Sticky still switches on a rate
-   * limit.
-   * @default "sticky"
+   * Hybrid by default: spreads use across accounts by health score, token
+   * bucket and least-recent use, so no single account carries all traffic
+   * (sticky did, and that account was banned). Each switch starts a cold
+   * Gemini prompt cache, so the next request re-reads the conversation.
+   * @default "hybrid"
    */
-  account_selection_strategy: AccountSelectionStrategySchema.default("sticky"),
+  account_selection_strategy: AccountSelectionStrategySchema.default("hybrid"),
   /**
    * Enable PID-based account offset for multi-session distribution.
    * 
@@ -3643,7 +3646,7 @@ var DEFAULT_CONFIG = {
   resume_text: "continue",
   empty_response_max_attempts: 4,
   empty_response_retry_delay_ms: 2e3,
-  hedge_stalled_requests_after_seconds: 10,
+  hedge_stalled_requests_after_seconds: 0,
   tool_id_recovery: true,
   claude_tool_hardening: true,
   claude_prompt_auto_caching: false,
@@ -3664,7 +3667,7 @@ var DEFAULT_CONFIG = {
     gemini_api: true,
     antigravity: true
   },
-  account_selection_strategy: "sticky",
+  account_selection_strategy: "hybrid",
   pid_offset_enabled: false,
   switch_on_first_rate_limit: true,
   scheduling_mode: "cache_first",
