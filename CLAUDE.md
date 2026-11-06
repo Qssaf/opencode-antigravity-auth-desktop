@@ -73,6 +73,7 @@ All three call the same operations in `src/plugin/account-admin.ts` (which rende
 
 Do not spend time rediscovering these:
 
+- OpenCode 2.x **imports the plugin module once per location** (verified on 2.2.0: three chats gave three module instances sharing one `globalThis`). OpenChamber opens a location per chat, so module-level state is per chat; anything meant to be process-wide, like the shared runtime in `src/v2/runtime.ts`, must live on `globalThis`.
 - The 2.x plugin runs in `opencode serve` with **no TTY** (`stdin.isTTY` undefined, no `setRawMode`) in both background-service and `--standalone` modes. A stdin-driven menu cannot work there; that is why the 1.x looping menu could not be ported.
 - `ctx.session.synthetic` output **does not render in the desktop app**, which is why the `/antigravity` command was removed even though it registered correctly.
 - `ctx.ui.dialog` (a looping menu) exists only in the **TUI plugin** context (`@opencode/plugin/tui`), which the desktop app does not run.
@@ -168,3 +169,17 @@ For multi-step tasks, state a brief plan:
 ```
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+## Skill plan
+Stack: TypeScript (Bun/Node) OpenCode plugin, vitest
+Always: verification-before-completion, karpathy-guidelines
+Stack skills: none in index for plain TS
+Chains: feature=brainstorming → writing-plans → test-driven-development → verification-before-completion → requesting-code-review; bug=systematic-debugging → test-driven-development → verification-before-completion → requesting-code-review; perf=systematic-debugging (measure) → fix → verification-before-completion (re-measure) → requesting-code-review
+Sizes: every size runs the full chain; size sets depth only
+Overlays: security-checklist (OAuth tokens, account file); search-first (new integrations)
+Agents: tester / code-reviewer not installed → inline
+Not for this project: UI, motion, video, docs, C++, Python, MySQL skills
+Missing: none
+
+## Skill notes
+- systematic-debugging: timestamp every hop (DB parts, the plugin debug log's `Response 200 OK (N ms)`, proxy writes) and A/B the same prompt in `agy -p --output-format stream-json` before blaming OpenCode. OpenCode adds ~10 ms per step and ~0.1–0.4 s per new chat.

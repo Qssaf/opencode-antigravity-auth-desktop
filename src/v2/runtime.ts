@@ -8,7 +8,9 @@
  * is created by the first `setup` and disposed by the last cleanup.
  */
 
-import { statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { tool } from "@opencode-ai/plugin/tool";
 import { ANTIGRAVITY_PROVIDER_ID } from "../constants";
 import {
@@ -512,8 +514,35 @@ interface SharedRuntime {
   linger?: { timer: ReturnType<typeof setTimeout>; runtime: V2Runtime };
 }
 
-let shared: SharedRuntime | undefined;
-let disposing: Promise<void> | undefined;
+/**
+ * OpenCode 2.x imports the plugin once per location, so state kept in this
+ * module would exist once per open chat: every new location built its own
+ * runtime, re-read the account pool and refreshed the OAuth token before its
+ * first request. The shared runtime lives on globalThis instead. The key holds
+ * the code's newest modification time, so an edited or rebuilt plugin starts a
+ * fresh runtime rather than reusing the previous code.
+ */
+const state = ((globalThis as Record<symbol, unknown>)[
+  Symbol.for(`opencode-antigravity-auth/v2-runtime/${readCodeStamp()}`)
+] ??= {}) as { shared?: SharedRuntime; disposing?: Promise<void> };
+
+/** Where this code runs from and when it last changed. */
+function readCodeStamp(): string {
+  try {
+    const file = fileURLToPath(import.meta.url);
+    // A source checkout runs src/**/*.ts; an installed plugin runs one bundle.
+    const root = file.endsWith(".ts") ? dirname(dirname(file)) : file;
+    return `${root}@${newestModificationTime(root)}`;
+  } catch {
+    return import.meta.url;
+  }
+}
+
+function newestModificationTime(path: string): number {
+  const stat = statSync(path);
+  if (!stat.isDirectory()) return stat.mtimeMs;
+  return Math.max(stat.mtimeMs, ...readdirSync(path).map((name) => newestModificationTime(join(path, name))));
+}
 
 /**
  * Modification times of the config files a runtime reads at creation, so a
@@ -533,11 +562,11 @@ function readConfigStamp(directory: string): string {
 }
 
 function retire(entry: SharedRuntime, runtime: V2Runtime): void {
-  if (shared === entry) shared = undefined;
+  if (state.shared === entry) state.shared = undefined;
   const shutdown = runtime.dispose().finally(() => {
-    if (disposing === shutdown) disposing = undefined;
+    if (state.disposing === shutdown) state.disposing = undefined;
   });
-  disposing = shutdown;
+  state.disposing = shutdown;
 }
 
 /**
@@ -548,17 +577,17 @@ function retire(entry: SharedRuntime, runtime: V2Runtime): void {
  */
 export async function acquireRuntime(ctx: Context): Promise<RuntimeHandle> {
   // A lingering runtime whose config changed is replaced, not reused.
-  const lingering = shared?.linger;
-  if (shared && lingering && shared.configStamp !== readConfigStamp(shared.directory)) {
+  const lingering = state.shared?.linger;
+  if (state.shared && lingering && state.shared.configStamp !== readConfigStamp(state.shared.directory)) {
     clearTimeout(lingering.timer);
-    shared.linger = undefined;
-    retire(shared, lingering.runtime);
+    state.shared.linger = undefined;
+    retire(state.shared, lingering.runtime);
   }
 
   // A previous generation may still be shutting down.
-  await disposing;
+  await state.disposing;
 
-  const entry = (shared ??= {
+  const entry = (state.shared ??= {
     runtime: V2Runtime.create(ctx),
     refs: 0,
     directory: ctx.location.directory,
@@ -575,7 +604,7 @@ export async function acquireRuntime(ctx: Context): Promise<RuntimeHandle> {
     runtime = await entry.runtime;
   } catch (error) {
     entry.refs -= 1;
-    if (shared === entry && entry.refs === 0) shared = undefined;
+    if (state.shared === entry && entry.refs === 0) state.shared = undefined;
     throw error;
   }
   runtime.attach(ctx);
@@ -588,14 +617,14 @@ export async function acquireRuntime(ctx: Context): Promise<RuntimeHandle> {
       released = true;
       runtime.detach(ctx);
       entry.refs -= 1;
-      if (entry.refs !== 0 || shared !== entry) return;
+      if (entry.refs !== 0 || state.shared !== entry) return;
       // The process may exit before the runtime is disposed, so the account
       // pool is saved now. Not awaited: a save waiting on the file lock would
       // hold up the reload this lingering is meant to keep short.
       void runtime.flush();
       const timer = setTimeout(() => {
         entry.linger = undefined;
-        if (entry.refs !== 0 || shared !== entry) return;
+        if (entry.refs !== 0 || state.shared !== entry) return;
         retire(entry, runtime);
       }, RUNTIME_LINGER_MS);
       // A lingering runtime must not keep the process alive.

@@ -20,6 +20,8 @@
 
 ### Changed
 
+- **New chats reuse the running Antigravity runtime** - OpenCode 2.x loads a plugin once per location, and OpenChamber opens a location for every chat, so each new chat built its own runtime: it re-read the account pool, discovered models again (reloading the provider a second time) and refreshed the OAuth token before its first request, which added 90-350 ms to that request. The runtime now lives on `globalThis`, shared by every location in the process, and a new chat's first request goes out within about 10 ms. An edited or rebuilt plugin still starts a fresh runtime. As the runtime was always meant to work, a project-level `.opencode/antigravity.json` is read from the first location the process opens, not from each chat's folder.
+
 - **Request bodies are sent gzipped** - Antigravity's endpoints accept `Content-Encoding: gzip`. A long session's request is several hundred KB of JSON, which shrinks about 4x (1MB to 223KB), saving up to half a second of upload per request on a 10 Mbit/s uplink.
 
 - **Accounts are sticky by default** - `account_selection_strategy` now defaults to `sticky` instead of `hybrid`. Gemini's prompt cache belongs to one account, and hybrid switched accounts at the start of most turns and every few dozen steps, so the request after each switch re-read the whole conversation: 10-30s at 300K tokens instead of about 5s. Sticky keeps one account until it is rate-limited. Set `"account_selection_strategy": "hybrid"` to spread load across accounts again.

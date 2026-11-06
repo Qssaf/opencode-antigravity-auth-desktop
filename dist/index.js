@@ -1087,8 +1087,8 @@ function getLogFilePath() {
 }
 var requestCounter = 0;
 function startAntigravityDebugRequest(meta) {
-  const state = getDebugState();
-  if (!state.debugEnabled) {
+  const state2 = getDebugState();
+  if (!state2.debugEnabled) {
     return null;
   }
   const id = `ANTIGRAVITY-${++requestCounter}`;
@@ -1109,8 +1109,8 @@ function startAntigravityDebugRequest(meta) {
   return { id, streaming: meta.streaming, startedAt: Date.now() };
 }
 function logAntigravityDebugResponse(context, response, meta = {}) {
-  const state = getDebugState();
-  if (!state.debugEnabled || !context) {
+  const state2 = getDebugState();
+  if (!state2.debugEnabled || !context) {
     return;
   }
   const durationMs = Date.now() - context.startedAt;
@@ -1227,8 +1227,8 @@ function logRateLimitSnapshot(family, accounts) {
   });
 }
 async function logResponseBody(context, response, status) {
-  const state = getDebugState();
-  if (!state.debugEnabled || !context) return void 0;
+  const state2 = getDebugState();
+  if (!state2.debugEnabled || !context) return void 0;
   try {
     const text = await response.clone().text();
     const preview = truncateTextForLog(text, MAX_BODY_LOG_CHARS);
@@ -1350,8 +1350,8 @@ var log2 = createLogger("oauth");
 function encodeState(payload) {
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
-function decodeState(state) {
-  const normalized = state.replace(/-/g, "+").replace(/_/g, "/");
+function decodeState(state2) {
+  const normalized = state2.replace(/-/g, "+").replace(/_/g, "/");
   const padded = normalized.padEnd(normalized.length + (4 - normalized.length % 4) % 4, "=");
   const json = Buffer.from(padded, "base64").toString("utf8");
   const parsed = JSON.parse(json);
@@ -1442,9 +1442,9 @@ async function fetchProjectID(accessToken) {
   }
   return "";
 }
-async function exchangeAntigravity(code, state) {
+async function exchangeAntigravity(code, state2) {
   try {
-    const { verifier, projectId } = decodeState(state);
+    const { verifier, projectId } = decodeState(state2);
     const startTime = Date.now();
     const tokenResponse = await fetchWithTimeout("https://oauth2.googleapis.com/token", {
       method: "POST",
@@ -6073,7 +6073,7 @@ function messageHasToolCalls(msg) {
   return false;
 }
 function analyzeConversationState(contents) {
-  const state = {
+  const state2 = {
     inToolLoop: false,
     turnStartIdx: -1,
     turnHasThinking: false,
@@ -6082,7 +6082,7 @@ function analyzeConversationState(contents) {
     lastModelHasToolCalls: false
   };
   if (!Array.isArray(contents) || contents.length === 0) {
-    return state;
+    return state2;
   }
   let lastRealUserIdx = -1;
   for (let i = 0; i < contents.length; i++) {
@@ -6097,22 +6097,22 @@ function analyzeConversationState(contents) {
     if (role === "model" || role === "assistant") {
       const hasThinking = messageHasThinking(msg);
       const hasToolCalls = messageHasToolCalls(msg);
-      if (i > lastRealUserIdx && state.turnStartIdx === -1) {
-        state.turnStartIdx = i;
-        state.turnHasThinking = hasThinking;
+      if (i > lastRealUserIdx && state2.turnStartIdx === -1) {
+        state2.turnStartIdx = i;
+        state2.turnHasThinking = hasThinking;
       }
-      state.lastModelIdx = i;
-      state.lastModelHasToolCalls = hasToolCalls;
-      state.lastModelHasThinking = hasThinking;
+      state2.lastModelIdx = i;
+      state2.lastModelHasToolCalls = hasToolCalls;
+      state2.lastModelHasThinking = hasThinking;
     }
   }
   if (contents.length > 0) {
     const lastMsg = contents[contents.length - 1];
     if (lastMsg?.role === "user" && isToolResultMessage(lastMsg)) {
-      state.inToolLoop = true;
+      state2.inToolLoop = true;
     }
   }
-  return state;
+  return state2;
 }
 function stripAllThinkingBlocks2(contents) {
   return contents.map((content) => {
@@ -6177,8 +6177,8 @@ function closeToolLoopForThinking(contents) {
   };
   return [...strippedContents, syntheticModel, syntheticUser];
 }
-function needsThinkingRecovery(state) {
-  return state.inToolLoop && !state.turnHasThinking;
+function needsThinkingRecovery(state2) {
+  return state2.inToolLoop && !state2.turnHasThinking;
 }
 
 // src/plugin/transform/claude.ts
@@ -9168,14 +9168,14 @@ async function refreshAccessToken(auth, client, providerId) {
   if (!parts.refreshToken) {
     return void 0;
   }
-  let shared2 = inFlightRefreshes.get(parts.refreshToken);
-  if (!shared2) {
-    shared2 = performRefresh(auth, parts.refreshToken).finally(() => {
+  let shared = inFlightRefreshes.get(parts.refreshToken);
+  if (!shared) {
+    shared = performRefresh(auth, parts.refreshToken).finally(() => {
       inFlightRefreshes.delete(parts.refreshToken);
     });
-    inFlightRefreshes.set(parts.refreshToken, shared2);
+    inFlightRefreshes.set(parts.refreshToken, shared);
   }
-  return adoptRefreshResult(auth, parts, await shared2);
+  return adoptRefreshResult(auth, parts, await shared);
 }
 function adoptRefreshResult(auth, parts, result) {
   if (!result) {
@@ -9602,16 +9602,16 @@ var HealthScoreTracker = class {
    * Get current health score for an account, applying time-based recovery.
    */
   getScore(accountIndex) {
-    const state = this.scores.get(accountIndex);
-    if (!state) {
+    const state2 = this.scores.get(accountIndex);
+    if (!state2) {
       return this.config.initial;
     }
     const now = Date.now();
-    const hoursSinceUpdate = (now - state.lastUpdated) / (1e3 * 60 * 60);
+    const hoursSinceUpdate = (now - state2.lastUpdated) / (1e3 * 60 * 60);
     const recoveredPoints = Math.floor(hoursSinceUpdate * this.config.recoveryRatePerHour);
     return Math.min(
       this.config.maxScore,
-      state.score + recoveredPoints
+      state2.score + recoveredPoints
     );
   }
   /**
@@ -9632,13 +9632,13 @@ var HealthScoreTracker = class {
    */
   recordRateLimit(accountIndex) {
     const now = Date.now();
-    const state = this.scores.get(accountIndex);
+    const state2 = this.scores.get(accountIndex);
     const current = this.getScore(accountIndex);
     this.scores.set(accountIndex, {
       score: Math.max(0, current + this.config.rateLimitPenalty),
       lastUpdated: now,
-      lastSuccess: state?.lastSuccess ?? 0,
-      consecutiveFailures: (state?.consecutiveFailures ?? 0) + 1
+      lastSuccess: state2?.lastSuccess ?? 0,
+      consecutiveFailures: (state2?.consecutiveFailures ?? 0) + 1
     });
   }
   /**
@@ -9646,13 +9646,13 @@ var HealthScoreTracker = class {
    */
   recordFailure(accountIndex) {
     const now = Date.now();
-    const state = this.scores.get(accountIndex);
+    const state2 = this.scores.get(accountIndex);
     const current = this.getScore(accountIndex);
     this.scores.set(accountIndex, {
       score: Math.max(0, current + this.config.failurePenalty),
       lastUpdated: now,
-      lastSuccess: state?.lastSuccess ?? 0,
-      consecutiveFailures: (state?.consecutiveFailures ?? 0) + 1
+      lastSuccess: state2?.lastSuccess ?? 0,
+      consecutiveFailures: (state2?.consecutiveFailures ?? 0) + 1
     });
   }
   /**
@@ -9754,16 +9754,16 @@ var TokenBucketTracker = class {
    * Get current token balance for an account, applying regeneration.
    */
   getTokens(accountIndex) {
-    const state = this.buckets.get(accountIndex);
-    if (!state) {
+    const state2 = this.buckets.get(accountIndex);
+    if (!state2) {
       return this.config.initialTokens;
     }
     const now = Date.now();
-    const minutesSinceUpdate = (now - state.lastUpdated) / (1e3 * 60);
+    const minutesSinceUpdate = (now - state2.lastUpdated) / (1e3 * 60);
     const recoveredTokens = minutesSinceUpdate * this.config.regenerationRatePerMinute;
     return Math.min(
       this.config.maxTokens,
-      state.tokens + recoveredTokens
+      state2.tokens + recoveredTokens
     );
   }
   /**
@@ -11707,8 +11707,8 @@ var ProactiveRefreshQueue = class {
    * Whether the account is currently in a proactive-refresh backoff window.
    */
   isInRefreshBackoff(account, now) {
-    const state = this.failureTracking.get(this.getAccountKey(account));
-    return state !== void 0 && state.skipUntil > now;
+    const state2 = this.failureTracking.get(this.getAccountKey(account));
+    return state2 !== void 0 && state2.skipUntil > now;
   }
   /**
    * Clear failure tracking for an account after a successful refresh.
@@ -11731,20 +11731,20 @@ var ProactiveRefreshQueue = class {
    */
   recordRefreshFailure(account, now) {
     const key = this.getAccountKey(account);
-    const state = this.failureTracking.get(key) ?? { consecutiveFailures: 0, skipUntil: 0 };
-    state.consecutiveFailures += 1;
-    if (state.consecutiveFailures >= MAX_CONSECUTIVE_REFRESH_FAILURES) {
-      const exponent = state.consecutiveFailures - MAX_CONSECUTIVE_REFRESH_FAILURES;
+    const state2 = this.failureTracking.get(key) ?? { consecutiveFailures: 0, skipUntil: 0 };
+    state2.consecutiveFailures += 1;
+    if (state2.consecutiveFailures >= MAX_CONSECUTIVE_REFRESH_FAILURES) {
+      const exponent = state2.consecutiveFailures - MAX_CONSECUTIVE_REFRESH_FAILURES;
       const backoffMs = Math.min(REFRESH_BACKOFF_MAX_MS, REFRESH_BACKOFF_BASE_MS * 2 ** exponent);
-      state.skipUntil = now + backoffMs;
+      state2.skipUntil = now + backoffMs;
       log9.warn("Account entering proactive-refresh backoff", {
         accountIndex: account.index,
         email: account.email ?? "unknown",
-        consecutiveFailures: state.consecutiveFailures,
+        consecutiveFailures: state2.consecutiveFailures,
         backoffMinutes: Math.round(backoffMs / 6e4)
       });
     }
-    this.failureTracking.set(key, state);
+    this.failureTracking.set(key, state2);
   }
   /**
    * Perform a single refresh check iteration.
@@ -13185,11 +13185,11 @@ function getStateFromAuthorizationUrl(authorizationUrl) {
 }
 function extractOAuthCallbackParams(url) {
   const code = url.searchParams.get("code");
-  const state = url.searchParams.get("state");
-  if (!code || !state) {
+  const state2 = url.searchParams.get("state");
+  if (!code || !state2) {
     return null;
   }
-  return { code, state };
+  return { code, state: state2 };
 }
 function parseOAuthCallbackInput(value, fallbackState) {
   const trimmed = value.trim();
@@ -13199,14 +13199,14 @@ function parseOAuthCallbackInput(value, fallbackState) {
   try {
     const url = new URL(trimmed);
     const code = url.searchParams.get("code");
-    const state = url.searchParams.get("state") ?? fallbackState;
+    const state2 = url.searchParams.get("state") ?? fallbackState;
     if (!code) {
       return { error: "Missing code in callback URL" };
     }
-    if (!state) {
+    if (!state2) {
       return { error: "Missing state in callback URL" };
     }
-    return { code, state };
+    return { code, state: state2 };
   } catch {
     if (!fallbackState) {
       return { error: "Missing state. Paste the full redirect URL instead of only the code." };
@@ -13587,22 +13587,22 @@ function remapIndexSetAfterRemoval(set, removedIndex) {
 function remapAccountStateAfterRemoval(removedIndex) {
   const failureEntries = [...accountFailureState.entries()];
   accountFailureState.clear();
-  for (const [index, state] of failureEntries) {
+  for (const [index, state2] of failureEntries) {
     const next = remapIndexAfterRemoval(index, removedIndex);
-    if (next !== null) accountFailureState.set(next, state);
+    if (next !== null) accountFailureState.set(next, state2);
   }
   const rateEntries = [...rateLimitStateByAccountQuota.entries()];
   rateLimitStateByAccountQuota.clear();
-  for (const [key, state] of rateEntries) {
+  for (const [key, state2] of rateEntries) {
     const sep = key.indexOf(":");
     const index = Number(key.slice(0, sep));
     const quotaKey = key.slice(sep + 1);
     if (sep < 0 || Number.isNaN(index)) {
-      rateLimitStateByAccountQuota.set(key, state);
+      rateLimitStateByAccountQuota.set(key, state2);
       continue;
     }
     const next = remapIndexAfterRemoval(index, removedIndex);
-    if (next !== null) rateLimitStateByAccountQuota.set(`${next}:${quotaKey}`, state);
+    if (next !== null) rateLimitStateByAccountQuota.set(`${next}:${quotaKey}`, state2);
   }
   getHealthTracker().remapAfterRemoval(removedIndex);
   getTokenTracker().remapAfterRemoval(removedIndex);
@@ -15688,7 +15688,9 @@ function resolveHeaderRoutingDecision(urlString) {
 }
 
 // src/v2/runtime.ts
-import { statSync as statSync3 } from "node:fs";
+import { readdirSync as readdirSync3, statSync as statSync3 } from "node:fs";
+import { dirname as dirname5, join as join12 } from "node:path";
+import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/v2/credentials.ts
 import { createHash as createHash3 } from "node:crypto";
@@ -16165,11 +16167,11 @@ async function accountOptions() {
   if (!storage) return [];
   const now = Date.now();
   const options = storage.accounts.map((account, index) => {
-    const state = accountState(account, now);
+    const state2 = accountState(account, now);
     const flags = [
       index === (storage.activeIndex ?? 0) ? "current" : "",
       account.enabled === false ? "disabled" : "",
-      state === "active" ? "" : state
+      state2 === "active" ? "" : state2
     ].filter(Boolean);
     return {
       value: String(index + 1),
@@ -16386,8 +16388,8 @@ function createOAuthMethod(deps) {
   const createAuthorization = deps.createAuthorization ?? authorizeAntigravity;
   const exchangeCode = deps.exchangeCode ?? exchangeAntigravity;
   const refreshToken = deps.refreshToken ?? refreshAccessToken;
-  async function completeLogin(code, state) {
-    const result = await exchangeCode(code, state);
+  async function completeLogin(code, state2) {
+    const result = await exchangeCode(code, state2);
     if (result.type !== "success") {
       throw new Error(result.error);
     }
@@ -17118,8 +17120,21 @@ var V2Runtime = class _V2Runtime {
   }
 };
 var RUNTIME_LINGER_MS = 1e4;
-var shared;
-var disposing;
+var state = globalThis[/* @__PURE__ */ Symbol.for(`opencode-antigravity-auth/v2-runtime/${readCodeStamp()}`)] ??= {};
+function readCodeStamp() {
+  try {
+    const file = fileURLToPath2(import.meta.url);
+    const root = file.endsWith(".ts") ? dirname5(dirname5(file)) : file;
+    return `${root}@${newestModificationTime(root)}`;
+  } catch {
+    return import.meta.url;
+  }
+}
+function newestModificationTime(path4) {
+  const stat = statSync3(path4);
+  if (!stat.isDirectory()) return stat.mtimeMs;
+  return Math.max(stat.mtimeMs, ...readdirSync3(path4).map((name) => newestModificationTime(join12(path4, name))));
+}
 function readConfigStamp(directory) {
   return [getUserConfigPath(), getProjectConfigPath(directory)].map((path4) => {
     try {
@@ -17130,21 +17145,21 @@ function readConfigStamp(directory) {
   }).join("|");
 }
 function retire(entry, runtime) {
-  if (shared === entry) shared = void 0;
+  if (state.shared === entry) state.shared = void 0;
   const shutdown = runtime.dispose().finally(() => {
-    if (disposing === shutdown) disposing = void 0;
+    if (state.disposing === shutdown) state.disposing = void 0;
   });
-  disposing = shutdown;
+  state.disposing = shutdown;
 }
 async function acquireRuntime(ctx) {
-  const lingering = shared?.linger;
-  if (shared && lingering && shared.configStamp !== readConfigStamp(shared.directory)) {
+  const lingering = state.shared?.linger;
+  if (state.shared && lingering && state.shared.configStamp !== readConfigStamp(state.shared.directory)) {
     clearTimeout(lingering.timer);
-    shared.linger = void 0;
-    retire(shared, lingering.runtime);
+    state.shared.linger = void 0;
+    retire(state.shared, lingering.runtime);
   }
-  await disposing;
-  const entry = shared ??= {
+  await state.disposing;
+  const entry = state.shared ??= {
     runtime: V2Runtime.create(ctx),
     refs: 0,
     directory: ctx.location.directory,
@@ -17160,7 +17175,7 @@ async function acquireRuntime(ctx) {
     runtime = await entry.runtime;
   } catch (error) {
     entry.refs -= 1;
-    if (shared === entry && entry.refs === 0) shared = void 0;
+    if (state.shared === entry && entry.refs === 0) state.shared = void 0;
     throw error;
   }
   runtime.attach(ctx);
@@ -17172,11 +17187,11 @@ async function acquireRuntime(ctx) {
       released = true;
       runtime.detach(ctx);
       entry.refs -= 1;
-      if (entry.refs !== 0 || shared !== entry) return;
+      if (entry.refs !== 0 || state.shared !== entry) return;
       void runtime.flush();
       const timer = setTimeout(() => {
         entry.linger = void 0;
-        if (entry.refs !== 0 || shared !== entry) return;
+        if (entry.refs !== 0 || state.shared !== entry) return;
         retire(entry, runtime);
       }, RUNTIME_LINGER_MS);
       timer.unref?.();

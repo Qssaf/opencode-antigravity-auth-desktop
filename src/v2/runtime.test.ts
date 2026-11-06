@@ -55,6 +55,20 @@ describe("acquireRuntime", () => {
     await second.release();
   });
 
+  it("shares the runtime with another instance of this module", async () => {
+    // OpenCode 2.x imports the plugin once per location; a query string gives
+    // vitest a second module instance the same way.
+    const secondInstance = "./runtime?location=2";
+    const other: typeof import("./runtime") = await import(/* @vite-ignore */ secondInstance);
+
+    const first = await acquireRuntime(fakeContext(configDir));
+    const second = await other.acquireRuntime(fakeContext(configDir));
+    expect(second.runtime).toBe(first.runtime);
+
+    await second.release();
+    await first.release();
+  });
+
   it("builds a new runtime when the config changed while the old one lingered", async () => {
     const dispose = vi.spyOn(V2Runtime.prototype, "dispose");
 
