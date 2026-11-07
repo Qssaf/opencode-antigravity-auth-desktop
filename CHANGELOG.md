@@ -52,6 +52,8 @@
 
 ### Fixed
 
+- **Disable, enable, remove and verify did nothing from `opencode auth login`** - The account picker is a multiselect: Enter submits only the accounts ticked with Space, so highlighting an account and pressing Enter sent none, the action reported "Pick at least one account", and OpenCode still closed with "Connected to Google". The picker now says "Space to tick, Enter to confirm" and refuses an empty answer, so the action always runs on the accounts you picked. Checked in OpenCode 2.2.5's own interactive prompt.
+
 - **A first rate limit no longer waits a minute** - In the default `cache_first` mode, a 429 without a `Retry-After` header made the plugin wait `default_retry_after_seconds` (60 s) before retrying the same account, and marked the account rate-limited first. It now retries after agy's 4 s.
 
 - **A cancelled request stops at once** - When a request was aborted (ESC, or the chat closed) mid-flight, the plugin still tried the two remaining Antigravity endpoints and counted the abort as a failure of the account. It now stops at the abort.

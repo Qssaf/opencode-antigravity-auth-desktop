@@ -142,6 +142,11 @@ describe("login menu", () => {
       { key: "action", op: "neq", value: "quota" },
     ]);
     expect(account?.options?.map((option) => option.label)).toContain("2. second@example.com");
+    // Enter on a highlighted account submitted none (Space ticks it), so the
+    // action did nothing: the picker must refuse an empty answer and say how.
+    expect(account?.required).toBe(true);
+    expect(account?.minItems).toBe(1);
+    expect(account?.title).toContain("Space");
   });
 
   it("defaults to adding an account when no action was answered", () => {

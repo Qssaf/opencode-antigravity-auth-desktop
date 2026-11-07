@@ -16030,7 +16030,12 @@ function buildLoginForm(accounts) {
       // Multiselect: OpenCode ends the login flow after one action, so picking
       // several accounts at once is the difference between one login and four.
       type: "multiselect",
-      title: "Which account(s)?",
+      // Enter alone submits nothing (Space ticks the highlighted account), and
+      // an empty pick made the action silently do nothing, so the picker says
+      // how and refuses an empty answer.
+      title: "Which account(s)? Space to tick, Enter to confirm",
+      required: true,
+      minItems: 1,
       options: accounts,
       // `when` is an AND of conditions, so "needs an account" is spelled out as
       // "not one of the actions that does not".
