@@ -32,6 +32,7 @@ OPENCODE_CONFIG_DIR=<scratch> opencode auth login google --method antigravity --
 - **`opencode service stop` after every change.** Plugins live in a background server that outlives the CLI; without this you are testing the previous build. `opencode plugin list` prints the resolved path of what is actually loaded.
 - `--answer` takes `key=value`, but a multiselect needs JSON: `--answer 'account=["2","3"]'`.
 - `OPENCODE_CONFIG_DIR` relocates both OpenCode's config and this plugin's account pool, so a scratch dir keeps tests off your real accounts.
+- `--answer` skips the prompts, so it cannot catch prompt bugs (an Enter on a multiselect submits nothing unless Space ticked an option). To drive the real interactive form: `script -qfc "stty cols 120 rows 40; opencode auth login google --standalone --method antigravity" out.txt` with keys piped in (`\033[B` down, space, `\r`), then render `out.txt` with pyte (`uv run --with pyte`). Without `stty` the pty has zero width and every character wraps.
 
 ## Architecture
 
