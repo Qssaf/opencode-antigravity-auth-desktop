@@ -12967,30 +12967,27 @@ async function verifyAccountAccess(account, client, providerId) {
     return { status: "error", message: "Could not refresh access token for this account." };
   }
   const projectId = parsed.managedProjectId ?? parsed.projectId ?? account.managedProjectId ?? account.projectId ?? ANTIGRAVITY_DEFAULT_PROJECT_ID;
-  const headers = {
-    "User-Agent": ANTIGRAVITY_CLI_USER_AGENT,
-    Authorization: `Bearer ${refreshedAuth.access}`,
-    "Content-Type": "application/json"
-  };
-  const requestBody = {
-    project: projectId,
-    model: "gemini-3-flash",
-    request: {
-      model: "gemini-3-flash",
-      contents: [{ role: "user", parts: [{ text: "ping" }] }],
-      generationConfig: { maxOutputTokens: 1, temperature: 0 }
-    }
-  };
+  const prepared = prepareAntigravityRequest(
+    "https://generativelanguage.googleapis.com/v1beta/models/antigravity-gemini-3.8-flash:streamGenerateContent?alt=sse",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: "ping" }] }],
+        generationConfig: { thinkingConfig: { thinkingLevel: "low", includeThoughts: false } }
+      })
+    },
+    refreshedAuth.access,
+    projectId,
+    ANTIGRAVITY_ENDPOINT,
+    "antigravity",
+    false,
+    { fingerprint: account.fingerprint }
+  );
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 2e4);
   let response;
   try {
-    response = await googleFetch(`${ANTIGRAVITY_ENDPOINT}/v1internal:streamGenerateContent?alt=sse`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(requestBody),
-      signal: controller.signal
-    });
+    response = await googleFetch(prepared.request, { ...prepared.init, signal: controller.signal });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       return { status: "error", message: "Verification check timed out." };

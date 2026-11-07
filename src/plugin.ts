@@ -5,7 +5,6 @@ import {
   ANTIGRAVITY_DEFAULT_PROJECT_ID,
   ANTIGRAVITY_ENDPOINT,
   ANTIGRAVITY_ENDPOINT_FALLBACKS,
-  ANTIGRAVITY_CLI_USER_AGENT,
   ANTIGRAVITY_PROVIDER_ID,
   type HeaderStyle,
 } from "./constants";
@@ -750,6 +749,7 @@ export async function verifyAccountAccess(
     email?: string;
     projectId?: string;
     managedProjectId?: string;
+    fingerprint?: import("./plugin/fingerprint").Fingerprint;
   },
   client: PluginClient,
   providerId: string,
@@ -791,33 +791,31 @@ export async function verifyAccountAccess(
     account.projectId ??
     ANTIGRAVITY_DEFAULT_PROJECT_ID;
 
-  const headers: Record<string, string> = {
-    "User-Agent": ANTIGRAVITY_CLI_USER_AGENT,
-    Authorization: `Bearer ${refreshedAuth.access}`,
-    "Content-Type": "application/json",
-  };
-
-  const requestBody = {
-    project: projectId,
-    model: "gemini-3-flash",
-    request: {
-      model: "gemini-3-flash",
-      contents: [{ role: "user", parts: [{ text: "ping" }] }],
-      generationConfig: { maxOutputTokens: 1, temperature: 0 },
+  // A small model call through the normal pipeline, so it goes out as the
+  // Antigravity CLI sends one (a verification block only shows on model calls).
+  const prepared = prepareAntigravityRequest(
+    "https://generativelanguage.googleapis.com/v1beta/models/antigravity-gemini-3.8-flash:streamGenerateContent?alt=sse",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        contents: [{ role: "user", parts: [{ text: "ping" }] }],
+        generationConfig: { thinkingConfig: { thinkingLevel: "low", includeThoughts: false } },
+      }),
     },
-  };
+    refreshedAuth.access,
+    projectId,
+    ANTIGRAVITY_ENDPOINT,
+    "antigravity",
+    false,
+    { fingerprint: account.fingerprint },
+  );
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 20000);
 
   let response: Response;
   try {
-    response = await googleFetch(`${ANTIGRAVITY_ENDPOINT}/v1internal:streamGenerateContent?alt=sse`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(requestBody),
-      signal: controller.signal,
-    });
+    response = await googleFetch(prepared.request, { ...prepared.init, signal: controller.signal });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       return { status: "error", message: "Verification check timed out." };

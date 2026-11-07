@@ -244,9 +244,17 @@ describe("account verification probe", () => {
       expect(url.toString()).toContain("daily-cloudcode-pa.googleapis.com");
       const headers = new Headers(init?.headers);
       expect(headers.get("x-goog-user-project")).toBeNull();
-      expect(JSON.parse(String(init?.body))).toMatchObject({
+      const body = JSON.parse(String(init?.body));
+      expect(body).toMatchObject({
         project: "managed-project",
+        // A model call laid out as the Antigravity CLI sends it, on a model Antigravity serves.
+        model: "gemini-3.8-flash-low",
+        userAgent: "antigravity",
+        requestType: "agent",
       });
+      expect(body.requestId).toMatch(/^agent\//);
+      expect(body.request.sessionId).toMatch(/^-?\d+$/);
+      expect(body.request.generationConfig).not.toHaveProperty("temperature");
     } finally {
       fetchMock.mockRestore();
     }
