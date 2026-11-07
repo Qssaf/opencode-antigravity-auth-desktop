@@ -2310,6 +2310,8 @@ export function prepareAntigravityRequest(
     // "antigravity/2.0.6 win32/x64" are rejected with 404 "Requested entity
     // was not found" on those models.
     headers.set("User-Agent", ANTIGRAVITY_CLI_USER_AGENT);
+    // agy sends no Accept header; OpenCode adds `Accept: */*`.
+    headers.delete("Accept");
     headers.delete("X-Goog-Api-Client");
     headers.delete("Client-Metadata");
   }

@@ -8969,6 +8969,7 @@ ${hint}`;
   }
   if (headerStyle === "antigravity") {
     headers.set("User-Agent", ANTIGRAVITY_CLI_USER_AGENT);
+    headers.delete("Accept");
     headers.delete("X-Goog-Api-Client");
     headers.delete("Client-Metadata");
   }

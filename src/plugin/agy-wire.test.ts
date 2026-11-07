@@ -63,6 +63,11 @@ describe("Antigravity CLI wire format", () => {
     expect(headers.has("accept")).toBe(false);
   });
 
+  it("drops the Accept header OpenCode adds", () => {
+    const { headers } = send("ses_accept", 1, generateFingerprint(), { accept: "text/event-stream" });
+    expect(headers.has("accept")).toBe(false);
+  });
+
   it("keeps a chat's ids and counts its requests and messages", () => {
     const fingerprint = generateFingerprint();
     const first = send("ses_counting", 1, fingerprint).body;

@@ -766,7 +766,8 @@ it("removes API key headers", () => {
       headers.forEach((_value, name) => names.push(name));
       expect(names.filter((name) => /opencode|session|^b3$|traceparent/.test(name))).toEqual([]);
       expect(headers.get("content-type")).toBe("application/json");
-      expect(headers.get("accept")).toBe("text/event-stream");
+      // The Antigravity CLI sends no Accept header.
+      expect(headers.has("accept")).toBe(false);
       expect(headers.get("authorization")).toBe(`Bearer ${mockAccessToken}`);
     });
 
