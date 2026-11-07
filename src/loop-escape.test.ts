@@ -17,25 +17,11 @@ vi.mock("@opencode-ai/plugin", () => ({
 }));
 
 const { loopEscapeTestHooks } = await import("./plugin");
-const { ANTIGRAVITY_ENDPOINT_FALLBACKS } = await import("./constants");
 
 const hooks = loopEscapeTestHooks;
 
 beforeEach(() => {
   hooks.resetAllInternalState();
-});
-
-describe("fix 1: capacity-retry loop escape decision (hasUsableEndpointAfterIndex)", () => {
-
-  it("antigravity still tries later endpoints, but switches after the last one", () => {
-    for (let i = 0; i < ANTIGRAVITY_ENDPOINT_FALLBACKS.length - 1; i++) {
-      expect(hooks.hasUsableEndpointAfterIndex(i)).toBe(true);
-    }
-    // After the final endpoint there is nothing left -> switch account.
-    expect(
-      hooks.hasUsableEndpointAfterIndex(ANTIGRAVITY_ENDPOINT_FALLBACKS.length - 1),
-    ).toBe(false);
-  });
 });
 
 describe("fix 2: warmup retry cap actually engages", () => {

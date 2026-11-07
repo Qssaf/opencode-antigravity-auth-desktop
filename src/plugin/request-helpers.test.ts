@@ -1,4 +1,3 @@
-import { gunzipSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
@@ -28,7 +27,7 @@ import {
   getThinkingText,
   peekSseForContent,
   fetchStreamWithHedge,
-  withGzipBody,
+  readHostSessionKey,
 } from "./request-helpers";
 import { deduplicateThinkingText, createThoughtBuffer } from "./core/streaming/transformer";
 
@@ -2329,21 +2328,11 @@ describe("fetchStreamWithHedge", () => {
   });
 });
 
-describe("withGzipBody", () => {
-  it("sends the body gzipped and keeps the other request options", async () => {
-    const original: RequestInit = {
-      method: "POST",
-      headers: new Headers({ "Content-Type": "application/json" }),
-      body: "{\"a\":1}",
-    };
-    const init = withGzipBody(original, "{\"a\":1}");
-    const headers = new Headers(init.headers);
-    expect(headers.get("content-encoding")).toBe("gzip");
-    expect(headers.get("content-type")).toBe("application/json");
-    expect(init.method).toBe("POST");
-    expect(gunzipSync(init.body as Uint8Array).toString("utf8")).toBe("{\"a\":1}");
-    // The caller's init is left as it was.
-    expect(new Headers(original.headers).get("content-encoding")).toBeNull();
-    expect(original.body).toBe("{\"a\":1}");
+describe("readHostSessionKey", () => {
+  it("reads OpenCode's chat id from the request headers", () => {
+    expect(readHostSessionKey("https://x", { headers: { "x-opencode-session": "ses_1" } })).toBe("ses_1");
+    expect(readHostSessionKey("https://x", { headers: new Headers({ "x-session-affinity": "ses_2" }) })).toBe("ses_2");
+    expect(readHostSessionKey(new Request("https://x", { headers: { "x-opencode-session": "ses_3" } }))).toBe("ses_3");
+    expect(readHostSessionKey("https://x", { headers: { "content-type": "application/json" } })).toBeUndefined();
   });
 });

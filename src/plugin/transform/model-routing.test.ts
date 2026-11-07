@@ -138,7 +138,7 @@ describe("prepareAntigravityRequest wire model", () => {
     (model) => {
       const { body, thinking } = send(model, { includeThoughts: true, thinkingLevel: "medium" });
       expect(body.model).toBe("gemini-3.8-flash-medium");
-      expect(thinking).toMatchObject({ thinkingLevel: "medium" });
+      expect(thinking).toMatchObject({ thinkingLevel: "MEDIUM" });
     },
   );
 
@@ -161,7 +161,7 @@ describe("prepareAntigravityRequest wire model", () => {
       it.each(LEVELS)(`sends ${model} with variant %s to Antigravity as %s`, (level, backend, sentLevel) => {
         const { body, thinking } = send(model, level ? { includeThoughts: true, thinkingLevel: level } : undefined);
         expect(body.model).toBe(backend);
-        expect(thinking).toMatchObject({ thinkingLevel: sentLevel });
+        expect(thinking).toMatchObject({ thinkingLevel: sentLevel.toUpperCase() });
       });
     }
 
@@ -185,15 +185,15 @@ describe("prepareAntigravityRequest wire model", () => {
       level ? { includeThoughts: true, thinkingLevel: level } : undefined,
     );
     expect(body.model).toBe(backend);
-    expect(thinking).toMatchObject({ thinkingLevel: sentLevel });
+    expect(thinking).toMatchObject({ thinkingLevel: sentLevel.toUpperCase() });
     // Gemini 3+ handling (thinkingLevel, thought signatures) applies to Argon.
     expect(thinking.thinkingBudget).toBeUndefined();
     expect(result.effectiveModel).toBe(backend);
   });
 
   it("sends minimal as low where the backend rejects minimal", () => {
-    expect(send("gemini-3.8-flash", { includeThoughts: true, thinkingLevel: "minimal" }).thinking).toMatchObject({ thinkingLevel: "low" });
-    expect(send("antigravity-gemini-4-argon", { includeThoughts: true, thinkingLevel: "minimal" }).thinking).toMatchObject({ thinkingLevel: "low" });
+    expect(send("gemini-3.8-flash", { includeThoughts: true, thinkingLevel: "minimal" }).thinking).toMatchObject({ thinkingLevel: "LOW" });
+    expect(send("antigravity-gemini-4-argon", { includeThoughts: true, thinkingLevel: "minimal" }).thinking).toMatchObject({ thinkingLevel: "LOW" });
   });
 
   it("never sends a retired or renamed backend id for any advertised model and variant", () => {

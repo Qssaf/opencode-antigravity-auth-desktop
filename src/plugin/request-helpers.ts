@@ -1,8 +1,5 @@
-import { gzipSync } from "node:zlib";
-
 import { getKeepThinking } from "./config";
 import { createLogger } from "./logger";
-import { cacheSignature } from "./cache";
 import {
   EMPTY_SCHEMA_PLACEHOLDER_NAME,
   EMPTY_SCHEMA_PLACEHOLDER_DESCRIPTION,
@@ -2046,24 +2043,27 @@ type HedgeOutcome = { response: Response; hasContent: boolean } | { error: unkno
 
 /**
  * Sends a streaming request and, when no content has arrived after
- * `hedgeAfterMs`, sends it once more. The first answer with content wins and
- * the other request is cancelled. When neither has content (an error status,
- * an empty stream or a network error), the original request's outcome is
- * returned, so the caller handles it as if the repeat had never been sent.
+ * `hedgeAfterMs`, sends it once more with `sendRepeat` (default: `send`). The
+ * first answer with content wins and the other request is cancelled. When
+ * neither has content (an error status, an empty stream or a network error),
+ * the original request's outcome is returned, so the caller handles it as if
+ * the repeat had never been sent.
  *
- * `send` is called once per attempt, so the request body must be re-sendable.
- * 0 sends the request once.
+ * Each sender is called once per attempt, so the request body must be
+ * re-sendable. 0 sends the request once.
  */
 export async function fetchStreamWithHedge(
   send: (signal: AbortSignal) => Promise<Response>,
   hedgeAfterMs: number,
   signal?: AbortSignal | null,
   onRepeat?: (event: "sent" | "won") => void,
+  sendRepeat: (signal: AbortSignal) => Promise<Response> = send,
 ): Promise<Response> {
-  const attempt = () => {
+  const attempt = (sender = send) => {
     const controller = new AbortController();
     const linked = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
-    const outcome: Promise<HedgeOutcome> = send(linked)
+    const outcome: Promise<HedgeOutcome> = Promise.resolve()
+      .then(() => sender(linked))
       .then(async (response) => {
         if (!response.ok) return { response, hasContent: false };
         const peeked = await peekSseForContent(response);
@@ -2094,7 +2094,7 @@ export async function fetchStreamWithHedge(
   if (early || signal?.aborted) return unwrap(early ?? (await original.outcome));
 
   onRepeat?.("sent");
-  const repeat = attempt();
+  const repeat = attempt(sendRepeat);
   // Take the attempts as they settle, one at a time, so a tie is decided once.
   const pending = new Set([original, repeat]);
   while (pending.size > 0) {
@@ -2112,15 +2112,17 @@ export async function fetchStreamWithHedge(
 }
 
 /**
- * Returns `init` sending `body` gzip-compressed. Antigravity's endpoints accept
- * `Content-Encoding: gzip`, and a long session's request body (several hundred
- * KB of JSON) shrinks about 4x, which saves up to half a second of upload per
- * request. Level 3 costs ~10ms for 1MB; higher levels barely shrink it more.
+ * OpenCode's chat id, from the header OpenCode 2.x adds to every model request
+ * (removed again by `stripHostClientHeaders` before the request goes out).
  */
-export function withGzipBody(init: RequestInit, body: string): RequestInit {
-  const headers = new Headers(init.headers);
-  headers.set("Content-Encoding", "gzip");
-  return { ...init, headers, body: gzipSync(body, { level: 3 }) };
+export function readHostSessionKey(input: unknown, init?: RequestInit): string | undefined {
+  const fromInit = init?.headers ? new Headers(init.headers) : undefined;
+  const fromInput = input instanceof Request ? input.headers : undefined;
+  for (const headers of [fromInit, fromInput]) {
+    const value = headers?.get("x-opencode-session") ?? headers?.get("x-session-affinity");
+    if (value?.trim()) return value.trim();
+  }
+  return undefined;
 }
 
 // ============================================================================

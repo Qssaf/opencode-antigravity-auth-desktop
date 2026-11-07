@@ -157,13 +157,12 @@ Tool schemas are cleaned via allowlist. Unsupported fields (`const`, `$ref`, `$d
 Accounts rotate on rate limits. Every request uses the Antigravity quota (the Gemini CLI quota is deprecated). Fingerprints are per-account and regenerated on capacity exhaustion.
 
 ### 6. Fingerprint System
-Per-account device fingerprints stored in `antigravity-accounts.json`. Each fingerprint includes deviceId, sessionToken, userAgent, and a reduced clientMetadata (ideType, platform, pluginType — no osVersion, arch, or sqmId). The only header composed is `User-Agent`, built by `buildFingerprintHeaders()` in `fingerprint.ts` and applied on the antigravity request path in `request.ts`. History tracked (max 5), restorable.
+Per-account device fingerprints stored in `antigravity-accounts.json`. Each fingerprint includes deviceId, sessionToken, userAgent, and a reduced clientMetadata (ideType, platform, pluginType — no osVersion, arch, or sqmId). No fingerprint header is sent: the antigravity request path in `request.ts` sets the fixed CLI `User-Agent` (`ANTIGRAVITY_CLI_USER_AGENT`, agy 1.5.3's, used on every Antigravity backend request), because the backend gates newer models on it. `buildFingerprintHeaders()` has no caller in the request path. History tracked (max 5), restorable.
 
 ## Dependencies
 
 - `zod ^4` — schema validation (NOT zod v3)
 - `@opencode-ai/plugin` — OpenCode plugin interface
-- `@openauthjs/openauth` — OAuth client
 - `proper-lockfile` — file locking for concurrent access
 - `xdg-basedir` — XDG directory resolution
 

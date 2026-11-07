@@ -113,7 +113,7 @@ describe("login menu", () => {
   it("collapses to a plain sign-in when there is nothing to manage", () => {
     const form = buildLoginForm([]);
 
-    expect(form.map((field) => field.key)).toEqual(["noBrowser", "projectId"]);
+    expect(form.map((field) => field.key)).toEqual(["projectId"]);
     expect(form.every((field) => field.hidden)).toBe(true);
   });
 

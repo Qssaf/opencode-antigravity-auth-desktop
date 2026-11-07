@@ -1,13 +1,16 @@
 import { exec } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { tool } from "@opencode-ai/plugin";
 import {
   ANTIGRAVITY_DEFAULT_PROJECT_ID,
   ANTIGRAVITY_ENDPOINT,
   ANTIGRAVITY_ENDPOINT_FALLBACKS,
+  ANTIGRAVITY_CLI_USER_AGENT,
   ANTIGRAVITY_PROVIDER_ID,
-  getAntigravityHeaders,
   type HeaderStyle,
 } from "./constants";
+import { googleFetch } from "./antigravity/google-http";
+import { agyRetryDelayMs } from "./plugin/agy-wire";
 import { authorizeAntigravity, exchangeAntigravity } from "./antigravity/oauth";
 import type { AntigravityTokenExchangeResult } from "./antigravity/oauth";
 import { accessTokenExpired, isOAuthAuth, parseRefreshParts, formatRefreshParts } from "./plugin/auth";
@@ -49,11 +52,10 @@ import {
   createSyntheticErrorResponse,
   peekSseForContent,
   fetchStreamWithHedge,
-  withGzipBody,
+  readHostSessionKey,
 } from "./plugin/request-helpers";
 import { EmptyResponseError } from "./plugin/errors";
 import { AntigravityTokenRefreshError, isRevokedRefreshToken, refreshAccessToken } from "./plugin/token";
-import { startOAuthListener, type OAuthListener } from "./plugin/server";
 import { clearAccounts, hashRefreshToken, loadAccounts, removeAccountFromStorage, saveAccounts, saveAccountsReplace } from "./plugin/storage";
 import { AccountManager, type ModelFamily, parseRateLimitReason, calculateBackoffMs, computeSoftQuotaCacheTtlMs } from "./plugin/accounts";
 import { createAutoUpdateCheckerHook } from "./hooks/auto-update-checker";
@@ -64,7 +66,6 @@ import { initDiskSignatureCache, shutdownDiskSignatureCache } from "./plugin/cac
 import { createProactiveRefreshQueue, type ProactiveRefreshQueue } from "./plugin/refresh-queue";
 import { initLogger, createLogger } from "./plugin/logger";
 import { initHealthTracker, getHealthTracker, initTokenTracker, getTokenTracker } from "./plugin/rotation";
-import { initAntigravityVersion } from "./plugin/version";
 import { executeSearch } from "./plugin/search";
 import {
   createAntigravityOnlyModelErrorResponse,
@@ -526,34 +527,6 @@ function isWSL(): boolean {
   }
 }
 
-function isWSL2(): boolean {
-  if (!isWSL()) return false;
-  try {
-    const { readFileSync } = require("node:fs");
-    const version = readFileSync("/proc/version", "utf8").toLowerCase();
-    return version.includes("wsl2") || version.includes("microsoft-standard");
-  } catch {
-    return false;
-  }
-}
-
-function isRemoteEnvironment(): boolean {
-  if (process.env.SSH_CLIENT || process.env.SSH_TTY || process.env.SSH_CONNECTION) {
-    return true;
-  }
-  if (process.env.REMOTE_CONTAINERS || process.env.CODESPACES) {
-    return true;
-  }
-  if (process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY && !isWSL()) {
-    return true;
-  }
-  return false;
-}
-
-function shouldSkipLocalServer(): boolean {
-  return isWSL2() || isRemoteEnvironment();
-}
-
 async function openBrowser(url: string): Promise<boolean> {
   try {
     if (process.platform === "darwin") {
@@ -819,7 +792,7 @@ export async function verifyAccountAccess(
     ANTIGRAVITY_DEFAULT_PROJECT_ID;
 
   const headers: Record<string, string> = {
-    ...getAntigravityHeaders(),
+    "User-Agent": ANTIGRAVITY_CLI_USER_AGENT,
     Authorization: `Bearer ${refreshedAuth.access}`,
     "Content-Type": "application/json",
   };
@@ -839,7 +812,7 @@ export async function verifyAccountAccess(
 
   let response: Response;
   try {
-    response = await fetch(`${ANTIGRAVITY_ENDPOINT}/v1internal:streamGenerateContent?alt=sse`, {
+    response = await googleFetch(`${ANTIGRAVITY_ENDPOINT}/v1internal:streamGenerateContent?alt=sse`, {
       method: "POST",
       headers,
       body: JSON.stringify(requestBody),
@@ -1028,15 +1001,6 @@ function getStateFromAuthorizationUrl(authorizationUrl: string): string {
   }
 }
 
-function extractOAuthCallbackParams(url: URL): OAuthCallbackParams | null {
-  const code = url.searchParams.get("code");
-  const state = url.searchParams.get("state");
-  if (!code || !state) {
-    return null;
-  }
-  return { code, state };
-}
-
 function parseOAuthCallbackInput(
   value: string,
   fallbackState: string,
@@ -1072,12 +1036,10 @@ async function promptManualOAuthInput(
   fallbackState: string,
 ): Promise<AntigravityTokenExchangeResult> {
   console.log("1. Open the URL above in your browser and complete Google sign-in.");
-  console.log("2. After approving, copy the full redirected localhost URL from the address bar.");
+  console.log("2. Antigravity's page then shows an authorization code: copy it.");
   console.log("3. Paste it back here.\n");
 
-  const callbackInput = await promptOAuthCallbackValue(
-    "Paste the redirect URL (or just the code) here: ",
-  );
+  const callbackInput = await promptOAuthCallbackValue("Paste the authorization code here: ");
   const params = parseOAuthCallbackInput(callbackInput, fallbackState);
   if ("error" in params) {
     return { type: "failed", error: params.error };
@@ -1472,8 +1434,6 @@ function createSoftQuotaBlockedResponse(input: {
   return createSyntheticErrorResponse(errorMessage, input.requestedModel, input.family);
 }
 
-// Progressive rate limit retry delays
-const FIRST_RETRY_DELAY_MS = 1000;      // 1s - first 429 quick retry on same account
 // How long an account sits out after an unconfirmed `invalid_grant` before the
 // next request re-checks it (and, if Google says invalid_grant again, drops it).
 const INVALID_GRANT_RECHECK_COOLDOWN_MS = 15_000;
@@ -1559,16 +1519,6 @@ function resetRateLimitState(accountIndex: number, quotaKey: string): void {
 
 function headerStyleToQuotaKey(family: ModelFamily): string {
   return family === "claude" ? "claude" : "gemini-antigravity";
-}
-
-/**
- * Whether an endpoint follows `index` in ANTIGRAVITY_ENDPOINT_FALLBACKS. Used to
- * decide, after capacity retries are exhausted on the current endpoint, whether
- * trying the next endpoint can make progress or whether we must switch accounts
- * instead.
- */
-function hasUsableEndpointAfterIndex(index: number): boolean {
-  return index < ANTIGRAVITY_ENDPOINT_FALLBACKS.length - 1
 }
 
 // Track consecutive non-429 failures per account to prevent infinite loops
@@ -1668,7 +1618,6 @@ function remapAccountStateAfterRemoval(removedIndex: number): void {
  * scattering `export` across internal helpers.
  */
 export const loopEscapeTestHooks = {
-  hasUsableEndpointAfterIndex,
   remapIndexAfterRemoval,
   remapIndexSetAfterRemoval,
   remapAccountStateAfterRemoval,
@@ -1768,9 +1717,6 @@ export const createAntigravityRuntime = (providerId: string) => async (
   
   // Initialize structured logger for TUI integration
   initLogger(client);
-  
-  // Fetch latest Antigravity version from remote API (non-blocking, falls back to hardcoded)
-  await initAntigravityVersion();
   
   // Initialize health tracker for hybrid strategy
   if (config.health_score) {
@@ -1882,13 +1828,18 @@ export const createAntigravityRuntime = (providerId: string) => async (
     args: {
       query: tool.schema.string().describe("The search query or question to answer using web search"),
       urls: tool.schema.array(tool.schema.string()).optional().describe("List of specific URLs to fetch and analyze. IMPORTANT: Always extract and include any URLs mentioned by the user in their query here."),
-      thinking: tool.schema.boolean().optional().default(true).describe("Enable deep thinking for more thorough analysis (default: true)"),
     },
     async execute(args, ctx) {
       log.debug("Google Search tool called", { query: args.query, urlCount: args.urls?.length ?? 0 });
 
-      // Get current auth context
-      const auth = cachedGetAuth ? await cachedGetAuth() : null;
+      // The search goes out on the account the chat's model calls use, so one
+      // chat never speaks from two accounts; then the account in use, then
+      // OpenCode's own credential.
+      const manager = activeLoaderAccountManager;
+      const account = manager
+        ? (ctx.sessionID ? manager.accountForSession(ctx.sessionID) : null) ?? manager.getCurrentAccountForFamily("gemini")
+        : null;
+      const auth = account && manager ? manager.toAuthDetails(account) : cachedGetAuth ? await cachedGetAuth() : null;
       if (!auth || !isOAuthAuth(auth)) {
         return "Error: Not authenticated with Antigravity. Please run `opencode auth login` to authenticate.";
       }
@@ -1902,6 +1853,7 @@ export const createAntigravityRuntime = (providerId: string) => async (
       if (!accessToken || accessTokenExpired(auth)) {
         try {
           const refreshed = await refreshAccessToken(auth, client, providerId);
+          if (refreshed && account && manager) manager.updateFromAuth(account, refreshed);
           accessToken = refreshed?.access;
         } catch (error) {
           return `Error: Failed to refresh access token: ${error instanceof Error ? error.message : String(error)}`;
@@ -1916,7 +1868,6 @@ export const createAntigravityRuntime = (providerId: string) => async (
         {
           query: args.query,
           urls: args.urls,
-          thinking: args.thinking,
         },
         accessToken,
         projectId,
@@ -2071,12 +2022,7 @@ export const createAntigravityRuntime = (providerId: string) => async (
         };
       }
 
-      // Validate that stored accounts are in sync with OpenCode's auth
-      // If OpenCode's refresh token doesn't match any stored account, clear stale storage
-      const authParts = parseRefreshParts(auth.refresh);
-      const storedAccounts = await loadAccounts();
-      
-      // Note: AccountManager now ensures the current auth is always included in accounts
+      // AccountManager ensures the current auth is always included in accounts.
 
       // A repeated loader run (credentials changed) replaces the previous
       // generation: stop its refresh timer and persist its pending state.
@@ -2175,6 +2121,10 @@ export const createAntigravityRuntime = (providerId: string) => async (
           const urlString = toUrlString(input);
           const family = getModelFamilyFromUrl(urlString);
           const model = extractModelFromUrl(urlString);
+          // OpenCode's chat id (stripped before the request goes out): keeps a chat on one account.
+          const sessionKey = readHostSessionKey(input, init);
+          // Every model call made for this one request after the first is a retry of it.
+          const pluginRequestId = randomUUID();
           const agySdkCredentials = getAgySdkCredentials(config, apiKeyAuth);
           const debugLines: string[] = [];
           const pushDebug = (line: string) => {
@@ -2269,12 +2219,6 @@ export const createAntigravityRuntime = (providerId: string) => async (
             }
           };
           
-          const hasOtherAccountWithAntigravity = (currentAccount: any): boolean => {
-            if (family !== "gemini") return false;
-            // Use AccountManager method which properly checks for disabled/cooling-down accounts
-            return accountManager.hasOtherAccountWithAntigravityAvailable(currentAccount.index, family, model);
-          };
-
           while (true) {
             // Check for abort at the start of each iteration
             checkAborted();
@@ -2343,6 +2287,7 @@ export const createAntigravityRuntime = (providerId: string) => async (
               config.soft_quota_threshold_percent,
               softQuotaCacheTtlMs,
               triedSwitchIndices,
+              sessionKey,
             );
 
             if (!account) {
@@ -2414,7 +2359,6 @@ export const createAntigravityRuntime = (providerId: string) => async (
                   });
                 }
                 
-                const waitSecValue = Math.max(1, Math.ceil(softQuotaWaitMs / 1000));
                 pushDebug(`all-over-soft-quota family=${family} accounts=${accountCount} waitMs=${softQuotaWaitMs}`);
                 
                 if (!softQuotaToastShown) {
@@ -2714,7 +2658,7 @@ export const createAntigravityRuntime = (providerId: string) => async (
 
               try {
                 pushDebug("thinking-warmup: start");
-                const warmupResponse = await fetch(warmupUrl, warmupInit);
+                const warmupResponse = await googleFetch(warmupUrl, warmupInit);
                 const transformed = await transformAntigravityResponse(
                   warmupResponse,
                   true,
@@ -2764,6 +2708,29 @@ export const createAntigravityRuntime = (providerId: string) => async (
             // Track capacity retries per endpoint to prevent infinite loops
             let capacityRetryCount = 0;
             let lastEndpointIndex = -1;
+
+            // Retries of this request on this account, the way agy retries a
+            // call Google answered 503 or 429: same request, same endpoint, its
+            // delays (see agyRetryDelayMs), never sooner than Google asked, and
+            // at most max_rate_limit_wait_seconds of waiting in all (0: no limit).
+            let agyRetries = 0;
+            let agyWaitedMs = 0;
+            const retryLikeAgy = async (status: number, serverAskedMs: number | null): Promise<boolean> => {
+              const delayMs = Math.max(agyRetryDelayMs(agyRetries), serverAskedMs ?? 0);
+              const maxWaitMs = (config.max_rate_limit_wait_seconds ?? 300) * 1000;
+              if (maxWaitMs > 0 && agyWaitedMs + delayMs > maxWaitMs) return false;
+              agyRetries += 1;
+              agyWaitedMs += delayMs;
+              pushDebug(`retrying on account ${account.index} after ${status} in ${delayMs}ms (retry ${agyRetries})`);
+              await showToast(
+                status === 429
+                  ? `Rate limited. Retrying in ${Math.ceil(delayMs / 1000)}s...`
+                  : `⏳ Server busy (${status}). Retrying in ${Math.ceil(delayMs / 1000)}s...`,
+                "warning",
+              );
+              await sleep(delayMs, abortSignal);
+              return true;
+            };
             
             for (let i = 0; i < ANTIGRAVITY_ENDPOINT_FALLBACKS.length; i++) {
               // Reset capacity retry counter when switching to a new endpoint
@@ -2787,6 +2754,7 @@ export const createAntigravityRuntime = (providerId: string) => async (
                     claudeToolHardening: config.claude_tool_hardening,
                     claudePromptAutoCaching: config.claude_prompt_auto_caching,
                     fingerprint: account.fingerprint,
+                    pluginRequestId,
                   },
                 );
 
@@ -2833,27 +2801,76 @@ export const createAntigravityRuntime = (providerId: string) => async (
                   tokenConsumed = getTokenTracker().consume(account.index);
                 }
 
-                // A string body is gzipped (Antigravity accepts it; a long session's
-                // JSON uploads ~4x faster) and can be sent twice, so a streamed
-                // request with no content after the hedge delay is repeated. Image
-                // generation is not: it can take that long, and repeats would spend
-                // image quota.
+                // Sent as the Antigravity CLI sends it: HTTP/2, body not compressed.
+                // A streamed request with no content after the hedge delay is
+                // repeated. Image generation is not: it can take that long, and
+                // repeats would spend image quota.
                 const requestBody = prepared.init.body;
-                const sendInit = typeof requestBody === "string" ? withGzipBody(prepared.init, requestBody) : prepared.init;
+                const sendInit = prepared.init;
                 const hedgeAfterMs = isImageGenerationModel(prepared.effectiveModel ?? "")
                   ? 0
                   : config.hedge_stalled_requests_after_seconds * 1000;
                 const hedgeLabel = debugContext?.id ?? "request";
-                let response = prepared.streaming && typeof requestBody === "string"
+                // A stalled request is sent once more on ANOTHER account, never twice
+                // on one: capacity is per account, and parallel duplicates from one
+                // account are traffic the Antigravity app never sends.
+                const hedgeAccount = hedgeAfterMs > 0
+                  ? accountManager.peekOtherAccountForFamily(
+                      family, model, headerStyle,
+                      config.soft_quota_threshold_percent, softQuotaCacheTtlMs,
+                      new Set([...triedSwitchIndices, account.index]),
+                    )
+                  : null;
+                let hedgeWon = false;
+                let response = prepared.streaming && typeof requestBody === "string" && hedgeAccount
                   ? await fetchStreamWithHedge(
-                      (signal) => fetch(prepared.request, { ...sendInit, signal }),
+                      (signal) => googleFetch(prepared.request, { ...sendInit, signal }),
                       hedgeAfterMs,
                       sendInit.signal,
-                      (event) => debugLogToFile(event === "sent"
-                        ? `[Hedge] ${hedgeLabel}: no content after ${hedgeAfterMs}ms, sending the request again`
-                        : `[Hedge] ${hedgeLabel}: the repeat answered first`),
+                      (event) => {
+                        if (event === "won") hedgeWon = true;
+                        debugLogToFile(event === "sent"
+                          ? `[Hedge] ${hedgeLabel}: no content after ${hedgeAfterMs}ms on account ${account.index}, sending it on account ${hedgeAccount.index}`
+                          : `[Hedge] ${hedgeLabel}: account ${hedgeAccount.index} answered first`);
+                      },
+                      async (signal) => {
+                        let hedgeAuth = accountManager.toAuthDetails(hedgeAccount);
+                        if (accessTokenExpired(hedgeAuth)) {
+                          const refreshed = await refreshAccessToken(hedgeAuth, client, providerId);
+                          if (!refreshed) throw new Error("Antigravity token refresh failed");
+                          accountManager.updateFromAuth(hedgeAccount, refreshed);
+                          hedgeAuth = refreshed;
+                        }
+                        const hedgeContext = await ensureProjectContext(hedgeAuth);
+                        // Built for that account: its token, project and session id.
+                        const repeat = await prepareAntigravityRequest(
+                          input,
+                          init,
+                          hedgeContext.auth.access ?? "",
+                          hedgeContext.effectiveProjectId,
+                          currentEndpoint,
+                          headerStyle,
+                          forceThinkingRecovery,
+                          {
+                            claudeToolHardening: config.claude_tool_hardening,
+                            claudePromptAutoCaching: config.claude_prompt_auto_caching,
+                            fingerprint: hedgeAccount.fingerprint,
+                            pluginRequestId,
+                          },
+                        );
+                        return googleFetch(repeat.request, { ...repeat.init, signal });
+                      },
                     )
-                  : await fetch(prepared.request, sendInit);
+                  : await googleFetch(prepared.request, sendInit);
+                if (hedgeWon && hedgeAccount) {
+                  // The stalled account rests (an account short of capacity stays short for
+                  // a while, and each new chat sent to it waits the full hedge delay); the
+                  // chat moves to the account that answered.
+                  accountManager.markRateLimitedWithReason(account, family, headerStyle, model, "MODEL_CAPACITY_EXHAUSTED", accountManager.stalledRestMs(account.index));
+                  accountManager.markAccountUsed(hedgeAccount.index);
+                  getHealthTracker().recordSuccess(hedgeAccount.index);
+                  if (sessionKey) accountManager.assignSessionAccount(sessionKey, hedgeAccount.index);
+                }
                 pushDebug(`status=${response.status} ${response.statusText}`);
 
 
@@ -2868,7 +2885,6 @@ export const createAntigravityRuntime = (providerId: string) => async (
                   }
 
                   const defaultRetryMs = (config.default_retry_after_seconds ?? 60) * 1000;
-                  const maxBackoffMs = (config.max_backoff_seconds ?? 60) * 1000;
                   const headerRetryMs = retryAfterMsFromResponse(response, defaultRetryMs);
                   const bodyInfo = await extractRetryInfoFromBody(response);
                   const serverRetryMs = bodyInfo.retryDelayMs ?? headerRetryMs;
@@ -2880,49 +2896,35 @@ export const createAntigravityRuntime = (providerId: string) => async (
                   // Goal: Wait and Retry SAME Account. DO NOT LOCK.
                   // We handle this FIRST to avoid calling getRateLimitBackoff() and polluting the global rate limit state for transient errors.
                   if (rateLimitReason === "MODEL_CAPACITY_EXHAUSTED" || rateLimitReason === "SERVER_ERROR") {
-                     // Retry the SAME account/endpoint a bounded number of times with
-                     // exponential backoff (1s → 2s → 4s → 8s max, ±10% jitter to avoid a
-                     // thundering herd). Only the retrying path toasts and sleeps — the
-                     // terminal (4th) failure must escape immediately, without a misleading
-                     // "retrying" toast or a wasted multi-second wait.
-                     if (capacityRetryCount < 3) {
-                       const baseDelayMs = 1000;
-                       const maxDelayMs = 8000;
-                       const exponentialDelay = Math.min(baseDelayMs * Math.pow(2, capacityRetryCount), maxDelayMs);
-                       const jitter = exponentialDelay * (0.9 + Math.random() * 0.2);
-                       const waitMs = Math.round(jitter);
-                       const waitSec = Math.round(waitMs / 1000);
-
-                       pushDebug(`Server busy (${rateLimitReason}) on account ${account.index}, exponential backoff ${waitMs}ms (attempt ${capacityRetryCount + 1})`);
-                       await showToast(
-                         `⏳ Server busy (${response.status}). Retrying in ${waitSec}s...`,
-                         "warning",
-                       );
-                       await sleep(waitMs, abortSignal);
-
-                       // Decrement i so the loop 'continue' retries the SAME endpoint index
-                       // (the for-loop's i++ brings it back to the current index).
+                     // Capacity is per account (one account can get 503 "No capacity
+                     // available" while another answers in 3s), so when another account
+                     // can take the request, move there now instead of retrying this one.
+                     if (
+                       rateLimitReason === "MODEL_CAPACITY_EXHAUSTED" &&
+                       accountManager.peekOtherAccountForFamily(
+                         family, model, headerStyle,
+                         config.soft_quota_threshold_percent, softQuotaCacheTtlMs,
+                         new Set([...triedSwitchIndices, account.index]),
+                       )
+                     ) {
+                       pushDebug(`No capacity on account ${account.index}; switching account`);
+                       accountManager.markRateLimitedWithReason(account, family, headerStyle, model, rateLimitReason, serverRetryMs);
+                       lastError = new Error(`Model capacity exhausted on account ${account.index}`);
+                       lastFailure = createFailureContext(response);
+                       shouldSwitchAccount = true;
+                       break;
+                     }
+                     // No other account can take it: retry here, as agy does.
+                     if (await retryLikeAgy(response.status, bodyInfo.retryDelayMs ?? null)) {
                        capacityRetryCount++;
+                       // The for-loop's i++ brings it back to this endpoint.
                        i -= 1;
                        continue;
                      }
 
-                     // Capacity retries exhausted for this endpoint.
-                     pushDebug(`Max capacity retries (3) exhausted for endpoint ${currentEndpoint}, regenerating fingerprint...`);
-                     // Regenerate fingerprint to get a fresh device identity before trying elsewhere.
-                     const newFingerprint = accountManager.regenerateAccountFingerprint(account.index);
-                     if (newFingerprint) {
-                       pushDebug(`Fingerprint regenerated for account ${account.index}`);
-                     }
-
-                     // Prefer the next usable endpoint on the SAME header style (existing behavior).
-                     if (hasUsableEndpointAfterIndex(i)) {
-                       continue;
-                     }
-
-                     // No further endpoint. Falling through to the for-loop's natural exit
-                     // would let `while (!shouldSwitchAccount)` re-enter, reset
-                     // capacityRetryCount to 0, and spin this SAME account forever (the outer
+                     // Waited as long as allowed. Falling through to the for-loop's natural
+                     // exit would let `while (!shouldSwitchAccount)` re-enter, reset the
+                     // retry state, and spin this SAME account forever (the outer
                      // loopGuard/account-rotation is never reached). Mark the pool and give the
                      // SDK fallback a chance before excluding the account.
                      accountManager.markRateLimitedWithReason(account, family, headerStyle, model, rateLimitReason, serverRetryMs);
@@ -2947,7 +2949,7 @@ export const createAntigravityRuntime = (providerId: string) => async (
                      // Both quota pools exhausted and no SDK fallback — escape to the outer
                      // account-rotation loop (loopGuard + rotation apply there).
                      pushDebug(
-                       `No further usable endpoint or quota for headerStyle=${headerStyle} after capacity exhaustion; switching account`,
+                       `Gave up on account ${account.index} after ${capacityRetryCount} retries (${rateLimitReason}); switching account`,
                      );
                      lastError = new Error(
                        `Model capacity exhausted (${rateLimitReason}) on account ${account.index} after ${capacityRetryCount} retries`,
@@ -2962,7 +2964,7 @@ export const createAntigravityRuntime = (providerId: string) => async (
                   
                   // Only now do we call getRateLimitBackoff, which increments the global failure tracker
                   const quotaKey = headerStyleToQuotaKey(family);
-                  const { attempt, delayMs, isDuplicate } = getRateLimitBackoff(account.index, quotaKey, serverRetryMs);
+                  const { attempt, delayMs } = getRateLimitBackoff(account.index, quotaKey, serverRetryMs);
                   
                   // Calculate potential backoffs
                   const smartBackoffMs = calculateBackoffMs(rateLimitReason, account.consecutiveFailures ?? 0, serverRetryMs);
@@ -2994,39 +2996,23 @@ export const createAntigravityRuntime = (providerId: string) => async (
 
                   getHealthTracker().recordRateLimit(account.index);
 
-                  const accountLabel = account.email || `Account ${account.index + 1}`;
+                  const otherAccount = accountManager.peekOtherAccountForFamily(
+                    family, model, headerStyle,
+                    config.soft_quota_threshold_percent, softQuotaCacheTtlMs,
+                    new Set([...triedSwitchIndices, account.index]),
+                  );
 
-                  // Progressive retry for standard 429s: 1st 429 → switch now (if enabled) or retry same after 1s
-                  if (attempt === 1 && rateLimitReason !== "QUOTA_EXHAUSTED") {
-                    // CacheFirst mode: wait for same account if within threshold (preserves prompt cache)
-                    if (config.scheduling_mode === 'cache_first') {
-                      const maxCacheFirstWaitMs = config.max_cache_first_wait_seconds * 1000;
-                      // effectiveDelayMs is the backoff calculated for this account
-                      if (effectiveDelayMs <= maxCacheFirstWaitMs) {
-                        pushDebug(`cache_first: waiting ${effectiveDelayMs}ms for same account to recover`);
-                        await showToast(`⏳ Waiting ${Math.ceil(effectiveDelayMs / 1000)}s for same account (prompt cache preserved)...`, "info");
-                        accountManager.markRateLimitedWithReason(account, family, headerStyle, model, rateLimitReason, serverRetryMs);
-                        await sleep(effectiveDelayMs, abortSignal);
-                        // Retry same endpoint after wait
-                        i -= 1;
-                        continue;
-                      }
-                      // Wait time exceeds threshold, fall through to switch
-                      pushDebug(`cache_first: wait ${effectiveDelayMs}ms exceeds max ${maxCacheFirstWaitMs}ms, switching account`);
-                    }
-                    
-                    // Another account has its own quota, so there is nothing to wait for
-                    // before switching; the wait only helps a retry on this account.
-                    if (config.switch_on_first_rate_limit && accountCount > 1) {
-                      accountManager.markRateLimitedWithReason(account, family, headerStyle, model, rateLimitReason, serverRetryMs, config.failure_ttl_seconds * 1000);
-                      shouldSwitchAccount = true;
-                      break;
-                    }
-                    
-                    // Same endpoint retry for first RPM hit
-                    await showToast(`Rate limited. Quick retry in 1s...`, "warning");
-                    await sleep(FIRST_RETRY_DELAY_MS, abortSignal);
-                    i -= 1; 
+                  // A passing limit (not the quota): retry on this account, as agy does
+                  // (4 s, not the 60 s default), when nothing else can take the request,
+                  // and on the first hit when the prompt cache should stay (cache_first)
+                  // or switching is off. Before marking the account, so a retry that
+                  // succeeds leaves no lock behind.
+                  const retryHere =
+                    rateLimitReason !== "QUOTA_EXHAUSTED" &&
+                    (!otherAccount ||
+                      (attempt === 1 && (config.scheduling_mode === "cache_first" || !config.switch_on_first_rate_limit)));
+                  if (retryHere && await retryLikeAgy(response.status, bodyInfo.retryDelayMs ?? null)) {
+                    i -= 1;
                     continue;
                   }
 
@@ -3034,8 +3020,8 @@ export const createAntigravityRuntime = (providerId: string) => async (
 
                   accountManager.requestSaveToDisk();
 
-                  // For Gemini, move to another account that still has quota for this model.
-                  if (family === "gemini" && hasOtherAccountWithAntigravity(account)) {
+                  // Move to another account that still has quota for this model.
+                  if (otherAccount) {
                     pushDebug(`antigravity exhausted on account ${account.index}, but available on others. Switching account.`);
                     await showToast(`Rate limited again. Switching account...`, "warning");
                     shouldSwitchAccount = true;
@@ -3059,19 +3045,11 @@ export const createAntigravityRuntime = (providerId: string) => async (
                     return agySdkFallbackResponse;
                   }
 
-                  const quotaName = "Antigravity";
-
                   if (accountCount > 1) {
                     const quotaMsg = bodyInfo.quotaResetTime 
                       ? ` (quota resets ${bodyInfo.quotaResetTime})`
                       : ``;
                     await showToast(`Rate limited again. Switching account...${quotaMsg}`, "warning");
-                  } else {
-                    // Single account: exponential backoff (1s, 2s, 4s, 8s... max 60s)
-                    const expBackoffMs = Math.min(FIRST_RETRY_DELAY_MS * Math.pow(2, attempt - 1), 60000);
-                    const expBackoffFormatted = expBackoffMs >= 1000 ? `${Math.round(expBackoffMs / 1000)}s` : `${expBackoffMs}ms`;
-                    await showToast(`Rate limited. Retrying in ${expBackoffFormatted} (attempt ${attempt})...`, "warning");
-                    await sleep(expBackoffMs, abortSignal);
                   }
 
                   lastFailure = createFailureContext(response);
@@ -3213,13 +3191,18 @@ export const createAntigravityRuntime = (providerId: string) => async (
 
                 // Success or non-retryable error - return the response
                 if (response.ok) {
-                  account.consecutiveFailures = 0;
-                  getHealthTracker().recordSuccess(account.index);
-                  accountManager.markAccountUsed(account.index);
-                  
+                  // After a hedge win the answer came from hedgeAccount, credited
+                  // above; this account stalled and was just rested.
+                  if (!hedgeWon) {
+                    account.consecutiveFailures = 0;
+                    accountManager.clearStalls(account.index);
+                    getHealthTracker().recordSuccess(account.index);
+                    accountManager.markAccountUsed(account.index);
+                  }
+
                   void triggerAsyncQuotaRefreshForAccount(
                     accountManager,
-                    account.index,
+                    (hedgeWon && hedgeAccount ? hedgeAccount : account).index,
                     client,
                     providerId,
                     config.quota_refresh_interval_minutes,
@@ -3335,6 +3318,10 @@ export const createAntigravityRuntime = (providerId: string) => async (
                   getTokenTracker().refund(account.index);
                   tokenConsumed = false;
                 }
+
+                // The caller gave up (ESC, closed chat): no other endpoint or
+                // account can help, and the abort is not this account's failure.
+                checkAborted();
 
                 // Handle recoverable thinking errors - retry with forced recovery
                 if (error instanceof Error && error.message === "THINKING_RECOVERY_NEEDED") {
@@ -3456,7 +3443,6 @@ export const createAntigravityRuntime = (providerId: string) => async (
           if (inputs) {
             const accounts: Array<Extract<AntigravityTokenExchangeResult, { type: "success" }>> = [];
             const noBrowser = inputs.noBrowser === "true" || inputs["no-browser"] === "true";
-            const useManualMode = noBrowser || shouldSkipLocalServer();
 
             // Check for existing accounts and prompt user for login mode
             let startFresh = true;
@@ -3919,83 +3905,10 @@ export const createAntigravityRuntime = (providerId: string) => async (
 
                 console.log("\nOAuth URL:\n" + authorization.url + "\n");
 
-                if (useManualMode) {
-                  const browserOpened = await openBrowser(authorization.url);
-                  if (!browserOpened) {
-                    console.log("Could not open browser automatically.");
-                    console.log("Please open the URL above manually in your local browser.\n");
-                  }
-                  return promptManualOAuthInput(fallbackState);
+                if (!noBrowser && !isHeadless && !(await openBrowser(authorization.url))) {
+                  console.log("Could not open browser automatically.");
+                  console.log("Please open the URL above manually in your local browser.\n");
                 }
-
-                let listener: OAuthListener | null = null;
-                if (!isHeadless) {
-                  try {
-                    listener = await startOAuthListener();
-                  } catch {
-                    listener = null;
-                  }
-                }
-
-                if (!isHeadless) {
-                  await openBrowser(authorization.url);
-                }
-
-                if (listener) {
-                  try {
-                    const SOFT_TIMEOUT_MS = 30000;
-                    const callbackPromise = listener.waitForCallback();
-                    let softTimer: ReturnType<typeof setTimeout> | undefined;
-                    const timeoutPromise = new Promise<never>((_, reject) => {
-                      softTimer = setTimeout(() => reject(new Error("SOFT_TIMEOUT")), SOFT_TIMEOUT_MS);
-                    });
-
-                    let callbackUrl: URL;
-                    try {
-                      callbackUrl = await Promise.race([callbackPromise, timeoutPromise]);
-                    } catch (err) {
-                      if (err instanceof Error && err.message === "SOFT_TIMEOUT") {
-                        console.log("\n⏳ Automatic callback not received after 30 seconds.");
-                        console.log("You can paste the redirect URL manually.\n");
-                        console.log("OAuth URL (in case you need it again):");
-                        console.log(authorization.url + "\n");
-                        
-                        try {
-                          await listener.close();
-                        } catch {}
-                        
-                        return promptManualOAuthInput(fallbackState);
-                      }
-                      throw err;
-                    } finally {
-                      // A login that finishes early must not leave the timer holding the process.
-                      clearTimeout(softTimer);
-                    }
-
-                    const params = extractOAuthCallbackParams(callbackUrl);
-                    if (!params) {
-                      return { type: "failed", error: "Missing code or state in callback URL" };
-                    }
-
-                    return exchangeAntigravity(params.code, params.state);
-                  } catch (error) {
-                    if (error instanceof Error && error.message !== "SOFT_TIMEOUT") {
-                      return {
-                        type: "failed",
-                        error: error.message,
-                      };
-                    }
-                    return {
-                      type: "failed",
-                      error: error instanceof Error ? error.message : "Unknown error",
-                    };
-                  } finally {
-                    try {
-                      await listener.close();
-                    } catch {}
-                  }
-                }
-
                 return promptManualOAuthInput(fallbackState);
               })();
 
@@ -4133,106 +4046,17 @@ export const createAntigravityRuntime = (providerId: string) => async (
           const existingStorage = await loadAccounts();
           const existingCount = existingStorage?.accounts.length ?? 0;
 
-          const useManualFlow = isHeadless || shouldSkipLocalServer();
-
-          let listener: OAuthListener | null = null;
-          if (!useManualFlow) {
-            try {
-              listener = await startOAuthListener();
-            } catch {
-              listener = null;
-            }
-          }
-
           const authorization = await authorizeAntigravity(projectId);
           const fallbackState = getStateFromAuthorizationUrl(authorization.url);
 
-          if (!useManualFlow) {
-            const browserOpened = await openBrowser(authorization.url);
-            if (!browserOpened) {
-              listener?.close().catch(() => {});
-              listener = null;
-            }
-          }
-
-          if (listener) {
-            return {
-              url: authorization.url,
-              instructions:
-                "Complete sign-in in your browser. We'll automatically detect the redirect back to localhost.",
-              method: "auto",
-              callback: async (): Promise<AntigravityTokenExchangeResult> => {
-                const CALLBACK_TIMEOUT_MS = 30000;
-                try {
-                  const callbackPromise = listener.waitForCallback();
-                  let callbackTimer: ReturnType<typeof setTimeout> | undefined;
-                  const timeoutPromise = new Promise<never>((_, reject) => {
-                    callbackTimer = setTimeout(() => reject(new Error("CALLBACK_TIMEOUT")), CALLBACK_TIMEOUT_MS);
-                  });
-
-                  let callbackUrl: URL;
-                  try {
-                    callbackUrl = await Promise.race([callbackPromise, timeoutPromise]);
-                  } catch (err) {
-                    if (err instanceof Error && err.message === "CALLBACK_TIMEOUT") {
-                      return {
-                        type: "failed",
-                        error: "Callback timeout - please use CLI with --no-browser flag for manual input",
-                      };
-                    }
-                    throw err;
-                  } finally {
-                    clearTimeout(callbackTimer);
-                  }
-
-                  const params = extractOAuthCallbackParams(callbackUrl);
-                  if (!params) {
-                    return { type: "failed", error: "Missing code or state in callback URL" };
-                  }
-
-                  const result = await exchangeAntigravity(params.code, params.state);
-                  if (result.type === "success") {
-                    try {
-                      await persistAccountPool([result], false);
-                    } catch {
-                    }
-
-                    const newTotal = existingCount + 1;
-                    const toastMessage = existingCount > 0
-                      ? `Added account${result.email ? ` (${result.email})` : ""} - ${newTotal} total`
-                      : `Authenticated${result.email ? ` (${result.email})` : ""}`;
-
-                    try {
-                      await client.tui.showToast({
-                        body: {
-                          message: toastMessage,
-                          variant: "success",
-                        },
-                      });
-                    } catch {
-                    }
-                  }
-
-                  return result;
-                } catch (error) {
-                  return {
-                    type: "failed",
-                    error: error instanceof Error ? error.message : "Unknown error",
-                  };
-                } finally {
-                  try {
-                    await listener.close();
-                  } catch {
-                  }
-                }
-              },
-            };
+          if (!isHeadless) {
+            await openBrowser(authorization.url);
           }
 
           return {
             url: authorization.url,
             instructions:
-              "Visit the URL above, complete OAuth, then paste either the full redirect URL or the authorization code.",
+              "Visit the URL above and sign in with Google. Antigravity's page then shows an authorization code: paste it here.",
             method: "code",
             callback: async (codeInput: string): Promise<AntigravityTokenExchangeResult> => {
               const params = parseOAuthCallbackInput(codeInput, fallbackState);
@@ -4361,13 +4185,11 @@ export const liveAccountPool = {
 /**
  * OAuth login helpers shared with the OpenCode 2.x adapter (src/v2). They were
  * private to this module; the 2.x login flow cannot use the 1.x interactive
- * prompts but needs the same browser, callback and account pool logic.
+ * prompts but needs the same browser, pasted-code and account pool logic.
  */
 export const oauthFlowHelpers = {
   openBrowser,
-  shouldSkipLocalServer,
   getStateFromAuthorizationUrl,
-  extractOAuthCallbackParams,
   parseOAuthCallbackInput,
   persistAccountPool,
 };

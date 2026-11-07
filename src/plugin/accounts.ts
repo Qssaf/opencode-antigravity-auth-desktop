@@ -422,6 +422,13 @@ export function computeSoftQuotaCacheTtlMs(
  *
  * Source of truth for the pool is `antigravity-accounts.json`.
  */
+const MAX_SESSION_ACCOUNTS = 1000;
+
+/** The filter selectHybridAccount applies to its candidates. */
+function isHybridUsable(m: AccountWithMetrics): boolean {
+  return !m.isRateLimited && !m.isCoolingDown && m.healthScore >= 50 && getTokenTracker().hasTokens(m.index);
+}
+
 export class AccountManager {
   private accounts: ManagedAccount[] = [];
   private cursor = 0;
@@ -435,6 +442,10 @@ export class AccountManager {
   };
   private lastToastAccountIndex = -1;
   private lastToastTime = 0;
+  /** Hybrid: the account each chat (OpenCode session) is on, so its prompt cache stays warm. */
+  private sessionAccounts = new Map<string, number>();
+  /** Consecutive stalled requests per account index, reset by a normal answer. */
+  private stallCounts = new Map<number, number>();
 
   private savePending = false;
   private saveTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -631,6 +642,7 @@ export class AccountManager {
     softQuotaThresholdPercent: number = 100,
     softQuotaCacheTtlMs: number = 10 * 60 * 1000,
     excludeIndices?: Set<number>,
+    sessionKey?: string,
   ): ManagedAccount | null {
     const quotaKey = getQuotaKey(family, headerStyle, model);
 
@@ -644,37 +656,24 @@ export class AccountManager {
     }
 
     if (strategy === 'hybrid') {
-      const healthTracker = getHealthTracker();
-      const tokenTracker = getTokenTracker();
-      
-      const accountsWithMetrics: AccountWithMetrics[] = this.accounts
-        .filter(acc => acc.enabled !== false && !excludeIndices?.has(acc.index))
-        .map(acc => {
-          clearExpiredRateLimits(acc);
-          return {
-            index: acc.index,
-            lastUsed: acc.lastUsed,
-            healthScore: healthTracker.getScore(acc.index),
-            // Use the style-aware check (consistent with round-robin and the sticky
-            // fallback). isRateLimitedForFamily is true only when BOTH header-style
-            // pools are exhausted, so hybrid could otherwise pick an account whose
-            // requested-style pool is exhausted while the other style still has room.
-            isRateLimited: isRateLimitedForHeaderStyle(acc, family, headerStyle, model) ||
-                          isOverSoftQuotaThreshold(acc, family, headerStyle, softQuotaThresholdPercent, softQuotaCacheTtlMs, model),
-            isCoolingDown: this.isAccountCoolingDown(acc),
-          };
-        });
+      const accountsWithMetrics = this.hybridMetrics(family, model, headerStyle, softQuotaThresholdPercent, softQuotaCacheTtlMs, excludeIndices);
 
-      // Get current account index for stickiness
-      const currentIndex = this.currentAccountIndexByFamily[family] ?? null;
-      
-      const selectedIndex = selectHybridAccount(accountsWithMetrics, tokenTracker, currentIndex);
+      // A chat stays on its account while that account can take the request:
+      // every switch starts a cold prompt cache, which re-reads the whole
+      // conversation. A new chat gets the best-scoring account without the
+      // stickiness bonus, so chats spread across accounts.
+      const sessionIndex = sessionKey ? this.sessionAccounts.get(sessionKey) : undefined;
+      const sessionAccount = accountsWithMetrics.find((m) => m.index === sessionIndex);
+      const selectedIndex = sessionAccount && isHybridUsable(sessionAccount)
+        ? sessionAccount.index
+        : selectHybridAccount(accountsWithMetrics, getTokenTracker(), sessionKey ? null : (this.currentAccountIndexByFamily[family] ?? null));
       if (selectedIndex !== null) {
         const selected = this.accounts[selectedIndex];
         if (selected) {
           selected.lastUsed = nowMs();
           this.markTouchedForQuota(selected, quotaKey);
           this.currentAccountIndexByFamily[family] = selected.index;
+          if (sessionKey) this.assignSessionAccount(sessionKey, selected.index);
           return selected;
         }
       }
@@ -750,6 +749,90 @@ export class AccountManager {
     // Record the mutation order and supersede any prior clear marker for this key.
     account.rateLimitSetTimes[key] = now;
     delete account.clearedQuotaKeys[key];
+  }
+
+  private hybridMetrics(
+    family: ModelFamily,
+    model: string | null | undefined,
+    headerStyle: HeaderStyle,
+    softQuotaThresholdPercent: number,
+    softQuotaCacheTtlMs: number,
+    excludeIndices?: Set<number>,
+  ): AccountWithMetrics[] {
+    const healthTracker = getHealthTracker();
+    return this.accounts
+      .filter(acc => acc.enabled !== false && !excludeIndices?.has(acc.index))
+      .map(acc => {
+        clearExpiredRateLimits(acc);
+        return {
+          index: acc.index,
+          lastUsed: acc.lastUsed,
+          healthScore: healthTracker.getScore(acc.index),
+          // Use the style-aware check (consistent with round-robin and the sticky
+          // fallback). isRateLimitedForFamily is true only when BOTH header-style
+          // pools are exhausted, so hybrid could otherwise pick an account whose
+          // requested-style pool is exhausted while the other style still has room.
+          isRateLimited: isRateLimitedForHeaderStyle(acc, family, headerStyle, model) ||
+                        isOverSoftQuotaThreshold(acc, family, headerStyle, softQuotaThresholdPercent, softQuotaCacheTtlMs, model),
+          isCoolingDown: this.isAccountCoolingDown(acc),
+        };
+      });
+  }
+
+  /**
+   * The best account other than `excludeIndices` that could take a request
+   * now, or null. Changes no selection state, so it can be asked before
+   * deciding to switch or to send a stalled request to another account.
+   */
+  peekOtherAccountForFamily(
+    family: ModelFamily,
+    model: string | null | undefined,
+    headerStyle: HeaderStyle,
+    softQuotaThresholdPercent: number,
+    softQuotaCacheTtlMs: number,
+    excludeIndices: Set<number>,
+  ): ManagedAccount | null {
+    const index = selectHybridAccount(
+      this.hybridMetrics(family, model, headerStyle, softQuotaThresholdPercent, softQuotaCacheTtlMs, excludeIndices),
+      getTokenTracker(),
+      null,
+    );
+    return index === null ? null : (this.accounts[index] ?? null);
+  }
+
+  /**
+   * How long to leave out an account whose request stalled and was answered by
+   * another account: 5, 15, 45, then 60 minutes while it keeps stalling, so an
+   * account short of capacity costs at most one hedge delay per rest.
+   */
+  stalledRestMs(accountIndex: number): number {
+    const count = (this.stallCounts.get(accountIndex) ?? 0) + 1;
+    this.stallCounts.set(accountIndex, count);
+    return Math.min(5 * 60_000 * 3 ** (count - 1), 60 * 60_000);
+  }
+
+  clearStalls(accountIndex: number): void {
+    this.stallCounts.delete(accountIndex);
+  }
+
+  /** The enabled account a chat (OpenCode session) is on, if it has one. */
+  accountForSession(sessionKey: string): ManagedAccount | null {
+    const index = this.sessionAccounts.get(sessionKey);
+    const account = index === undefined ? undefined : this.accounts[index];
+    return account && account.enabled !== false ? account : null;
+  }
+
+  /** Moves a chat to `accountIndex`, e.g. after another account answered its stalled request. */
+  assignSessionAccount(sessionKey: string, accountIndex: number): void {
+    if (this.sessionAccounts.get(sessionKey) !== accountIndex) {
+      debugLogToFile(`[Account] chat …${sessionKey.slice(-6)} on account ${accountIndex}`);
+    }
+    this.sessionAccounts.delete(sessionKey);
+    this.sessionAccounts.set(sessionKey, accountIndex);
+    if (this.sessionAccounts.size > MAX_SESSION_ACCOUNTS) {
+      const oldest = this.sessionAccounts.keys().next().value;
+      if (oldest !== undefined) this.sessionAccounts.delete(oldest);
+    }
   }
 
   /**
@@ -882,45 +965,6 @@ export class AccountManager {
     return isRateLimitedForHeaderStyle(account, family, headerStyle, model);
   }
 
-  /**
-   * Check if any OTHER account has antigravity quota available for the given family/model.
-   * 
-   * Used to decide whether switching accounts can help after a rate limit.
-   * 
-   * @param currentAccountIndex - Index of the current account (will be excluded from check)
-   * @param family - Model family ("gemini" or "claude")
-   * @param model - Optional model name for model-specific rate limits
-   * @returns true if any other enabled, non-cooling-down account has antigravity available
-   */
-  hasOtherAccountWithAntigravityAvailable(
-    currentAccountIndex: number,
-    family: ModelFamily,
-    model?: string | null
-  ): boolean {
-    if (family === "claude") {
-      return false;
-    }
-
-    return this.accounts.some(acc => {
-      // Skip current account
-      if (acc.index === currentAccountIndex) {
-        return false;
-      }
-      // Skip disabled accounts
-      if (acc.enabled === false) {
-        return false;
-      }
-      // Skip cooling down accounts
-      if (this.isAccountCoolingDown(acc)) {
-        return false;
-      }
-      // Clear expired rate limits before checking
-      clearExpiredRateLimits(acc);
-      // Check if antigravity is available for this account
-      return !isRateLimitedForHeaderStyle(acc, family, "antigravity", model);
-    });
-  }
-
   setAccountEnabled(accountIndex: number, enabled: boolean): boolean {
     const account = this.accounts[accountIndex];
     if (!account) {
@@ -1013,6 +1057,14 @@ export class AccountManager {
     this.accounts.forEach((acc, index) => {
       acc.index = index;
     });
+    // Index-keyed state follows its account; the removed account's is dropped.
+    for (const [key, index] of this.sessionAccounts) {
+      if (index === idx) this.sessionAccounts.delete(key);
+      else if (index > idx) this.sessionAccounts.set(key, index - 1);
+    }
+    this.stallCounts = new Map(
+      [...this.stallCounts].filter(([index]) => index !== idx).map(([index, count]) => [index > idx ? index - 1 : index, count]),
+    );
 
     if (this.accounts.length === 0) {
       this.cursor = 0;

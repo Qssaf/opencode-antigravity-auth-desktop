@@ -145,14 +145,6 @@ export function buildLoginForm(accounts: readonly FormOption[]): readonly [FormF
   }
 
   fields.push({
-    key: "noBrowser",
-    type: "boolean",
-    title: "Enter the authorization code manually",
-    description: "Skip the local callback listener (for SSH, containers and WSL).",
-    default: false,
-    hidden: true,
-  });
-  fields.push({
     key: "projectId",
     type: "string",
     title: "Google Cloud project ID",

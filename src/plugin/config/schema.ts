@@ -235,16 +235,20 @@ export const AntigravityConfigSchema = z.object({
 
   /**
    * Seconds to wait for a streamed answer's first content before sending the
-   * same request once more and keeping whichever answers first.
+   * request once more on another account and keeping whichever answers first.
    *
-   * Antigravity sometimes holds a request for 15-60s before streaming anything,
-   * while a repeat on the same account (warm prompt cache) usually answers in a
-   * few seconds. A model that is thinking streams its first thought well before
-   * this, so only stalled requests are repeated. Each repeat counts as one more
+   * Capacity is per account: one account can hold requests for 30-60s (or
+   * answer 503 "No capacity available") while another answers in 3s. The
+   * repeat always goes to a different account, never twice to one, so no
+   * account sends parallel duplicates; with one usable account nothing is
+   * repeated. The stalled account is then left out for 5 minutes (longer
+   * while it keeps stalling) and the
+   * chat moves to the account that answered. Each repeat counts as one more
    * request against quota. 0 disables.
    *
-   * Off by default: two identical requests in parallel from one account is
-   * traffic the Antigravity app never sends.
+   * Off by default: a repeat sends the same conversation from two accounts
+   * within seconds, which links them more plainly than anything else the
+   * plugin does.
    *
    * @default 0
    */
@@ -381,8 +385,9 @@ export const AntigravityConfigSchema = z.object({
    *
    * Hybrid by default: spreads use across accounts by health score, token
    * bucket and least-recent use, so no single account carries all traffic
-   * (sticky did, and that account was banned). Each switch starts a cold
-   * Gemini prompt cache, so the next request re-reads the conversation.
+   * (sticky did, and that account was banned). A chat stays on its account
+   * while that account can serve it, because each switch starts a cold
+   * Gemini prompt cache; new chats go to the best-rested account.
    * @default "hybrid"
    */
   account_selection_strategy: AccountSelectionStrategySchema.default('hybrid'),
@@ -410,7 +415,7 @@ export const AntigravityConfigSchema = z.object({
     /**
      * Scheduling mode for rate limit behavior.
      * 
-     * - `cache_first`: Wait for same account to recover (preserves prompt cache). Default.
+     * - `cache_first`: Retry a first 429 on the same account (preserves prompt cache), after agy's 4 s. Default.
      * - `balance`: Switch account immediately on rate limit. Maximum availability.
      * - `performance_first`: Round-robin distribution for maximum throughput.
      * @default "cache_first"
@@ -418,8 +423,9 @@ export const AntigravityConfigSchema = z.object({
     scheduling_mode: SchedulingModeSchema.default('cache_first'),
     
     /**
-     * Maximum seconds to wait for same account in cache_first mode.
-     * If the account's rate limit reset time exceeds this, switch accounts.
+     * No longer used: in cache_first mode a first 429 is retried on the same
+     * account after agy's 4 s (it used to wait up to this many seconds). Kept
+     * so existing configs still load.
      * 
      * @default 60
      */

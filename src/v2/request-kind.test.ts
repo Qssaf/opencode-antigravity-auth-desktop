@@ -78,7 +78,7 @@ describe("applyRequestKind", () => {
     const prepared = await prepareAntigravityRequest(GEMINI_URL, out, "token", "project");
     const sent = JSON.parse(prepared.init.body as string);
     expect(sent.model).toBe("gemini-3.8-flash-low");
-    expect(sent.request.generationConfig.thinkingConfig).toMatchObject({ thinkingLevel: "low", includeThoughts: false });
+    expect(sent.request.generationConfig.thinkingConfig).toMatchObject({ thinkingLevel: "LOW", includeThoughts: false });
   });
 
   it("caps a Gemini 4 Argon title at the low backend tier", async () => {

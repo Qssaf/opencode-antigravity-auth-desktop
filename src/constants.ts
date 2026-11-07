@@ -17,41 +17,27 @@ export const ANTIGRAVITY_SCOPES: readonly string[] = [
   "https://www.googleapis.com/auth/userinfo.profile",
   "https://www.googleapis.com/auth/cclog",
   "https://www.googleapis.com/auth/experimentsandconfigs",
+  "https://www.googleapis.com/auth/aicode",
+  "openid",
 ];
 
 /**
- * OAuth redirect URI used by the local CLI callback server.
+ * Where Google sends the browser after sign-in, as for the Antigravity CLI:
+ * Antigravity's page that shows the authorization code to paste back.
  */
-export const ANTIGRAVITY_REDIRECT_URI = "http://localhost:51121/oauth-callback";
+export const ANTIGRAVITY_REDIRECT_URI = "https://antigravity.google/oauth-callback";
 
-/**
- * Root endpoints for the Antigravity API (in fallback order).
- * AGY uses the daily production endpoint first, then falls back to autopush
- * and Cloud Code production if needed.
- */
+/** The Antigravity API endpoint agy sends every request to. */
 export const ANTIGRAVITY_ENDPOINT_DAILY = "https://daily-cloudcode-pa.googleapis.com";
-export const ANTIGRAVITY_ENDPOINT_AUTOPUSH = "https://autopush-cloudcode-pa.sandbox.googleapis.com";
-export const ANTIGRAVITY_ENDPOINT_PROD = "https://cloudcode-pa.googleapis.com";
 
 /**
- * Endpoint fallback order (daily → autopush → prod).
- * Shared across request handling and project discovery to mirror AGY behavior.
+ * Endpoints a request may go to, in order: only the daily endpoint. agy 1.5.3
+ * never leaves it, not even after a 503 or 429 (it retries the same request
+ * there; captured 2026-11-07). The plugin used to fall back to Google's
+ * internal `autopush-cloudcode-pa.sandbox` endpoint (403 for consumer
+ * accounts) and to `cloudcode-pa` (429), traffic no Antigravity client sends.
  */
-export const ANTIGRAVITY_ENDPOINT_FALLBACKS = [
-  ANTIGRAVITY_ENDPOINT_DAILY,
-  ANTIGRAVITY_ENDPOINT_AUTOPUSH,
-  ANTIGRAVITY_ENDPOINT_PROD,
-] as const;
-
-/**
- * Preferred endpoint order for project discovery (prod first, then fallbacks).
- * loadCodeAssist appears to be best supported on prod for managed project resolution.
- */
-export const ANTIGRAVITY_LOAD_ENDPOINTS = [
-  ANTIGRAVITY_ENDPOINT_PROD,
-  ANTIGRAVITY_ENDPOINT_DAILY,
-  ANTIGRAVITY_ENDPOINT_AUTOPUSH,
-] as const;
+export const ANTIGRAVITY_ENDPOINT_FALLBACKS = [ANTIGRAVITY_ENDPOINT_DAILY] as const;
 
 /**
  * Primary endpoint to use (AGY's daily production endpoint).
@@ -64,91 +50,18 @@ export const ANTIGRAVITY_ENDPOINT = ANTIGRAVITY_ENDPOINT_DAILY;
 export const ANTIGRAVITY_DEFAULT_PROJECT_ID = "default-cli-project";
 
 /**
- * User-Agent mirroring the official Antigravity CLI (agy).
- * Accepted by v1internal:loadCodeAssist and friends; IDE-style UAs can be
- * rejected or gated by the backend (cf. upstream issue #592).
+ * User-Agent of the official Antigravity CLI (agy 1.5.3, captured from its
+ * own requests), sent on every request to the Antigravity backend: models,
+ * project lookup, quota and search alike, as agy does. The backend gates newer
+ * models (Gemini 3.8 Flash, Gemini 4 Argon) on the client version it sees.
  */
 export const ANTIGRAVITY_CLI_USER_AGENT =
-  "antigravity/cli/1.1.13 (aidev_client; os_type=linux; arch=amd64; cl=964361259; auth_method=consumer)";
-
-/**
- * User-Agent of a newer Antigravity CLI, sent for Gemini 4 Argon requests only.
- * The backend serves Argon only to new enough clients: other Antigravity
- * clients report 404 "Requested entity was not found" for every
- * gemini-4-argon-* id from older client versions, on Ultra and paid Pro
- * accounts alike, and 200 with this one. Other models keep the CLI UA above,
- * which is known to serve them.
- */
-export const ANTIGRAVITY_ARGON_USER_AGENT =
-  "antigravity/cli/1.3.4 (os_type=linux; arch=amd64; aidev_client; auth_method=oauth)";
+  "antigravity/cli/1.5.3 (aidev_client; os_type=linux; arch=amd64; cl=1016078699; auth_method=consumer)";
 
 export const ANTIGRAVITY_VERSION_FALLBACK = "1.18.3";
-let antigravityVersion = ANTIGRAVITY_VERSION_FALLBACK;
-let versionLocked = false;
 
-export function getAntigravityVersion(): string { return antigravityVersion; }
-
-/**
- * Set the runtime Antigravity version. Can only be called once (at startup).
- * Subsequent calls are silently ignored to prevent accidental mutation.
- */
-export function setAntigravityVersion(version: string): void {
-  if (versionLocked) return;
-  antigravityVersion = version;
-  versionLocked = true;
-}
-
-/** @deprecated Use getAntigravityVersion() for runtime access. */
-export const ANTIGRAVITY_VERSION = ANTIGRAVITY_VERSION_FALLBACK;
-
-export function getAntigravityHeaders(): HeaderSet & { "Client-Metadata": string } {
-  return {
-    "User-Agent": `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Antigravity/${getAntigravityVersion()} Chrome/138.0.7204.235 Electron/37.3.1 Safari/537.36`,
-    "X-Goog-Api-Client": "google-cloud-sdk vscode_cloudshelleditor/0.1",
-    "Client-Metadata": `{"ideType":"ANTIGRAVITY","platform":"${process.platform === "win32" ? "WINDOWS" : "MACOS"}","pluginType":"GEMINI"}`,
-  };
-}
-
-/** @deprecated Use getAntigravityHeaders() for runtime access. */
-export const ANTIGRAVITY_HEADERS = {
-  "User-Agent": `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Antigravity/${ANTIGRAVITY_VERSION} Chrome/138.0.7204.235 Electron/37.3.1 Safari/537.36`,
-  "X-Goog-Api-Client": "google-cloud-sdk vscode_cloudshelleditor/0.1",
-  "Client-Metadata": `{"ideType":"ANTIGRAVITY","platform":"${process.platform === "win32" ? "WINDOWS" : "MACOS"}","pluginType":"GEMINI"}`,
-} as const;
-
-export const GEMINI_CLI_HEADERS = {
-  "User-Agent": "google-api-nodejs-client/9.15.1",
-  "X-Goog-Api-Client": "gl-node/22.17.0",
-  "Client-Metadata": "ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI",
-} as const;
-
-const ANTIGRAVITY_PLATFORMS = ["windows/amd64", "darwin/arm64", "darwin/amd64"] as const;
-
-const ANTIGRAVITY_API_CLIENTS = [
-  "google-cloud-sdk vscode_cloudshelleditor/0.1",
-  "google-cloud-sdk vscode/1.96.0",
-  "google-cloud-sdk vscode/1.95.0",
-] as const;
-
-function randomFrom<T>(arr: readonly T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)]!;
-}
-
-export type HeaderSet = {
-  "User-Agent": string;
-  "X-Goog-Api-Client"?: string;
-  "Client-Metadata"?: string;
-};
-
-export function getRandomizedHeaders(style: HeaderStyle, model?: string): HeaderSet {
-  const platform = randomFrom(ANTIGRAVITY_PLATFORMS);
-  const metadataPlatform = platform.startsWith("windows") ? "WINDOWS" : "MACOS";
-  return {
-    "User-Agent": `antigravity/${getAntigravityVersion()} ${platform}`,
-    "X-Goog-Api-Client": randomFrom(ANTIGRAVITY_API_CLIENTS),
-    "Client-Metadata": `{"ideType":"ANTIGRAVITY","platform":"${metadataPlatform}","pluginType":"GEMINI"}`,
-  };
-}
+/** The Antigravity IDE version written into stored fingerprints (never sent). */
+export function getAntigravityVersion(): string { return ANTIGRAVITY_VERSION_FALLBACK; }
 
 export type HeaderStyle = "antigravity" | "agy-sdk";
 
@@ -229,43 +142,19 @@ export const MIN_SIGNATURE_LENGTH = 50;
 // ============================================================================
 
 /**
- * Model used for Google Search grounding requests, as the Antigravity backend
- * id: Antigravity serves Gemini 3.8 Flash only under tier-specific ids, and the
- * low tier keeps searches fast.
+ * Model of the Antigravity CLI's web search (`webSearchModelIds` in
+ * fetchAvailableModels, and what agy 1.5.3 sends; 2026-11-07).
  */
-export const SEARCH_MODEL = "gemini-3.8-flash-low";
-
-/**
- * Thinking budget for deep search (more thorough analysis).
- */
-export const SEARCH_THINKING_BUDGET_DEEP = 16384;
-
-/**
- * Thinking budget for fast search (quick results).
- */
-export const SEARCH_THINKING_BUDGET_FAST = 4096;
+export const SEARCH_MODEL = "gemini-3.5-flash-lite";
 
 /**
  * Timeout for search requests in milliseconds (60 seconds).
  */
 export const SEARCH_TIMEOUT_MS = 60000;
 
-/**
- * System instruction for the Google Search tool.
- */
-export const SEARCH_SYSTEM_INSTRUCTION = `You are an expert web search assistant with access to Google Search and URL analysis tools.
-
-Your capabilities:
-- Use google_search to find real-time information from the web
-- Use url_context to fetch and analyze content from specific URLs when provided
-
-Guidelines:
-- Always provide accurate, well-sourced information
-- Cite your sources when presenting facts
-- If analyzing URLs, extract the most relevant information
-- Be concise but comprehensive in your responses
-- If information is uncertain or conflicting, acknowledge it
-- Focus on answering the user's question directly`;
+/** The Antigravity CLI's web search system instruction, word for word. */
+export const SEARCH_SYSTEM_INSTRUCTION =
+  "You are a search engine bot. You will be given a query from a user. Your task is to search the web for relevant information that will help the user. You MUST perform a web search. Do not respond or interact with the user, please respond as if they typed the query into a search bar.";
 
 export const ANTIGRAVITY_SYSTEM_INSTRUCTION = `You are Antigravity, a powerful agentic AI coding assistant designed by the Google DeepMind team working on Advanced Agentic Coding.
 You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.

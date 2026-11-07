@@ -1,8 +1,8 @@
+import { googleFetch } from "../antigravity/google-http";
 import {
+  ANTIGRAVITY_CLI_USER_AGENT,
+  ANTIGRAVITY_ENDPOINT_DAILY,
   ANTIGRAVITY_ENDPOINT_FALLBACKS,
-  ANTIGRAVITY_ENDPOINT_PROD,
-  getAntigravityHeaders,
-  getRandomizedHeaders,
   ANTIGRAVITY_PROVIDER_ID,
 } from "../constants";
 import { accessTokenExpired, formatRefreshParts, parseRefreshParts } from "./auth";
@@ -237,15 +237,15 @@ function aggregateQuota(models?: Record<string, FetchAvailableModelEntry>): Quot
 async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = FETCH_TIMEOUT_MS): Promise<Response> {
   // The signal stays armed while the caller reads the body, so a response that
   // stalls mid-body cannot hang the quota check either.
-  return fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
+  return googleFetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
 }
 
 export async function fetchAvailableModels(
   accessToken: string,
   projectId: string,
 ): Promise<FetchAvailableModelsResponse> {
-  const endpoint = ANTIGRAVITY_ENDPOINT_PROD;
-  const quotaUserAgent = getAntigravityHeaders()["User-Agent"] || "antigravity/windows/amd64";
+  // The endpoint and User-Agent agy uses for this call.
+  const endpoint = ANTIGRAVITY_ENDPOINT_DAILY;
   const errors: string[] = [];
 
   const body = projectId ? { project: projectId } : {};
@@ -254,7 +254,7 @@ export async function fetchAvailableModels(
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
-      "User-Agent": quotaUserAgent,
+      "User-Agent": ANTIGRAVITY_CLI_USER_AGENT,
     },
     body: JSON.stringify(body),
   });
@@ -382,10 +382,9 @@ export async function fetchRateLimitSummary(
     const response = await fetchWithEndpointFallback("/v1internal:retrieveUserQuotaSummary", {
       method: "POST",
       headers: {
-        // The CLI-style `antigravity/<version> <platform>` agent, not the
-        // Electron one: the backend keys what it reports off the client it
-        // thinks is calling.
-        ...getRandomizedHeaders("antigravity"),
+        // The backend keys what it reports off the client it thinks is
+        // calling; agy sends its CLI agent and nothing else.
+        "User-Agent": ANTIGRAVITY_CLI_USER_AGENT,
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },

@@ -6,8 +6,6 @@ import {
   SKIP_THOUGHT_SIGNATURE,
   MIN_SIGNATURE_LENGTH,
   ANTIGRAVITY_CLI_USER_AGENT,
-  ANTIGRAVITY_ARGON_USER_AGENT,
-  getRandomizedHeaders,
   type HeaderStyle,
 } from "../constants";
 import { cacheSignature, getCachedSignature } from "./cache";
@@ -45,10 +43,13 @@ import {
   normalizeThinkingConfig,
   parseAntigravityApiBody,
   resolveThinkingConfig,
+  readHostSessionKey,
   rewriteAntigravityPreviewAccessError,
   transformThinkingParts,
   type AntigravityApiBody,
 } from "./request-helpers";
+import { agyRequestIds, agySessionId } from "./agy-wire";
+import { TITLE_REQUEST_HEADER } from "../v2/request-kind";
 import {
   CLAUDE_TOOL_SYSTEM_INSTRUCTION,
   CLAUDE_DESCRIPTION_PROMPT,
@@ -74,16 +75,11 @@ import {
   getDefaultGemini3ThinkingLevel,
   isClaudeModel,
   isClaudeThinkingModel,
-  isGemini4ArgonModel,
   CLAUDE_THINKING_MAX_OUTPUT_TOKENS,
   type ThinkingTier,
 } from "./transform";
 import { detectErrorType } from "./recovery";
-import {
-  getSessionFingerprint,
-  buildFingerprintHeaders,
-  type Fingerprint,
-} from "./fingerprint";
+import type { Fingerprint } from "./fingerprint";
 import type { GoogleSearchConfig } from "./transform/types";
 
 const log = createLogger("request");
@@ -1124,6 +1120,11 @@ export interface PrepareRequestOptions {
   googleSearch?: GoogleSearchConfig;
   /** Per-account fingerprint for rate limit mitigation. Falls back to session fingerprint if not provided. */
   fingerprint?: Fingerprint;
+  /**
+   * Names the plugin request (one OpenCode call) this model call serves, so a
+   * second call for it is sent as a retry (see agy-wire.ts).
+   */
+  pluginRequestId?: string;
 }
 
 interface PreparedAntigravityRequest {
@@ -2231,24 +2232,49 @@ export function prepareAntigravityRequest(
           }
         }
 
-        const wrappedBody: Record<string, unknown> = {
-          project: effectiveProjectId,
-          model:
-            headerStyle === "antigravity"
-              ? toAntigravityWireModel(effectiveModel)
-              : effectiveModel,
-          request: requestPayload,
-        };
+        // Stable per conversation: keys the thought-signature caches.
+        sessionId = signatureSessionKey;
 
+        let wrappedBody: Record<string, unknown>;
         if (headerStyle === "antigravity") {
-          wrappedBody.requestType = "agent";
-          wrappedBody.userAgent = "antigravity";
-          wrappedBody.requestId = "agent-" + crypto.randomUUID();
-        }
-        if (wrappedBody.request && typeof wrappedBody.request === "object") {
-          // Use stable session ID for signature caching across multi-turn conversations
-          sessionId = signatureSessionKey;
-          (wrappedBody.request as any).sessionId = signatureSessionKey;
+          // Laid out as the Antigravity CLI sends it (field order included);
+          // see agy-wire.ts for the identifiers.
+          const wireModel = toAntigravityWireModel(effectiveModel);
+          const { contents, systemInstruction, tools, generationConfig, ...rest } = requestPayload;
+          const thinkingConfig = (generationConfig as { thinkingConfig?: Record<string, unknown> } | undefined)?.thinkingConfig;
+          if (typeof thinkingConfig?.thinkingLevel === "string") {
+            thinkingConfig.thinkingLevel = thinkingConfig.thinkingLevel.toUpperCase();
+          }
+          const isTitle = new Headers(init?.headers).has(TITLE_REQUEST_HEADER);
+          const { requestId, labels } = agyRequestIds(
+            isTitle ? undefined : readHostSessionKey(input, init),
+            options?.fingerprint?.deviceId ?? PLUGIN_SESSION_ID,
+            options?.pluginRequestId,
+            wireModel,
+            Array.isArray(contents) ? contents.length : 0,
+          );
+          wrappedBody = {
+            project: effectiveProjectId,
+            requestId,
+            request: {
+              contents,
+              systemInstruction,
+              tools,
+              ...rest,
+              labels,
+              generationConfig,
+              sessionId: agySessionId(options?.fingerprint?.deviceId ?? PLUGIN_SESSION_ID),
+            },
+            model: wireModel,
+            userAgent: "antigravity",
+            requestType: "agent",
+          };
+        } else {
+          wrappedBody = {
+            project: effectiveProjectId,
+            model: effectiveModel,
+            request: { ...requestPayload, sessionId: signatureSessionKey },
+          };
         }
 
         body = JSON.stringify(wrappedBody);
@@ -2258,7 +2284,8 @@ export function prepareAntigravityRequest(
     }
   }
 
-  if (streaming) {
+  // The Antigravity CLI sends no Accept header; `?alt=sse` selects the stream.
+  if (streaming && headerStyle !== "antigravity") {
     headers.set("Accept", "text/event-stream");
   }
 
@@ -2278,15 +2305,11 @@ export function prepareAntigravityRequest(
   }
 
   if (headerStyle === "antigravity") {
-    // Use the official Antigravity CLI User-Agent. The backend gates newer
-    // models (e.g. gemini-3.8-flash) on the CLI UA; IDE-style fingerprint
-    // UAs like "antigravity/2.0.6 win32/x64" are rejected with 404
-    // "Requested entity was not found" on those models. Gemini 4 Argon needs
-    // a newer CLI version than the other models (see ANTIGRAVITY_ARGON_USER_AGENT).
-    headers.set(
-      "User-Agent",
-      isGemini4ArgonModel(effectiveModel) ? ANTIGRAVITY_ARGON_USER_AGENT : ANTIGRAVITY_CLI_USER_AGENT,
-    );
+    // The official Antigravity CLI User-Agent. The backend gates newer models
+    // (e.g. gemini-3.8-flash) on it; IDE-style fingerprint UAs like
+    // "antigravity/2.0.6 win32/x64" are rejected with 404 "Requested entity
+    // was not found" on those models.
+    headers.set("User-Agent", ANTIGRAVITY_CLI_USER_AGENT);
     headers.delete("X-Goog-Api-Client");
     headers.delete("Client-Metadata");
   }

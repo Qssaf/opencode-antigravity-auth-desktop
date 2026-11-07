@@ -16,8 +16,6 @@
 import { authorizeAntigravity, exchangeAntigravity } from "../antigravity/oauth";
 import type { AntigravityTokenExchangeResult } from "../antigravity/oauth";
 import { createLogger } from "../plugin/logger";
-import { startOAuthListener } from "../plugin/server";
-import type { OAuthListener } from "../plugin/server";
 import { refreshAccessToken } from "../plugin/token";
 import type { PluginClient } from "../plugin/types";
 import { credentialLabel, OAUTH_METHOD_ID, tokenResultToCredential } from "./credentials";
@@ -34,7 +32,7 @@ import type { FormAnswer, FormOption, OAuthAuthorization, OAuthCredential, OAuth
 
 const log = createLogger("v2-oauth");
 
-/** Matches the OAuth callback listener's own timeout. */
+/** How long OpenCode waits for the pasted code. */
 export const LOGIN_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** When a background refresh fails, ask OpenCode to try again after this long. */
@@ -43,9 +41,7 @@ const FAILED_REFRESH_RETRY_MS = 60 * 1000;
 type TokenExchangeSuccess = Extract<AntigravityTokenExchangeResult, { type: "success" }>;
 
 export interface OAuthFlowHelpers {
-  shouldSkipLocalServer(): boolean;
   getStateFromAuthorizationUrl(authorizationUrl: string): string;
-  extractOAuthCallbackParams(url: URL): { code: string; state: string } | null;
   parseOAuthCallbackInput(
     value: string,
     fallbackState: string,
@@ -64,28 +60,13 @@ export interface OAuthMethodDeps {
   accounts?: readonly FormOption[];
   /** Everything the management actions need; without it the menu is sign-in only. */
   management?: Omit<ManagementDeps, "client" | "integrationID">;
-  startListener?: () => Promise<OAuthListener>;
   createAuthorization?: typeof authorizeAntigravity;
   exchangeCode?: typeof exchangeAntigravity;
   refreshToken?: typeof refreshAccessToken;
 }
 
-function isHeadlessEnvironment(): boolean {
-  return !!(
-    process.env.SSH_CONNECTION ||
-    process.env.SSH_CLIENT ||
-    process.env.SSH_TTY ||
-    process.env.OPENCODE_HEADLESS
-  );
-}
-
-function isTruthyAnswer(value: FormAnswer[string] | undefined): boolean {
-  return value === true || value === "true";
-}
-
 export function createOAuthMethod(deps: OAuthMethodDeps): OAuthMethodRegistration {
   const { helpers, client, integrationID, management } = deps;
-  const startListener = deps.startListener ?? startOAuthListener;
   const createAuthorization = deps.createAuthorization ?? authorizeAntigravity;
   const exchangeCode = deps.exchangeCode ?? exchangeAntigravity;
   const refreshToken = deps.refreshToken ?? refreshAccessToken;
@@ -145,65 +126,17 @@ export function createOAuthMethod(deps: OAuthMethodDeps): OAuthMethodRegistratio
     }
 
     const projectId = typeof answer.projectId === "string" ? answer.projectId.trim() : "";
-    const manual =
-      isTruthyAnswer(answer.noBrowser) || isHeadlessEnvironment() || helpers.shouldSkipLocalServer();
-
-    let listener: OAuthListener | null = null;
-    if (!manual) {
-      try {
-        listener = await startListener();
-      } catch (error) {
-        // Port 51121 busy (another login in progress) or no permission to bind.
-        log.debug("OAuth callback listener unavailable, falling back to manual code entry", {
-          error: String(error),
-        });
-      }
-    }
-
-    let authorization: Awaited<ReturnType<typeof authorizeAntigravity>>;
-    try {
-      authorization = await createAuthorization(projectId);
-    } catch (error) {
-      await listener?.close().catch(() => {});
-      throw error;
-    }
+    // As in the Antigravity CLI, Google sends the browser to Antigravity's
+    // page, which shows the authorization code to paste back here.
+    const authorization = await createAuthorization(projectId);
     const fallbackState = helpers.getStateFromAuthorizationUrl(authorization.url);
-    const expiresAt = Date.now() + LOGIN_TIMEOUT_MS;
-
-    if (listener) {
-      const activeListener = listener;
-      const callback = (async (): Promise<OAuthCredential> => {
-        try {
-          const callbackUrl = await activeListener.waitForCallback();
-          const params = helpers.extractOAuthCallbackParams(callbackUrl);
-          if (!params) {
-            throw new Error("Missing code or state in callback URL");
-          }
-          return await completeLogin(params.code, params.state);
-        } finally {
-          await activeListener.close().catch(() => {});
-        }
-      })();
-      // OpenCode observes the promise after it is returned; this only keeps a
-      // rejection that lands first from being reported as unhandled.
-      callback.catch(() => {});
-
-      return {
-        mode: "auto",
-        url: authorization.url,
-        instructions:
-          "Complete the Google sign-in in your browser. The redirect back to localhost is detected automatically.",
-        expiresAt,
-        callback,
-      };
-    }
 
     return {
       mode: "code",
       url: authorization.url,
       instructions:
-        "Open the URL, complete the Google sign-in, then paste the full redirect URL (or just the authorization code).",
-      expiresAt,
+        "Open the URL and sign in with Google. Antigravity's page then shows an authorization code: copy it and paste it here.",
+      expiresAt: Date.now() + LOGIN_TIMEOUT_MS,
       callback: async (input: string): Promise<OAuthCredential> => {
         const params = helpers.parseOAuthCallbackInput(input, fallbackState);
         if ("error" in params) {

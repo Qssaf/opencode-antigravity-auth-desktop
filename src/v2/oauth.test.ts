@@ -1,20 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { OAUTH_METHOD_ID } from "./credentials";
 import { createOAuthMethod } from "./oauth";
 import type { OAuthFlowHelpers, OAuthMethodDeps } from "./oauth";
 import type { PluginClient } from "../plugin/types";
 
-const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth?state=abc123";
+const AUTH_URL = "https://accounts.google.com/o/oauth2/auth?state=abc123";
 
 function helpers(overrides: Partial<OAuthFlowHelpers> = {}): OAuthFlowHelpers {
   return {
-    shouldSkipLocalServer: () => false,
     getStateFromAuthorizationUrl: (url) => new URL(url).searchParams.get("state") ?? "",
-    extractOAuthCallbackParams: (url) => {
-      const code = url.searchParams.get("code");
-      const state = url.searchParams.get("state");
-      return code && state ? { code, state } : null;
-    },
     parseOAuthCallbackInput: (value, fallbackState) =>
       value ? { code: value, state: fallbackState } : { error: "Missing authorization code" },
     persistAccountPool: vi.fn(async () => {}),
@@ -27,11 +21,7 @@ function deps(overrides: Partial<OAuthMethodDeps> = {}): OAuthMethodDeps {
     integrationID: "google",
     client: {} as PluginClient,
     helpers: helpers(),
-    startListener: async () => ({
-      waitForCallback: async () => new URL("http://localhost:51121/oauth-callback?code=CODE&state=abc123"),
-      close: async () => {},
-    }),
-    createAuthorization: async () => ({ url: AUTH_URL, verifier: "v", projectId: "" }),
+    createAuthorization: async () => ({ url: AUTH_URL, projectId: "" }),
     exchangeCode: async () => ({
       type: "success",
       refresh: "r|p|m",
@@ -44,10 +34,6 @@ function deps(overrides: Partial<OAuthMethodDeps> = {}): OAuthMethodDeps {
     ...overrides,
   };
 }
-
-beforeEach(() => {
-  delete process.env.OPENCODE_HEADLESS;
-});
 
 describe("createOAuthMethod", () => {
   it("registers an oauth method on the google integration", () => {
@@ -81,12 +67,12 @@ describe("createOAuthMethod", () => {
 describe("authorize", () => {
   it("still signs in when the menu is answered with add", async () => {
     const authorization = await createOAuthMethod(deps()).authorize({ action: "add" });
-    expect(authorization.mode).toBe("auto");
+    expect(authorization.mode).toBe("code");
     expect(authorization.url).toBe(AUTH_URL);
   });
 
   it("runs a management action instead of signing in, and reports its result", async () => {
-    const createAuthorization = vi.fn(async () => ({ url: AUTH_URL, verifier: "v", projectId: "" }));
+    const createAuthorization = vi.fn(async () => ({ url: AUTH_URL, projectId: "" }));
     const authorization = await createOAuthMethod(
       deps({
         createAuthorization,
@@ -104,21 +90,30 @@ describe("authorize", () => {
     expect(authorization.instructions.length).toBeGreaterThan(0);
   });
 
-  it("uses auto mode and the local listener by default", async () => {
+  it("asks for the code Antigravity's page shows, as the Antigravity CLI does", async () => {
     const authorization = await createOAuthMethod(deps()).authorize({});
-    expect(authorization.mode).toBe("auto");
+    expect(authorization.mode).toBe("code");
     expect(authorization.url).toBe(AUTH_URL);
+    expect(authorization.instructions).toContain("paste");
     expect(authorization.expiresAt).toBeGreaterThan(Date.now());
   });
 
-  it("completes the login from the redirect the listener receives", async () => {
+  it("completes the login from the pasted code and adds the account to the pool", async () => {
     const persistAccountPool = vi.fn(async () => {});
+    const exchangeCode = vi.fn(async () => ({
+      type: "success" as const,
+      refresh: "r|p|m",
+      access: "a",
+      expires: 4242,
+      email: "a@example.com",
+      projectId: "p",
+    }));
     const authorization = await createOAuthMethod(
-      deps({ helpers: helpers({ persistAccountPool }) }),
+      deps({ helpers: helpers({ persistAccountPool }), exchangeCode }),
     ).authorize({});
-    if (authorization.mode !== "auto") throw new Error("expected auto mode");
+    if (authorization.mode !== "code") throw new Error("expected code mode");
 
-    await expect(authorization.callback).resolves.toEqual({
+    await expect(authorization.callback("PASTED")).resolves.toEqual({
       type: "oauth",
       methodID: OAUTH_METHOD_ID,
       refresh: "r|p|m",
@@ -126,6 +121,8 @@ describe("authorize", () => {
       expires: 4242,
       metadata: { email: "a@example.com", projectId: "p" },
     });
+    // The pasted code is completed with the state of the sign-in it belongs to.
+    expect(exchangeCode).toHaveBeenCalledWith("PASTED", "abc123");
     // Adds to the pool rather than replacing accounts from earlier logins.
     expect(persistAccountPool).toHaveBeenCalledWith([expect.objectContaining({ type: "success" })], false);
   });
@@ -141,80 +138,15 @@ describe("authorize", () => {
         },
       }),
     ).authorize({});
-    if (authorization.mode !== "auto") throw new Error("expected auto mode");
+    if (authorization.mode !== "code") throw new Error("expected code mode");
 
     expect(invalidate).not.toHaveBeenCalled();
-    await authorization.callback;
+    await authorization.callback("PASTED");
     expect(invalidate).toHaveBeenCalledTimes(1);
   });
 
-  it("closes the listener after the callback resolves", async () => {
-    const close = vi.fn(async () => {});
-    const authorization = await createOAuthMethod(
-      deps({
-        startListener: async () => ({
-          waitForCallback: async () => new URL("http://localhost:51121/oauth-callback?code=CODE&state=abc123"),
-          close,
-        }),
-      }),
-    ).authorize({});
-    if (authorization.mode !== "auto") throw new Error("expected auto mode");
-
-    await authorization.callback;
-    expect(close).toHaveBeenCalled();
-  });
-
-  it("closes the listener when building the authorization URL fails", async () => {
-    const close = vi.fn(async () => {});
-    await expect(
-      createOAuthMethod(
-        deps({
-          startListener: async () => ({ waitForCallback: async () => new URL("http://x"), close }),
-          createAuthorization: async () => {
-            throw new Error("no network");
-          },
-        }),
-      ).authorize({}),
-    ).rejects.toThrow("no network");
-    expect(close).toHaveBeenCalled();
-  });
-
-  it("falls back to code mode when the noBrowser answer is set", async () => {
-    const authorization = await createOAuthMethod(deps()).authorize({ noBrowser: true });
-    expect(authorization.mode).toBe("code");
-  });
-
-  it("falls back to code mode when the listener cannot start", async () => {
-    const authorization = await createOAuthMethod(
-      deps({
-        startListener: async () => {
-          throw new Error("EADDRINUSE");
-        },
-      }),
-    ).authorize({});
-    expect(authorization.mode).toBe("code");
-  });
-
-  it("falls back to code mode in a headless environment", async () => {
-    process.env.OPENCODE_HEADLESS = "1";
-    expect((await createOAuthMethod(deps()).authorize({})).mode).toBe("code");
-  });
-
-  it("falls back to code mode when a local server would not be reachable", async () => {
-    const authorization = await createOAuthMethod(
-      deps({ helpers: helpers({ shouldSkipLocalServer: () => true }) }),
-    ).authorize({});
-    expect(authorization.mode).toBe("code");
-  });
-
-  it("exchanges a pasted code in code mode", async () => {
-    const authorization = await createOAuthMethod(deps()).authorize({ noBrowser: true });
-    if (authorization.mode !== "code") throw new Error("expected code mode");
-    await expect(authorization.callback("PASTED")).resolves.toMatchObject({ refresh: "r|p|m" });
-  });
-
   it("reports a malformed pasted code as an error", async () => {
-    const authorization = await createOAuthMethod(deps()).authorize({ noBrowser: true });
+    const authorization = await createOAuthMethod(deps()).authorize({});
     if (authorization.mode !== "code") throw new Error("expected code mode");
     await expect(authorization.callback("")).rejects.toThrow("Missing authorization code");
   });
@@ -222,7 +154,7 @@ describe("authorize", () => {
   it("reports a failed token exchange as an error", async () => {
     const authorization = await createOAuthMethod(
       deps({ exchangeCode: async () => ({ type: "failed", error: "bad code" }) }),
-    ).authorize({ noBrowser: true });
+    ).authorize({});
     if (authorization.mode !== "code") throw new Error("expected code mode");
     await expect(authorization.callback("CODE")).rejects.toThrow("bad code");
   });
@@ -236,13 +168,13 @@ describe("authorize", () => {
           },
         }),
       }),
-    ).authorize({ noBrowser: true });
+    ).authorize({});
     if (authorization.mode !== "code") throw new Error("expected code mode");
     await expect(authorization.callback("CODE")).resolves.toMatchObject({ refresh: "r|p|m" });
   });
 
   it("passes a project id answer through to the authorization request", async () => {
-    const createAuthorization = vi.fn(async () => ({ url: AUTH_URL, verifier: "v", projectId: "my-project" }));
+    const createAuthorization = vi.fn(async () => ({ url: AUTH_URL, projectId: "my-project" }));
     await createOAuthMethod(deps({ createAuthorization })).authorize({ projectId: " my-project " });
     expect(createAuthorization).toHaveBeenCalledWith("my-project");
   });

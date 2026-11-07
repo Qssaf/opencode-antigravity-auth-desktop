@@ -12,6 +12,12 @@
 /** Header carrying `ModelRequestHook.kind` from the hook to the runtime. */
 export const REQUEST_KIND_HEADER = "x-antigravity-request-kind";
 
+/**
+ * Marks a title request for the pipeline, which sends it as a conversation of
+ * its own. The `x-opencode-` prefix gets it removed before the request leaves.
+ */
+export const TITLE_REQUEST_HEADER = "x-opencode-antigravity-title";
+
 /** Thinking a title request gets. Low is the lowest level every Gemini 3 backend accepts. */
 const TITLE_THINKING = { thinkingLevel: "low", includeThoughts: false } as const;
 
@@ -28,6 +34,7 @@ export function applyRequestKind(url: string, init: RequestInit): RequestInit {
   const kind = headers.get(REQUEST_KIND_HEADER);
   if (kind === null) return init;
   headers.delete(REQUEST_KIND_HEADER);
+  if (kind === "title") headers.set(TITLE_REQUEST_HEADER, "1");
   const untagged: RequestInit = { ...init, headers };
 
   // Claude takes a thinking budget, not a level; its titles are left alone.

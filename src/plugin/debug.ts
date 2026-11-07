@@ -249,7 +249,8 @@ export function logAntigravityDebugResponse(
 
   const durationMs = Date.now() - context.startedAt;
   logDebug(
-    `[Antigravity Debug ${context.id}] Response ${response.status} ${response.statusText} (${durationMs}ms)`,
+    // HTTP/2 answers carry no status text.
+    `[Antigravity Debug ${context.id}] Response ${response.status}${response.statusText ? ` ${response.statusText}` : ""} (${durationMs}ms)`,
   );
   logDebug(
     `[Antigravity Debug ${context.id}] Response Headers: ${JSON.stringify(

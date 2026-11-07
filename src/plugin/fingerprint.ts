@@ -12,21 +12,10 @@ import * as crypto from "node:crypto";
 import * as os from "node:os";
 import { getAntigravityVersion } from "../constants";
 
-const OS_VERSIONS: Record<string, string[]> = {
-  darwin: ["10.15.7", "11.6.8", "12.6.3", "13.5.2", "14.2.1", "14.5"],
-  win32: ["10.0.19041", "10.0.19042", "10.0.19043", "10.0.22000", "10.0.22621", "10.0.22631"],
-  linux: ["5.15.0", "5.19.0", "6.1.0", "6.2.0", "6.5.0", "6.6.0"],
-};
-
 const ARCHITECTURES = ["x64", "arm64"];
 
 const IDE_TYPES = [
   "ANTIGRAVITY",
-] as const;
-
-const PLATFORMS = [
-  "WINDOWS",
-  "MACOS",
 ] as const;
 
 const SDK_CLIENTS = [
@@ -71,7 +60,6 @@ export interface FingerprintHeaders {
 }
 
 const PLATFORM_CHOICES = ["darwin", "win32"] as const;
-type PlatformChoice = typeof PLATFORM_CHOICES[number];
 
 function randomFrom<T>(arr: readonly T[]): T {
   return arr[Math.floor(Math.random() * arr.length)]!;
@@ -96,7 +84,6 @@ function generateSessionToken(): string {
 export function generateFingerprint(): Fingerprint {
   const platform = randomFrom(PLATFORM_CHOICES);
   const arch = randomFrom(ARCHITECTURES);
-  const osVersion = randomFrom(OS_VERSIONS[platform] ?? OS_VERSIONS.darwin!);
 
   return {
     deviceId: generateDeviceId(),

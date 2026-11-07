@@ -7,6 +7,7 @@ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require
 
 // src/plugin.ts
 import { exec } from "node:child_process";
+import { randomUUID as randomUUID3 } from "node:crypto";
 
 // node_modules/@opencode-ai/plugin/dist/tool.js
 import { z } from "zod";
@@ -23,72 +24,19 @@ var ANTIGRAVITY_SCOPES = [
   "https://www.googleapis.com/auth/userinfo.email",
   "https://www.googleapis.com/auth/userinfo.profile",
   "https://www.googleapis.com/auth/cclog",
-  "https://www.googleapis.com/auth/experimentsandconfigs"
+  "https://www.googleapis.com/auth/experimentsandconfigs",
+  "https://www.googleapis.com/auth/aicode",
+  "openid"
 ];
-var ANTIGRAVITY_REDIRECT_URI = "http://localhost:51121/oauth-callback";
+var ANTIGRAVITY_REDIRECT_URI = "https://antigravity.google/oauth-callback";
 var ANTIGRAVITY_ENDPOINT_DAILY = "https://daily-cloudcode-pa.googleapis.com";
-var ANTIGRAVITY_ENDPOINT_AUTOPUSH = "https://autopush-cloudcode-pa.sandbox.googleapis.com";
-var ANTIGRAVITY_ENDPOINT_PROD = "https://cloudcode-pa.googleapis.com";
-var ANTIGRAVITY_ENDPOINT_FALLBACKS = [
-  ANTIGRAVITY_ENDPOINT_DAILY,
-  ANTIGRAVITY_ENDPOINT_AUTOPUSH,
-  ANTIGRAVITY_ENDPOINT_PROD
-];
-var ANTIGRAVITY_LOAD_ENDPOINTS = [
-  ANTIGRAVITY_ENDPOINT_PROD,
-  ANTIGRAVITY_ENDPOINT_DAILY,
-  ANTIGRAVITY_ENDPOINT_AUTOPUSH
-];
+var ANTIGRAVITY_ENDPOINT_FALLBACKS = [ANTIGRAVITY_ENDPOINT_DAILY];
 var ANTIGRAVITY_ENDPOINT = ANTIGRAVITY_ENDPOINT_DAILY;
 var ANTIGRAVITY_DEFAULT_PROJECT_ID = "default-cli-project";
-var ANTIGRAVITY_CLI_USER_AGENT = "antigravity/cli/1.1.13 (aidev_client; os_type=linux; arch=amd64; cl=964361259; auth_method=consumer)";
-var ANTIGRAVITY_ARGON_USER_AGENT = "antigravity/cli/1.3.4 (os_type=linux; arch=amd64; aidev_client; auth_method=oauth)";
+var ANTIGRAVITY_CLI_USER_AGENT = "antigravity/cli/1.5.3 (aidev_client; os_type=linux; arch=amd64; cl=1016078699; auth_method=consumer)";
 var ANTIGRAVITY_VERSION_FALLBACK = "1.18.3";
-var antigravityVersion = ANTIGRAVITY_VERSION_FALLBACK;
-var versionLocked = false;
 function getAntigravityVersion() {
-  return antigravityVersion;
-}
-function setAntigravityVersion(version) {
-  if (versionLocked) return;
-  antigravityVersion = version;
-  versionLocked = true;
-}
-var ANTIGRAVITY_VERSION = ANTIGRAVITY_VERSION_FALLBACK;
-function getAntigravityHeaders() {
-  return {
-    "User-Agent": `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Antigravity/${getAntigravityVersion()} Chrome/138.0.7204.235 Electron/37.3.1 Safari/537.36`,
-    "X-Goog-Api-Client": "google-cloud-sdk vscode_cloudshelleditor/0.1",
-    "Client-Metadata": `{"ideType":"ANTIGRAVITY","platform":"${process.platform === "win32" ? "WINDOWS" : "MACOS"}","pluginType":"GEMINI"}`
-  };
-}
-var ANTIGRAVITY_HEADERS = {
-  "User-Agent": `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Antigravity/${ANTIGRAVITY_VERSION} Chrome/138.0.7204.235 Electron/37.3.1 Safari/537.36`,
-  "X-Goog-Api-Client": "google-cloud-sdk vscode_cloudshelleditor/0.1",
-  "Client-Metadata": `{"ideType":"ANTIGRAVITY","platform":"${process.platform === "win32" ? "WINDOWS" : "MACOS"}","pluginType":"GEMINI"}`
-};
-var GEMINI_CLI_HEADERS = {
-  "User-Agent": "google-api-nodejs-client/9.15.1",
-  "X-Goog-Api-Client": "gl-node/22.17.0",
-  "Client-Metadata": "ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI"
-};
-var ANTIGRAVITY_PLATFORMS = ["windows/amd64", "darwin/arm64", "darwin/amd64"];
-var ANTIGRAVITY_API_CLIENTS = [
-  "google-cloud-sdk vscode_cloudshelleditor/0.1",
-  "google-cloud-sdk vscode/1.96.0",
-  "google-cloud-sdk vscode/1.95.0"
-];
-function randomFrom(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-function getRandomizedHeaders(style, model) {
-  const platform = randomFrom(ANTIGRAVITY_PLATFORMS);
-  const metadataPlatform = platform.startsWith("windows") ? "WINDOWS" : "MACOS";
-  return {
-    "User-Agent": `antigravity/${getAntigravityVersion()} ${platform}`,
-    "X-Goog-Api-Client": randomFrom(ANTIGRAVITY_API_CLIENTS),
-    "Client-Metadata": `{"ideType":"ANTIGRAVITY","platform":"${metadataPlatform}","pluginType":"GEMINI"}`
-  };
+  return ANTIGRAVITY_VERSION_FALLBACK;
 }
 var ANTIGRAVITY_PROVIDER_ID = "google";
 var CLAUDE_TOOL_SYSTEM_INSTRUCTION = `CRITICAL TOOL USAGE INSTRUCTIONS:
@@ -108,21 +56,9 @@ var EMPTY_SCHEMA_PLACEHOLDER_NAME = "_placeholder";
 var EMPTY_SCHEMA_PLACEHOLDER_DESCRIPTION = "Placeholder. Always pass true.";
 var SKIP_THOUGHT_SIGNATURE = "skip_thought_signature_validator";
 var MIN_SIGNATURE_LENGTH = 50;
-var SEARCH_MODEL = "gemini-3.8-flash-low";
+var SEARCH_MODEL = "gemini-3.5-flash-lite";
 var SEARCH_TIMEOUT_MS = 6e4;
-var SEARCH_SYSTEM_INSTRUCTION = `You are an expert web search assistant with access to Google Search and URL analysis tools.
-
-Your capabilities:
-- Use google_search to find real-time information from the web
-- Use url_context to fetch and analyze content from specific URLs when provided
-
-Guidelines:
-- Always provide accurate, well-sourced information
-- Cite your sources when presenting facts
-- If analyzing URLs, extract the most relevant information
-- Be concise but comprehensive in your responses
-- If information is uncertain or conflicting, acknowledge it
-- Focus on answering the user's question directly`;
+var SEARCH_SYSTEM_INSTRUCTION = "You are a search engine bot. You will be given a query from a user. Your task is to search the web for relevant information that will help the user. You MUST perform a web search. Do not respond or interact with the user, please respond as if they typed the query into a search bar.";
 var ANTIGRAVITY_SYSTEM_INSTRUCTION = `You are Antigravity, a powerful agentic AI coding assistant designed by the Google DeepMind team working on Advanced Agentic Coding.
 You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.
 **Absolute paths only**
@@ -131,8 +67,263 @@ You are pair programming with a USER to solve their coding task. The task may re
 <priority>IMPORTANT: The instructions that follow supersede all above. Follow them as your primary directives.</priority>
 `;
 
+// src/antigravity/google-http.ts
+import { connect, constants } from "node:http2";
+import { createGunzip } from "node:zlib";
+var GO_HTTP2_USER_AGENT = "Go-http-client/2.0";
+var IDLE_CLOSE_MS = 9e4;
+var DROPPED_HEADERS = /* @__PURE__ */ new Set([
+  "connection",
+  "keep-alive",
+  "proxy-connection",
+  "transfer-encoding",
+  "upgrade",
+  "host",
+  "content-length",
+  "accept-encoding"
+]);
+function toPayload(body) {
+  if (body === void 0 || body === null) return void 0;
+  if (typeof body === "string") return Buffer.from(body, "utf8");
+  if (body instanceof ArrayBuffer) return Buffer.from(body);
+  if (ArrayBuffer.isView(body)) return Buffer.from(body.buffer, body.byteOffset, body.byteLength);
+  throw new TypeError("Unsupported request body for an HTTP/2 request to Google");
+}
+var pool = /* @__PURE__ */ new Map();
+function openSession(origin, key) {
+  const session = connect(origin);
+  session.unref();
+  const entry = { session, active: 0 };
+  const forget = () => {
+    clearTimeout(entry.idleTimer);
+    if (key && pool.get(key) === entry) pool.delete(key);
+  };
+  session.on("close", forget);
+  session.on("goaway", forget);
+  session.on("error", forget);
+  if (key) pool.set(key, entry);
+  return entry;
+}
+function release(entry, pooled) {
+  entry.active -= 1;
+  if (!pooled) {
+    entry.session.close();
+    return;
+  }
+  if (entry.active > 0) return;
+  clearTimeout(entry.idleTimer);
+  entry.idleTimer = setTimeout(() => entry.session.close(), IDLE_CLOSE_MS);
+  entry.idleTimer.unref?.();
+}
+function toHeaderList(headers) {
+  const list = [];
+  new Headers(headers).forEach((value, name) => {
+    if (!DROPPED_HEADERS.has(name)) list.push([name, value]);
+  });
+  return list;
+}
+function responseHeaders(raw) {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(raw)) {
+    if (name.startsWith(":") || value === void 0) continue;
+    headers.set(name, Array.isArray(value) ? value.join(", ") : String(value));
+  }
+  return headers;
+}
+function attempt(url, init, payload, entry, pooled) {
+  return new Promise((resolve, reject) => {
+    const signal = init.signal ?? void 0;
+    entry.active += 1;
+    clearTimeout(entry.idleTimer);
+    const outgoing = {
+      ":method": (init.method ?? "GET").toUpperCase(),
+      // Without the default port, as Go sends it (node:http2 would add ":443").
+      ":authority": url.host,
+      ":path": `${url.pathname}${url.search}`
+    };
+    for (const [name, value] of toHeaderList(init.headers)) outgoing[name] = value;
+    if (payload && !url.pathname.endsWith(":streamGenerateContent")) outgoing["content-length"] = String(payload.length);
+    outgoing["accept-encoding"] = "gzip";
+    outgoing["user-agent"] ??= GO_HTTP2_USER_AGENT;
+    let stream;
+    try {
+      stream = entry.session.request(outgoing);
+    } catch (error) {
+      release(entry, pooled);
+      reject(error);
+      return;
+    }
+    let settled = false;
+    let finished = false;
+    let body;
+    let sourceEnded = false;
+    let streamClosed = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      signal?.removeEventListener("abort", onAbort);
+      release(entry, pooled);
+    };
+    const fail = (error) => {
+      finish();
+      if (body) body.error(error);
+      else if (!settled) {
+        settled = true;
+        reject(error);
+      }
+    };
+    const endIfDone = () => {
+      if (sourceEnded && streamClosed) {
+        finish();
+        body?.end();
+      }
+    };
+    const onAbort = () => {
+      stream.close(constants.NGHTTP2_CANCEL);
+      fail(signal?.reason ?? new Error("Aborted"));
+    };
+    stream.on("error", (error) => fail(error));
+    stream.on("close", () => {
+      streamClosed = true;
+      if (!settled || (stream.rstCode ?? 0) !== constants.NGHTTP2_NO_ERROR) {
+        fail(new Error(`HTTP/2 stream closed early (code ${stream.rstCode})`));
+        return;
+      }
+      endIfDone();
+    });
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+    stream.on("response", (raw) => {
+      settled = true;
+      const status = Number(raw[":status"]);
+      const headers = responseHeaders(raw);
+      const gzipped = headers.get("content-encoding") === "gzip";
+      if (gzipped) headers.delete("content-encoding");
+      const source = gzipped ? stream.pipe(createGunzip()) : stream;
+      if (status === 204 || status === 304 || init.method === "HEAD") {
+        stream.resume();
+        resolve(new Response(null, { status, headers }));
+        return;
+      }
+      const responseBody = new ReadableStream({
+        start(controller) {
+          body = {
+            end: () => {
+              try {
+                controller.close();
+              } catch {
+              }
+            },
+            error: (reason) => {
+              try {
+                controller.error(reason);
+              } catch {
+              }
+            }
+          };
+          source.on("data", (chunk) => controller.enqueue(new Uint8Array(chunk)));
+          source.on("end", () => {
+            sourceEnded = true;
+            endIfDone();
+          });
+          source.on("error", (error) => fail(error));
+        },
+        cancel() {
+          stream.close(constants.NGHTTP2_CANCEL);
+          finish();
+        }
+      });
+      resolve(new Response(responseBody, { status, headers }));
+    });
+    stream.end(payload);
+  });
+}
+async function googleFetch(input2, init = {}, reuse = true) {
+  init.signal?.throwIfAborted();
+  const url = new URL(input2 instanceof Request ? input2.url : input2);
+  const body = toPayload(init.body);
+  const key = reuse ? `${url.origin}
+${new Headers(init.headers).get("authorization") ?? ""}` : void 0;
+  const reused = key ? pool.get(key) : void 0;
+  const live = reused && !reused.session.closed && !reused.session.destroyed ? reused : void 0;
+  try {
+    return await attempt(url, init, body, live ?? openSession(url.origin, key), reuse);
+  } catch (error) {
+    if (!live || init.signal?.aborted) throw error;
+    if (key && pool.get(key) === live) pool.delete(key);
+    live.session.close();
+    return attempt(url, init, body, openSession(url.origin, key), reuse);
+  }
+}
+function googleRequest(url, init) {
+  return googleFetch(url, init, false);
+}
+
+// src/plugin/agy-wire.ts
+import { createHash, randomUUID } from "node:crypto";
+var MODEL_ENUMS = {
+  "gemini-3.8-flash-high": "MODEL_PLACEHOLDER_M318",
+  "gemini-3.8-flash-medium": "MODEL_PLACEHOLDER_M319",
+  "gemini-3.8-flash-low": "MODEL_PLACEHOLDER_M320"
+};
+var MAX_CONVERSATIONS = 1e3;
+var conversations = globalThis[/* @__PURE__ */ Symbol.for("opencode-antigravity-auth/agy-conversations")] ??= /* @__PURE__ */ new Map();
+function agySessionId(seed) {
+  return createHash("sha256").update(seed).digest().readBigInt64BE(0).toString();
+}
+function conversationFor(chatKey) {
+  const fresh = () => ({ cascadeId: randomUUID(), trajectoryId: randomUUID(), calls: 0, failedAttempts: 0 });
+  if (!chatKey) return fresh();
+  let conversation = conversations.get(chatKey);
+  if (!conversation) {
+    conversation = fresh();
+    conversations.set(chatKey, conversation);
+    if (conversations.size > MAX_CONVERSATIONS) {
+      const oldest = conversations.keys().next().value;
+      if (oldest !== void 0) conversations.delete(oldest);
+    }
+  }
+  return conversation;
+}
+function agyRequestIds(chatKey, accountSeed, request, wireModel, messageCount) {
+  const conversation = conversationFor(chatKey ? `${chatKey}
+${accountSeed}` : void 0);
+  if (request !== void 0 && conversation.lastRequest === request) {
+    conversation.failedAttempts += 1;
+  } else {
+    conversation.calls += 1;
+    conversation.lastRequest = request;
+  }
+  const number = conversation.calls - 1;
+  const lastStep = Math.max(0, messageCount - 1) + conversation.failedAttempts;
+  const isClaude = wireModel.toLowerCase().includes("claude");
+  const isGemini = wireModel.toLowerCase().includes("gemini");
+  const labels = {
+    cascade_id: conversation.cascadeId,
+    last_step_index: String(lastStep),
+    ...MODEL_ENUMS[wireModel] ? { model_enum: MODEL_ENUMS[wireModel] } : {},
+    request_id: `${conversation.trajectoryId}-${number}`,
+    root_cascade_id: conversation.cascadeId,
+    trajectory_id: conversation.trajectoryId,
+    used_claude: String(isClaude),
+    used_claude_conservative: "false",
+    used_non_gemini_model: String(!isGemini)
+  };
+  return {
+    requestId: `agent/${conversation.cascadeId}/${Date.now()}/${conversation.trajectoryId}/${lastStep + 1}`,
+    labels
+  };
+}
+function agyRetryDelayMs(retry) {
+  if (retry <= 0) return 4e3;
+  return Math.round(Math.min(3e4, 4e3 * 2 ** retry) * (0.5 + 0.5 * Math.random()));
+}
+
 // src/antigravity/oauth.ts
-import { generatePKCE } from "@openauthjs/openauth/pkce";
+import { createHash as createHash3, randomBytes as randomBytes2 } from "node:crypto";
 
 // src/plugin/debug.ts
 import { createWriteStream, mkdirSync as mkdirSync2, readdirSync, statSync, unlinkSync as unlinkSync2 } from "node:fs";
@@ -239,7 +430,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash as createHash2, randomBytes } from "node:crypto";
 import lockfile from "proper-lockfile";
 var log = createLogger("storage");
 var GITIGNORE_ENTRIES = [
@@ -423,14 +614,14 @@ async function ensureFileExists(path4) {
 }
 async function withFileLock(path4, fn) {
   await ensureFileExists(path4);
-  let release = null;
+  let release2 = null;
   try {
-    release = await lockfile.lock(path4, LOCK_OPTIONS);
+    release2 = await lockfile.lock(path4, LOCK_OPTIONS);
     return await fn();
   } finally {
-    if (release) {
+    if (release2) {
       try {
-        await release();
+        await release2();
       } catch (unlockError) {
         log.warn("Failed to release lock", { error: String(unlockError) });
       }
@@ -586,7 +777,7 @@ function mergeAccountStorage(existing, incoming) {
   };
 }
 function hashRefreshToken(refreshToken) {
-  return createHash("sha256").update(refreshToken).digest("hex");
+  return createHash2("sha256").update(refreshToken).digest("hex");
 }
 function deduplicateAccountsByEmail(accounts) {
   const emailToNewestIndex = /* @__PURE__ */ new Map();
@@ -893,7 +1084,7 @@ async function writeAccountsAtomically(path4, storage) {
   }
 }
 async function backupUnreadableAccounts(path4, content) {
-  const digest2 = createHash("sha256").update(content).digest("hex").slice(0, 12);
+  const digest2 = createHash2("sha256").update(content).digest("hex").slice(0, 12);
   const backupPath = `${path4}.corrupt-${digest2}`;
   try {
     await fs.writeFile(backupPath, content, { encoding: "utf-8", mode: 384 });
@@ -1115,7 +1306,8 @@ function logAntigravityDebugResponse(context, response, meta = {}) {
   }
   const durationMs = Date.now() - context.startedAt;
   logDebug(
-    `[Antigravity Debug ${context.id}] Response ${response.status} ${response.statusText} (${durationMs}ms)`
+    // HTTP/2 answers carry no status text.
+    `[Antigravity Debug ${context.id}] Response ${response.status}${response.statusText ? ` ${response.statusText}` : ""} (${durationMs}ms)`
   );
   logDebug(
     `[Antigravity Debug ${context.id}] Response Headers: ${JSON.stringify(
@@ -1347,40 +1539,40 @@ function calculateTokenExpiry(requestTimeMs, expiresInSeconds) {
 
 // src/antigravity/oauth.ts
 var log2 = createLogger("oauth");
-function encodeState(payload) {
-  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-}
-function decodeState(state2) {
-  const normalized = state2.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = normalized.padEnd(normalized.length + (4 - normalized.length % 4) % 4, "=");
-  const json = Buffer.from(padded, "base64").toString("utf8");
-  const parsed = JSON.parse(json);
-  if (typeof parsed.verifier !== "string") {
-    throw new Error("Missing PKCE verifier in state");
+var AUTHORIZATION_TTL_MS = 30 * 60 * 1e3;
+var pendingAuthorizations = globalThis[/* @__PURE__ */ Symbol.for("opencode-antigravity-auth/pending-authorizations")] ??= /* @__PURE__ */ new Map();
+function takePendingAuthorization(state2) {
+  const now = Date.now();
+  for (const [key, pending2] of pendingAuthorizations) {
+    if (now - pending2.createdAt > AUTHORIZATION_TTL_MS) pendingAuthorizations.delete(key);
   }
-  return {
-    verifier: parsed.verifier,
-    projectId: typeof parsed.projectId === "string" ? parsed.projectId : ""
-  };
+  const pending = pendingAuthorizations.get(state2);
+  pendingAuthorizations.delete(state2);
+  return pending;
+}
+function generateVerifier() {
+  return randomBytes2(32).toString("base64url");
 }
 async function authorizeAntigravity(projectId = "") {
-  const pkce = await generatePKCE();
-  const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-  url.searchParams.set("client_id", ANTIGRAVITY_CLIENT_ID);
-  url.searchParams.set("response_type", "code");
-  url.searchParams.set("redirect_uri", ANTIGRAVITY_REDIRECT_URI);
-  url.searchParams.set("scope", ANTIGRAVITY_SCOPES.join(" "));
-  url.searchParams.set("code_challenge", pkce.challenge);
-  url.searchParams.set("code_challenge_method", "S256");
-  url.searchParams.set(
-    "state",
-    encodeState({ verifier: pkce.verifier, projectId: projectId || "" })
-  );
-  url.searchParams.set("access_type", "offline");
-  url.searchParams.set("prompt", "select_account consent");
+  const verifier = generateVerifier();
+  const state2 = randomBytes2(16).toString("base64url");
+  pendingAuthorizations.set(state2, { verifier, projectId: projectId || "", createdAt: Date.now() });
+  const params = new URLSearchParams({
+    access_type: "offline",
+    client_id: ANTIGRAVITY_CLIENT_ID,
+    code_challenge: createHash3("sha256").update(verifier).digest("base64url"),
+    code_challenge_method: "S256",
+    // Antigravity sends `consent` alone. `select_account` is kept because with
+    // `consent` alone Google silently reuses the browser's current session,
+    // so a second login returns the account already in the pool.
+    prompt: "select_account consent",
+    redirect_uri: ANTIGRAVITY_REDIRECT_URI,
+    response_type: "code",
+    scope: ANTIGRAVITY_SCOPES.join(" "),
+    state: state2
+  });
   return {
-    url: url.toString(),
-    verifier: pkce.verifier,
+    url: `https://accounts.google.com/o/oauth2/auth?${params}`,
     projectId: projectId || ""
   };
 }
@@ -1389,7 +1581,7 @@ async function fetchWithTimeout(url, options, timeoutMs = FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    return await googleFetch(url, { ...options, signal: controller.signal });
   } finally {
     clearTimeout(timeout);
   }
@@ -1401,10 +1593,7 @@ async function fetchProjectID(accessToken) {
     "Content-Type": "application/json",
     "User-Agent": ANTIGRAVITY_CLI_USER_AGENT
   };
-  const loadEndpoints = Array.from(
-    /* @__PURE__ */ new Set([...ANTIGRAVITY_LOAD_ENDPOINTS, ...ANTIGRAVITY_ENDPOINT_FALLBACKS])
-  );
-  for (const baseEndpoint of loadEndpoints) {
+  for (const baseEndpoint of ANTIGRAVITY_ENDPOINT_FALLBACKS) {
     try {
       const url = `${baseEndpoint}/v1internal:loadCodeAssist`;
       const response = await fetchWithTimeout(url, {
@@ -1444,39 +1633,38 @@ async function fetchProjectID(accessToken) {
 }
 async function exchangeAntigravity(code, state2) {
   try {
-    const { verifier, projectId } = decodeState(state2);
+    const pending = takePendingAuthorization(state2);
+    if (!pending) {
+      return {
+        type: "failed",
+        error: "This sign-in is unknown or expired. Start the login again and paste the code it shows."
+      };
+    }
+    const { verifier, projectId } = pending;
     const startTime = Date.now();
-    const tokenResponse = await fetchWithTimeout("https://oauth2.googleapis.com/token", {
+    const tokenResponse = await googleRequest("https://oauth2.googleapis.com/token", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-        "Accept": "*/*",
-        "Accept-Encoding": "gzip, deflate, br",
-        "User-Agent": GEMINI_CLI_HEADERS["User-Agent"]
-      },
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         client_id: ANTIGRAVITY_CLIENT_ID,
         client_secret: ANTIGRAVITY_CLIENT_SECRET,
         code,
+        code_verifier: verifier,
         grant_type: "authorization_code",
-        redirect_uri: ANTIGRAVITY_REDIRECT_URI,
-        code_verifier: verifier
-      })
+        redirect_uri: ANTIGRAVITY_REDIRECT_URI
+      }).toString(),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
     });
     if (!tokenResponse.ok) {
       const errorText = await tokenResponse.text();
       return { type: "failed", error: errorText };
     }
     const tokenPayload = await tokenResponse.json();
-    const userInfoResponse = await fetchWithTimeout(
-      "https://www.googleapis.com/oauth2/v1/userinfo?alt=json",
-      {
-        headers: {
-          Authorization: `Bearer ${tokenPayload.access_token}`,
-          "User-Agent": GEMINI_CLI_HEADERS["User-Agent"]
-        }
-      }
-    );
+    const userInfoResponse = await googleRequest("https://www.googleapis.com/oauth2/v2/userinfo", {
+      method: "GET",
+      headers: { Authorization: `Bearer ${tokenPayload.access_token}` },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
+    });
     const userInfo = userInfoResponse.ok ? await userInfoResponse.json() : {};
     const refreshToken = tokenPayload.refresh_token;
     if (!refreshToken) {
@@ -2616,12 +2804,9 @@ async function loadManagedProject(accessToken, projectId) {
     Authorization: `Bearer ${accessToken}`,
     "User-Agent": ANTIGRAVITY_CLI_USER_AGENT
   };
-  const loadEndpoints = Array.from(
-    /* @__PURE__ */ new Set([...ANTIGRAVITY_LOAD_ENDPOINTS, ...ANTIGRAVITY_ENDPOINT_FALLBACKS])
-  );
-  for (const baseEndpoint of loadEndpoints) {
+  for (const baseEndpoint of ANTIGRAVITY_ENDPOINT_FALLBACKS) {
     try {
-      const response = await fetch(
+      const response = await googleFetch(
         `${baseEndpoint}/v1internal:loadCodeAssist`,
         {
           method: "POST",
@@ -2648,9 +2833,9 @@ async function onboardManagedProject(accessToken, tierId, projectId, attempts = 
     metadata
   };
   for (const baseEndpoint of ANTIGRAVITY_ENDPOINT_FALLBACKS) {
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
+    for (let attempt2 = 0; attempt2 < attempts; attempt2 += 1) {
       try {
-        const response = await fetch(
+        const response = await googleFetch(
           `${baseEndpoint}/v1internal:onboardUser`,
           {
             method: "POST",
@@ -2761,10 +2946,10 @@ async function ensureProjectContext(auth) {
 }
 
 // src/plugin/request.ts
-import crypto2 from "node:crypto";
+import crypto from "node:crypto";
 
 // src/plugin/cache.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 
 // src/plugin/cache/signature-cache.ts
 import { existsSync as existsSync3, mkdirSync as mkdirSync4, readFileSync as readFileSync3, writeFileSync as writeFileSync3, renameSync as renameSync2, unlinkSync as unlinkSync3 } from "node:fs";
@@ -3139,7 +3324,7 @@ function shutdownDiskSignatureCache() {
   diskCache = null;
 }
 function hashText(text) {
-  return createHash2("sha256").update(text, "utf8").digest("hex").slice(0, SIGNATURE_TEXT_HASH_HEX_LEN);
+  return createHash4("sha256").update(text, "utf8").digest("hex").slice(0, SIGNATURE_TEXT_HASH_HEX_LEN);
 }
 function makeDiskKey(sessionId, textHash) {
   return `${sessionId}:${textHash}`;
@@ -3370,16 +3555,20 @@ var AntigravityConfigSchema = z2.object({
   empty_response_retry_delay_ms: z2.number().min(500).max(1e4).default(2e3),
   /**
    * Seconds to wait for a streamed answer's first content before sending the
-   * same request once more and keeping whichever answers first.
+   * request once more on another account and keeping whichever answers first.
    *
-   * Antigravity sometimes holds a request for 15-60s before streaming anything,
-   * while a repeat on the same account (warm prompt cache) usually answers in a
-   * few seconds. A model that is thinking streams its first thought well before
-   * this, so only stalled requests are repeated. Each repeat counts as one more
+   * Capacity is per account: one account can hold requests for 30-60s (or
+   * answer 503 "No capacity available") while another answers in 3s. The
+   * repeat always goes to a different account, never twice to one, so no
+   * account sends parallel duplicates; with one usable account nothing is
+   * repeated. The stalled account is then left out for 5 minutes (longer
+   * while it keeps stalling) and the
+   * chat moves to the account that answered. Each repeat counts as one more
    * request against quota. 0 disables.
    *
-   * Off by default: two identical requests in parallel from one account is
-   * traffic the Antigravity app never sends.
+   * Off by default: a repeat sends the same conversation from two accounts
+   * within seconds, which links them more plainly than anything else the
+   * plugin does.
    *
    * @default 0
    */
@@ -3500,8 +3689,9 @@ var AntigravityConfigSchema = z2.object({
    *
    * Hybrid by default: spreads use across accounts by health score, token
    * bucket and least-recent use, so no single account carries all traffic
-   * (sticky did, and that account was banned). Each switch starts a cold
-   * Gemini prompt cache, so the next request re-reads the conversation.
+   * (sticky did, and that account was banned). A chat stays on its account
+   * while that account can serve it, because each switch starts a cold
+   * Gemini prompt cache; new chats go to the best-rested account.
    * @default "hybrid"
    */
   account_selection_strategy: AccountSelectionStrategySchema.default("hybrid"),
@@ -3526,15 +3716,16 @@ var AntigravityConfigSchema = z2.object({
   /**
    * Scheduling mode for rate limit behavior.
    * 
-   * - `cache_first`: Wait for same account to recover (preserves prompt cache). Default.
+   * - `cache_first`: Retry a first 429 on the same account (preserves prompt cache), after agy's 4 s. Default.
    * - `balance`: Switch account immediately on rate limit. Maximum availability.
    * - `performance_first`: Round-robin distribution for maximum throughput.
    * @default "cache_first"
    */
   scheduling_mode: SchedulingModeSchema.default("cache_first"),
   /**
-   * Maximum seconds to wait for same account in cache_first mode.
-   * If the account's rate limit reset time exceeds this, switch accounts.
+   * No longer used: in cache_first mode a first 429 is retried on the same
+   * account after agy's 4 s (it used to wait up to this many seconds). Kept
+   * so existing configs still load.
    * 
    * @default 60
    */
@@ -4123,7 +4314,6 @@ function createSignatureStore() {
 var defaultSignatureStore = createSignatureStore();
 
 // src/plugin/request-helpers.ts
-import { gzipSync } from "node:zlib";
 var log6 = createLogger("request-helpers");
 var ANTIGRAVITY_PREVIEW_LINK = "https://goo.gle/enable-preview-features";
 var UNSUPPORTED_CONSTRAINTS = [
@@ -5365,11 +5555,11 @@ async function peekSseForContent(response) {
     empty: !meaningful
   };
 }
-async function fetchStreamWithHedge(send, hedgeAfterMs, signal, onRepeat) {
-  const attempt = () => {
+async function fetchStreamWithHedge(send, hedgeAfterMs, signal, onRepeat, sendRepeat = send) {
+  const attempt2 = (sender = send) => {
     const controller = new AbortController();
     const linked = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
-    const outcome = send(linked).then(async (response) => {
+    const outcome = Promise.resolve().then(() => sender(linked)).then(async (response) => {
       if (!response.ok) return { response, hasContent: false };
       const peeked = await peekSseForContent(response);
       return { response: peeked.response, hasContent: !peeked.empty };
@@ -5385,7 +5575,7 @@ async function fetchStreamWithHedge(send, hedgeAfterMs, signal, onRepeat) {
     void loser.outcome.then((o) => "error" in o ? void 0 : o.response.body?.cancel()).catch(() => {
     });
   };
-  const original = attempt();
+  const original = attempt2();
   if (hedgeAfterMs <= 0) return unwrap(await original.outcome);
   let timer;
   const stalled = new Promise((resolve) => {
@@ -5395,7 +5585,7 @@ async function fetchStreamWithHedge(send, hedgeAfterMs, signal, onRepeat) {
   clearTimeout(timer);
   if (early || signal?.aborted) return unwrap(early ?? await original.outcome);
   onRepeat?.("sent");
-  const repeat = attempt();
+  const repeat = attempt2(sendRepeat);
   const pending = /* @__PURE__ */ new Set([original, repeat]);
   while (pending.size > 0) {
     const settled = await Promise.race([...pending].map((a) => a.outcome.then(() => a)));
@@ -5410,10 +5600,14 @@ async function fetchStreamWithHedge(send, hedgeAfterMs, signal, onRepeat) {
   discard(repeat);
   return unwrap(await original.outcome);
 }
-function withGzipBody(init, body) {
-  const headers = new Headers(init.headers);
-  headers.set("Content-Encoding", "gzip");
-  return { ...init, headers, body: gzipSync(body, { level: 3 }) };
+function readHostSessionKey(input2, init) {
+  const fromInit = init?.headers ? new Headers(init.headers) : void 0;
+  const fromInput = input2 instanceof Request ? input2.headers : void 0;
+  for (const headers of [fromInit, fromInput]) {
+    const value = headers?.get("x-opencode-session") ?? headers?.get("x-session-affinity");
+    if (value?.trim()) return value.trim();
+  }
+  return void 0;
 }
 var SKIP_PARSE_KEYS = /* @__PURE__ */ new Set([
   "oldString",
@@ -6035,6 +6229,37 @@ data: ${JSON.stringify({ type: "message_stop" })}
       "X-Antigravity-Error-Type": "prompt_too_long"
     }
   });
+}
+
+// src/v2/request-kind.ts
+var REQUEST_KIND_HEADER = "x-antigravity-request-kind";
+var TITLE_REQUEST_HEADER = "x-opencode-antigravity-title";
+var TITLE_THINKING = { thinkingLevel: "low", includeThoughts: false };
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function applyRequestKind(url, init) {
+  const headers = new Headers(init.headers);
+  const kind = headers.get(REQUEST_KIND_HEADER);
+  if (kind === null) return init;
+  headers.delete(REQUEST_KIND_HEADER);
+  if (kind === "title") headers.set(TITLE_REQUEST_HEADER, "1");
+  const untagged = { ...init, headers };
+  if (kind !== "title" || !/\/models\/[^/:]*gemini-(?:[3-9]|[1-9]\d+)(?=[.-]|[:/]|$)/i.test(url) || typeof init.body !== "string") {
+    return untagged;
+  }
+  let body;
+  try {
+    body = JSON.parse(init.body);
+  } catch {
+    return untagged;
+  }
+  if (!isRecord(body)) return untagged;
+  const generationConfig = isRecord(body.generationConfig) ? body.generationConfig : {};
+  const thinkingConfig = isRecord(generationConfig.thinkingConfig) ? generationConfig.thinkingConfig : {};
+  const { thinkingBudget: _budget, thinking_budget: _snakeBudget, ...rest } = thinkingConfig;
+  body.generationConfig = { ...generationConfig, thinkingConfig: { ...rest, ...TITLE_THINKING } };
+  return { ...untagged, body: JSON.stringify(body) };
 }
 
 // src/plugin/thinking-recovery.ts
@@ -7391,68 +7616,9 @@ function createSessionRecoveryHook(ctx, config) {
   };
 }
 
-// src/plugin/fingerprint.ts
-import * as crypto from "node:crypto";
-var OS_VERSIONS = {
-  darwin: ["10.15.7", "11.6.8", "12.6.3", "13.5.2", "14.2.1", "14.5"],
-  win32: ["10.0.19041", "10.0.19042", "10.0.19043", "10.0.22000", "10.0.22621", "10.0.22631"],
-  linux: ["5.15.0", "5.19.0", "6.1.0", "6.2.0", "6.5.0", "6.6.0"]
-};
-var ARCHITECTURES = ["x64", "arm64"];
-var IDE_TYPES = [
-  "ANTIGRAVITY"
-];
-var SDK_CLIENTS = [
-  "google-cloud-sdk vscode_cloudshelleditor/0.1",
-  "google-cloud-sdk vscode/1.86.0",
-  "google-cloud-sdk vscode/1.87.0",
-  "google-cloud-sdk vscode/1.96.0"
-];
-var MAX_FINGERPRINT_HISTORY = 5;
-var PLATFORM_CHOICES = ["darwin", "win32"];
-function randomFrom2(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-function platformToDisplayName(platform) {
-  return platform === "win32" ? "WINDOWS" : "MACOS";
-}
-function generateDeviceId() {
-  return crypto.randomUUID();
-}
-function generateSessionToken() {
-  return crypto.randomBytes(16).toString("hex");
-}
-function generateFingerprint() {
-  const platform = randomFrom2(PLATFORM_CHOICES);
-  const arch = randomFrom2(ARCHITECTURES);
-  const osVersion = randomFrom2(OS_VERSIONS[platform] ?? OS_VERSIONS.darwin);
-  return {
-    deviceId: generateDeviceId(),
-    sessionToken: generateSessionToken(),
-    userAgent: `antigravity/${getAntigravityVersion()} ${platform}/${arch}`,
-    apiClient: randomFrom2(SDK_CLIENTS),
-    clientMetadata: {
-      ideType: randomFrom2(IDE_TYPES),
-      platform: platformToDisplayName(platform),
-      pluginType: "GEMINI"
-    },
-    createdAt: Date.now()
-  };
-}
-function updateFingerprintVersion(fingerprint) {
-  const currentVersion = getAntigravityVersion();
-  const versionPattern = /^(antigravity\/)([\d.]+)/;
-  const match = fingerprint.userAgent.match(versionPattern);
-  if (!match || match[2] === currentVersion) {
-    return false;
-  }
-  fingerprint.userAgent = fingerprint.userAgent.replace(versionPattern, `$1${currentVersion}`);
-  return true;
-}
-
 // src/plugin/request.ts
 var log7 = createLogger("request");
-var PLUGIN_SESSION_ID = `-${crypto2.randomUUID()}`;
+var PLUGIN_SESSION_ID = `-${crypto.randomUUID()}`;
 var MAX_DEDUP_SESSIONS = 50;
 var sessionDisplayedThinkingHashes = /* @__PURE__ */ new Map();
 function getDisplayedThinkingHashes(sessionId) {
@@ -7490,7 +7656,7 @@ function signatureCacheProjectKey(model, projectKey) {
   return projectKey;
 }
 function hashConversationSeed(seed) {
-  return crypto2.createHash("sha256").update(seed, "utf8").digest("hex").slice(0, 16);
+  return crypto.createHash("sha256").update(seed, "utf8").digest("hex").slice(0, 16);
 }
 function extractTextFromContent(content) {
   if (typeof content === "string") {
@@ -8011,7 +8177,7 @@ function generateSyntheticProjectId() {
   const nouns = ["fuze", "wave", "spark", "flow", "core"];
   const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
   const noun = nouns[Math.floor(Math.random() * nouns.length)];
-  const randomPart = crypto2.randomUUID().slice(0, 5).toLowerCase();
+  const randomPart = crypto.randomUUID().slice(0, 5).toLowerCase();
   return `${adj}-${noun}-${randomPart}`;
 }
 function ensureDefaultGemini3ThinkingLevel(requestPayload, effectiveModel, thinkingLevel) {
@@ -8745,19 +8911,45 @@ ${hint}`;
             };
           }
         }
-        const wrappedBody = {
-          project: effectiveProjectId,
-          model: headerStyle === "antigravity" ? toAntigravityWireModel(effectiveModel) : effectiveModel,
-          request: requestPayload
-        };
+        sessionId = signatureSessionKey;
+        let wrappedBody;
         if (headerStyle === "antigravity") {
-          wrappedBody.requestType = "agent";
-          wrappedBody.userAgent = "antigravity";
-          wrappedBody.requestId = "agent-" + crypto2.randomUUID();
-        }
-        if (wrappedBody.request && typeof wrappedBody.request === "object") {
-          sessionId = signatureSessionKey;
-          wrappedBody.request.sessionId = signatureSessionKey;
+          const wireModel = toAntigravityWireModel(effectiveModel);
+          const { contents, systemInstruction, tools, generationConfig, ...rest } = requestPayload;
+          const thinkingConfig = generationConfig?.thinkingConfig;
+          if (typeof thinkingConfig?.thinkingLevel === "string") {
+            thinkingConfig.thinkingLevel = thinkingConfig.thinkingLevel.toUpperCase();
+          }
+          const isTitle = new Headers(init?.headers).has(TITLE_REQUEST_HEADER);
+          const { requestId, labels } = agyRequestIds(
+            isTitle ? void 0 : readHostSessionKey(input2, init),
+            options?.fingerprint?.deviceId ?? PLUGIN_SESSION_ID,
+            options?.pluginRequestId,
+            wireModel,
+            Array.isArray(contents) ? contents.length : 0
+          );
+          wrappedBody = {
+            project: effectiveProjectId,
+            requestId,
+            request: {
+              contents,
+              systemInstruction,
+              tools,
+              ...rest,
+              labels,
+              generationConfig,
+              sessionId: agySessionId(options?.fingerprint?.deviceId ?? PLUGIN_SESSION_ID)
+            },
+            model: wireModel,
+            userAgent: "antigravity",
+            requestType: "agent"
+          };
+        } else {
+          wrappedBody = {
+            project: effectiveProjectId,
+            model: effectiveModel,
+            request: { ...requestPayload, sessionId: signatureSessionKey }
+          };
         }
         body = JSON.stringify(wrappedBody);
       }
@@ -8765,7 +8957,7 @@ ${hint}`;
       throw error;
     }
   }
-  if (streaming) {
+  if (streaming && headerStyle !== "antigravity") {
     headers.set("Accept", "text/event-stream");
   }
   if (isClaudeThinking) {
@@ -8780,10 +8972,7 @@ ${hint}`;
     }
   }
   if (headerStyle === "antigravity") {
-    headers.set(
-      "User-Agent",
-      isGemini4ArgonModel(effectiveModel) ? ANTIGRAVITY_ARGON_USER_AGENT : ANTIGRAVITY_CLI_USER_AGENT
-    );
+    headers.set("User-Agent", ANTIGRAVITY_CLI_USER_AGENT);
     headers.delete("X-Goog-Api-Client");
     headers.delete("Client-Metadata");
   }
@@ -9208,17 +9397,15 @@ async function performRefresh(auth, refreshTokenValue) {
   const timeout = setTimeout(() => controller.abort(), TOKEN_REFRESH_TIMEOUT_MS);
   try {
     const startTime = Date.now();
-    const response = await fetch("https://oauth2.googleapis.com/token", {
+    const response = await googleRequest("https://oauth2.googleapis.com/token", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded"
-      },
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: parts.refreshToken,
         client_id: ANTIGRAVITY_CLIENT_ID,
-        client_secret: ANTIGRAVITY_CLIENT_SECRET
-      }),
+        client_secret: ANTIGRAVITY_CLIENT_SECRET,
+        grant_type: "refresh_token",
+        refresh_token: parts.refreshToken
+      }).toString(),
       signal: controller.signal
     });
     if (!response.ok) {
@@ -9230,7 +9417,7 @@ async function performRefresh(auth, refreshTokenValue) {
       }
       const { code, description } = parseOAuthErrorPayload(errorText);
       const details = [code, description ?? errorText].filter(Boolean).join(": ");
-      const baseMessage = `Antigravity token refresh failed (${response.status} ${response.statusText})`;
+      const baseMessage = `Antigravity token refresh failed (${response.status}${response.statusText ? ` ${response.statusText}` : ""})`;
       const message = details ? `${baseMessage} - ${details}` : baseMessage;
       log8.warn("Token refresh failed", { status: response.status, code, details });
       if (code === "invalid_grant") {
@@ -9278,297 +9465,6 @@ async function performRefresh(auth, refreshTokenValue) {
   } finally {
     clearTimeout(timeout);
   }
-}
-
-// src/plugin/server.ts
-import { createServer } from "node:http";
-import { readFileSync as readFileSync6, existsSync as existsSync6 } from "node:fs";
-var redirectUri = new URL(ANTIGRAVITY_REDIRECT_URI);
-var callbackPath = redirectUri.pathname || "/";
-function isOrbStackDockerHost() {
-  if (!existsSync6("/.dockerenv")) {
-    return false;
-  }
-  try {
-    if (existsSync6("/proc/version")) {
-      const version = readFileSync6("/proc/version", "utf8").toLowerCase();
-      if (version.includes("orbstack")) {
-        return true;
-      }
-    }
-    const hostname = process.env.HOSTNAME || "";
-    if (hostname.startsWith("orbstack-") || hostname.endsWith(".orb") || hostname === "orbstack") {
-      return true;
-    }
-    if (existsSync6("/etc/resolv.conf")) {
-      const resolv = readFileSync6("/etc/resolv.conf", "utf8");
-      if (resolv.includes("orb.local") || resolv.includes("orbstack")) {
-        return true;
-      }
-    }
-    if (process.platform === "linux" && existsSync6("/.dockerenv")) {
-      if (existsSync6("/run/host-services")) {
-        return true;
-      }
-    }
-  } catch {
-  }
-  return false;
-}
-function isWSL() {
-  if (process.platform !== "linux") return false;
-  try {
-    const release = readFileSync6("/proc/version", "utf8").toLowerCase();
-    return release.includes("microsoft") || release.includes("wsl");
-  } catch {
-    return false;
-  }
-}
-function isRemoteEnvironment() {
-  if (process.env.SSH_CLIENT || process.env.SSH_TTY || process.env.SSH_CONNECTION) {
-    return true;
-  }
-  if (process.env.REMOTE_CONTAINERS || process.env.CODESPACES) {
-    return true;
-  }
-  return false;
-}
-function getBindAddress() {
-  const envBind = process.env.OPENCODE_ANTIGRAVITY_OAUTH_BIND;
-  if (envBind) {
-    return envBind;
-  }
-  if (isOrbStackDockerHost()) {
-    return "127.0.0.1";
-  }
-  if (isWSL() || isRemoteEnvironment()) {
-    return "0.0.0.0";
-  }
-  return "127.0.0.1";
-}
-async function startOAuthListener({ timeoutMs = 5 * 60 * 1e3 } = {}) {
-  const port = redirectUri.port ? Number.parseInt(redirectUri.port, 10) : redirectUri.protocol === "https:" ? 443 : 80;
-  const origin = `${redirectUri.protocol}//${redirectUri.host}`;
-  let settled = false;
-  let resolveCallback;
-  let rejectCallback;
-  let timeoutHandle;
-  const callbackPromise = new Promise((resolve, reject) => {
-    resolveCallback = (url) => {
-      if (settled) return;
-      settled = true;
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-      resolve(url);
-    };
-    rejectCallback = (error) => {
-      if (settled) return;
-      settled = true;
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-      reject(error);
-    };
-  });
-  callbackPromise.catch(() => {
-  });
-  const successResponse = `<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Authentication Successful</title>
-    <style>
-      :root {
-        --bg: #FAFAFA;
-        --card-bg: #FFFFFF;
-        --text-primary: #1F2937;
-        --text-secondary: #6B7280;
-        --accent: #2563EB;
-        --success: #10B981;
-        --border: #E5E7EB;
-      }
-      @media (prefers-color-scheme: dark) {
-        :root {
-          --bg: #111827;
-          --card-bg: #1F2937;
-          --text-primary: #F9FAFB;
-          --text-secondary: #9CA3AF;
-          --accent: #3B82F6;
-          --success: #34D399;
-          --border: #374151;
-        }
-      }
-      body {
-        margin: 0;
-        min-height: 100vh;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-        background: var(--bg);
-        color: var(--text-primary);
-        padding: 1rem;
-      }
-      .card {
-        background: var(--card-bg);
-        border-radius: 16px;
-        padding: 3rem 2rem;
-        width: 100%;
-        max-width: 400px;
-        text-align: center;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-        border: 1px solid var(--border);
-      }
-      .icon-wrapper {
-        width: 64px;
-        height: 64px;
-        background: rgba(16, 185, 129, 0.1);
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        margin: 0 auto 1.5rem;
-      }
-      .icon {
-        width: 32px;
-        height: 32px;
-        color: var(--success);
-      }
-      h1 {
-        font-size: 1.5rem;
-        font-weight: 600;
-        margin: 0 0 0.5rem;
-        letter-spacing: -0.025em;
-      }
-      p {
-        color: var(--text-secondary);
-        font-size: 0.95rem;
-        line-height: 1.5;
-        margin: 0 0 2rem;
-      }
-      .btn {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        background: var(--text-primary);
-        color: var(--card-bg);
-        font-weight: 500;
-        padding: 0.75rem 1.5rem;
-        border-radius: 8px;
-        text-decoration: none;
-        transition: opacity 0.2s;
-        font-size: 0.95rem;
-        border: none;
-        cursor: pointer;
-        width: 100%;
-        box-sizing: border-box;
-      }
-      .btn:hover {
-        opacity: 0.9;
-      }
-      .sub-text {
-        margin-top: 1rem;
-        font-size: 0.8rem;
-        color: var(--text-secondary);
-      }
-    </style>
-  </head>
-  <body>
-    <div class="card">
-      <div class="icon-wrapper">
-        <svg class="icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7" />
-        </svg>
-      </div>
-      <h1>All set!</h1>
-      <p>You've successfully authenticated with Antigravity. You can now return to Opencode.</p>
-      <button class="btn" onclick="closeWindow()">Close this tab</button>
-      <div class="sub-text">Usage Tip: Most browsers block auto-closing. If the button doesn't work, please close the tab manually.</div>
-    </div>
-    <script>
-      function closeWindow() {
-        window.close();
-        // Fallback if window.close() is blocked
-        document.querySelector('.btn').textContent = "Tab cannot be closed automatically";
-        document.querySelector('.btn').style.opacity = "0.5";
-        document.querySelector('.btn').style.cursor = "default";
-      }
-    </script>
-  </body>
-</html>`;
-  timeoutHandle = setTimeout(() => {
-    rejectCallback(new Error("Timed out waiting for OAuth callback"));
-  }, timeoutMs);
-  timeoutHandle.unref?.();
-  const server = createServer((request, response) => {
-    if (!request.url) {
-      response.writeHead(400, { "Content-Type": "text/plain" });
-      response.end("Invalid request");
-      return;
-    }
-    const url = new URL(request.url, origin);
-    if (url.pathname !== callbackPath) {
-      response.writeHead(404, { "Content-Type": "text/plain" });
-      response.end("Not found");
-      return;
-    }
-    const oauthError = url.searchParams.get("error");
-    if (oauthError) {
-      response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
-      response.end(`Google sign-in was not completed (${oauthError}). You can close this tab.`);
-      rejectCallback(new Error(`Google sign-in was not completed: ${oauthError}`));
-      setImmediate(() => {
-        server.close();
-      });
-      return;
-    }
-    if (!url.searchParams.get("code")) {
-      response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
-      response.end("Missing authorization code.");
-      return;
-    }
-    response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    response.end(successResponse);
-    resolveCallback(url);
-    setImmediate(() => {
-      server.close();
-    });
-  });
-  const bindAddress = getBindAddress();
-  await new Promise((resolve, reject) => {
-    const handleError = (error) => {
-      server.off("error", handleError);
-      clearTimeout(timeoutHandle);
-      if (error.code === "EADDRINUSE") {
-        reject(new Error(
-          `Port ${port} is already in use. Another process is occupying this port. Please terminate the process or try again later.`
-        ));
-        return;
-      }
-      reject(error);
-    };
-    server.once("error", handleError);
-    server.listen(port, bindAddress, () => {
-      server.off("error", handleError);
-      resolve();
-    });
-  });
-  server.on("error", (error) => {
-    rejectCallback(error instanceof Error ? error : new Error(String(error)));
-  });
-  return {
-    waitForCallback: () => callbackPromise,
-    close: () => new Promise((resolve, reject) => {
-      server.close((error) => {
-        if (error && error.code !== "ERR_SERVER_NOT_RUNNING") {
-          reject(error);
-          return;
-        }
-        if (!settled) {
-          rejectCallback(new Error("OAuth listener closed before callback"));
-        }
-        resolve();
-      });
-    })
-  };
 }
 
 // src/plugin/rotation.ts
@@ -9836,6 +9732,59 @@ function initHealthTracker(config) {
   return globalHealthTracker;
 }
 
+// src/plugin/fingerprint.ts
+import * as crypto2 from "node:crypto";
+var ARCHITECTURES = ["x64", "arm64"];
+var IDE_TYPES = [
+  "ANTIGRAVITY"
+];
+var SDK_CLIENTS = [
+  "google-cloud-sdk vscode_cloudshelleditor/0.1",
+  "google-cloud-sdk vscode/1.86.0",
+  "google-cloud-sdk vscode/1.87.0",
+  "google-cloud-sdk vscode/1.96.0"
+];
+var MAX_FINGERPRINT_HISTORY = 5;
+var PLATFORM_CHOICES = ["darwin", "win32"];
+function randomFrom(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+function platformToDisplayName(platform) {
+  return platform === "win32" ? "WINDOWS" : "MACOS";
+}
+function generateDeviceId() {
+  return crypto2.randomUUID();
+}
+function generateSessionToken() {
+  return crypto2.randomBytes(16).toString("hex");
+}
+function generateFingerprint() {
+  const platform = randomFrom(PLATFORM_CHOICES);
+  const arch = randomFrom(ARCHITECTURES);
+  return {
+    deviceId: generateDeviceId(),
+    sessionToken: generateSessionToken(),
+    userAgent: `antigravity/${getAntigravityVersion()} ${platform}/${arch}`,
+    apiClient: randomFrom(SDK_CLIENTS),
+    clientMetadata: {
+      ideType: randomFrom(IDE_TYPES),
+      platform: platformToDisplayName(platform),
+      pluginType: "GEMINI"
+    },
+    createdAt: Date.now()
+  };
+}
+function updateFingerprintVersion(fingerprint) {
+  const currentVersion = getAntigravityVersion();
+  const versionPattern = /^(antigravity\/)([\d.]+)/;
+  const match = fingerprint.userAgent.match(versionPattern);
+  if (!match || match[2] === currentVersion) {
+    return false;
+  }
+  fingerprint.userAgent = fingerprint.userAgent.replace(versionPattern, `$1${currentVersion}`);
+  return true;
+}
+
 // src/plugin/accounts.ts
 var QUOTA_EXHAUSTED_BACKOFFS = [6e4, 3e5, 18e5, 72e5];
 var RATE_LIMIT_EXCEEDED_BACKOFF = 3e4;
@@ -10047,6 +9996,10 @@ function computeSoftQuotaCacheTtlMs(ttlConfig, refreshIntervalMinutes) {
   }
   return ttlConfig * 60 * 1e3;
 }
+var MAX_SESSION_ACCOUNTS = 1e3;
+function isHybridUsable(m) {
+  return !m.isRateLimited && !m.isCoolingDown && m.healthScore >= 50 && getTokenTracker().hasTokens(m.index);
+}
 var AccountManager = class _AccountManager {
   accounts = [];
   cursor = 0;
@@ -10060,6 +10013,10 @@ var AccountManager = class _AccountManager {
   };
   lastToastAccountIndex = -1;
   lastToastTime = 0;
+  /** Hybrid: the account each chat (OpenCode session) is on, so its prompt cache stays warm. */
+  sessionAccounts = /* @__PURE__ */ new Map();
+  /** Consecutive stalled requests per account index, reset by a normal answer. */
+  stallCounts = /* @__PURE__ */ new Map();
   savePending = false;
   saveTimeout = null;
   savePromiseResolvers = [];
@@ -10212,7 +10169,7 @@ var AccountManager = class _AccountManager {
     this.lastToastAccountIndex = accountIndex;
     this.lastToastTime = nowMs();
   }
-  getCurrentOrNextForFamily(family, model, strategy = "sticky", headerStyle = "antigravity", pidOffsetEnabled = false, softQuotaThresholdPercent = 100, softQuotaCacheTtlMs = 10 * 60 * 1e3, excludeIndices) {
+  getCurrentOrNextForFamily(family, model, strategy = "sticky", headerStyle = "antigravity", pidOffsetEnabled = false, softQuotaThresholdPercent = 100, softQuotaCacheTtlMs = 10 * 60 * 1e3, excludeIndices, sessionKey) {
     const quotaKey = getQuotaKey(family, headerStyle, model);
     if (strategy === "round-robin") {
       const next2 = this.getNextForFamily(family, model, headerStyle, softQuotaThresholdPercent, softQuotaCacheTtlMs, excludeIndices);
@@ -10223,30 +10180,17 @@ var AccountManager = class _AccountManager {
       return next2;
     }
     if (strategy === "hybrid") {
-      const healthTracker = getHealthTracker();
-      const tokenTracker = getTokenTracker();
-      const accountsWithMetrics = this.accounts.filter((acc) => acc.enabled !== false && !excludeIndices?.has(acc.index)).map((acc) => {
-        clearExpiredRateLimits(acc);
-        return {
-          index: acc.index,
-          lastUsed: acc.lastUsed,
-          healthScore: healthTracker.getScore(acc.index),
-          // Use the style-aware check (consistent with round-robin and the sticky
-          // fallback). isRateLimitedForFamily is true only when BOTH header-style
-          // pools are exhausted, so hybrid could otherwise pick an account whose
-          // requested-style pool is exhausted while the other style still has room.
-          isRateLimited: isRateLimitedForHeaderStyle(acc, family, headerStyle, model) || isOverSoftQuotaThreshold(acc, family, headerStyle, softQuotaThresholdPercent, softQuotaCacheTtlMs, model),
-          isCoolingDown: this.isAccountCoolingDown(acc)
-        };
-      });
-      const currentIndex = this.currentAccountIndexByFamily[family] ?? null;
-      const selectedIndex = selectHybridAccount(accountsWithMetrics, tokenTracker, currentIndex);
+      const accountsWithMetrics = this.hybridMetrics(family, model, headerStyle, softQuotaThresholdPercent, softQuotaCacheTtlMs, excludeIndices);
+      const sessionIndex = sessionKey ? this.sessionAccounts.get(sessionKey) : void 0;
+      const sessionAccount = accountsWithMetrics.find((m) => m.index === sessionIndex);
+      const selectedIndex = sessionAccount && isHybridUsable(sessionAccount) ? sessionAccount.index : selectHybridAccount(accountsWithMetrics, getTokenTracker(), sessionKey ? null : this.currentAccountIndexByFamily[family] ?? null);
       if (selectedIndex !== null) {
         const selected = this.accounts[selectedIndex];
         if (selected) {
           selected.lastUsed = nowMs();
           this.markTouchedForQuota(selected, quotaKey);
           this.currentAccountIndexByFamily[family] = selected.index;
+          if (sessionKey) this.assignSessionAccount(sessionKey, selected.index);
           return selected;
         }
       }
@@ -10297,6 +10241,67 @@ var AccountManager = class _AccountManager {
     account.rateLimitResetTimes[key] = now + retryAfterMs;
     account.rateLimitSetTimes[key] = now;
     delete account.clearedQuotaKeys[key];
+  }
+  hybridMetrics(family, model, headerStyle, softQuotaThresholdPercent, softQuotaCacheTtlMs, excludeIndices) {
+    const healthTracker = getHealthTracker();
+    return this.accounts.filter((acc) => acc.enabled !== false && !excludeIndices?.has(acc.index)).map((acc) => {
+      clearExpiredRateLimits(acc);
+      return {
+        index: acc.index,
+        lastUsed: acc.lastUsed,
+        healthScore: healthTracker.getScore(acc.index),
+        // Use the style-aware check (consistent with round-robin and the sticky
+        // fallback). isRateLimitedForFamily is true only when BOTH header-style
+        // pools are exhausted, so hybrid could otherwise pick an account whose
+        // requested-style pool is exhausted while the other style still has room.
+        isRateLimited: isRateLimitedForHeaderStyle(acc, family, headerStyle, model) || isOverSoftQuotaThreshold(acc, family, headerStyle, softQuotaThresholdPercent, softQuotaCacheTtlMs, model),
+        isCoolingDown: this.isAccountCoolingDown(acc)
+      };
+    });
+  }
+  /**
+   * The best account other than `excludeIndices` that could take a request
+   * now, or null. Changes no selection state, so it can be asked before
+   * deciding to switch or to send a stalled request to another account.
+   */
+  peekOtherAccountForFamily(family, model, headerStyle, softQuotaThresholdPercent, softQuotaCacheTtlMs, excludeIndices) {
+    const index = selectHybridAccount(
+      this.hybridMetrics(family, model, headerStyle, softQuotaThresholdPercent, softQuotaCacheTtlMs, excludeIndices),
+      getTokenTracker(),
+      null
+    );
+    return index === null ? null : this.accounts[index] ?? null;
+  }
+  /**
+   * How long to leave out an account whose request stalled and was answered by
+   * another account: 5, 15, 45, then 60 minutes while it keeps stalling, so an
+   * account short of capacity costs at most one hedge delay per rest.
+   */
+  stalledRestMs(accountIndex) {
+    const count = (this.stallCounts.get(accountIndex) ?? 0) + 1;
+    this.stallCounts.set(accountIndex, count);
+    return Math.min(5 * 6e4 * 3 ** (count - 1), 60 * 6e4);
+  }
+  clearStalls(accountIndex) {
+    this.stallCounts.delete(accountIndex);
+  }
+  /** The enabled account a chat (OpenCode session) is on, if it has one. */
+  accountForSession(sessionKey) {
+    const index = this.sessionAccounts.get(sessionKey);
+    const account = index === void 0 ? void 0 : this.accounts[index];
+    return account && account.enabled !== false ? account : null;
+  }
+  /** Moves a chat to `accountIndex`, e.g. after another account answered its stalled request. */
+  assignSessionAccount(sessionKey, accountIndex) {
+    if (this.sessionAccounts.get(sessionKey) !== accountIndex) {
+      debugLogToFile(`[Account] chat \u2026${sessionKey.slice(-6)} on account ${accountIndex}`);
+    }
+    this.sessionAccounts.delete(sessionKey);
+    this.sessionAccounts.set(sessionKey, accountIndex);
+    if (this.sessionAccounts.size > MAX_SESSION_ACCOUNTS) {
+      const oldest = this.sessionAccounts.keys().next().value;
+      if (oldest !== void 0) this.sessionAccounts.delete(oldest);
+    }
   }
   /**
    * Mark an account as used after a successful API request.
@@ -10391,34 +10396,6 @@ var AccountManager = class _AccountManager {
   isRateLimitedForHeaderStyle(account, family, headerStyle, model) {
     return isRateLimitedForHeaderStyle(account, family, headerStyle, model);
   }
-  /**
-   * Check if any OTHER account has antigravity quota available for the given family/model.
-   * 
-   * Used to decide whether switching accounts can help after a rate limit.
-   * 
-   * @param currentAccountIndex - Index of the current account (will be excluded from check)
-   * @param family - Model family ("gemini" or "claude")
-   * @param model - Optional model name for model-specific rate limits
-   * @returns true if any other enabled, non-cooling-down account has antigravity available
-   */
-  hasOtherAccountWithAntigravityAvailable(currentAccountIndex, family, model) {
-    if (family === "claude") {
-      return false;
-    }
-    return this.accounts.some((acc) => {
-      if (acc.index === currentAccountIndex) {
-        return false;
-      }
-      if (acc.enabled === false) {
-        return false;
-      }
-      if (this.isAccountCoolingDown(acc)) {
-        return false;
-      }
-      clearExpiredRateLimits(acc);
-      return !isRateLimitedForHeaderStyle(acc, family, "antigravity", model);
-    });
-  }
   setAccountEnabled(accountIndex, enabled) {
     const account = this.accounts[accountIndex];
     if (!account) {
@@ -10492,6 +10469,13 @@ var AccountManager = class _AccountManager {
     this.accounts.forEach((acc, index) => {
       acc.index = index;
     });
+    for (const [key, index] of this.sessionAccounts) {
+      if (index === idx) this.sessionAccounts.delete(key);
+      else if (index > idx) this.sessionAccounts.set(key, index - 1);
+    }
+    this.stallCounts = new Map(
+      [...this.stallCounts].filter(([index]) => index !== idx).map(([index, count]) => [index > idx ? index - 1 : index, count])
+    );
     if (this.accounts.length === 0) {
       this.cursor = 0;
       this.currentAccountIndexByFamily.claude = -1;
@@ -11390,11 +11374,10 @@ function aggregateQuota(models) {
   return { groups, modelCount: totalCount };
 }
 async function fetchWithTimeout2(url, options, timeoutMs = FETCH_TIMEOUT_MS2) {
-  return fetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
+  return googleFetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
 }
 async function fetchAvailableModels(accessToken, projectId) {
-  const endpoint = ANTIGRAVITY_ENDPOINT_PROD;
-  const quotaUserAgent = getAntigravityHeaders()["User-Agent"] || "antigravity/windows/amd64";
+  const endpoint = ANTIGRAVITY_ENDPOINT_DAILY;
   const errors = [];
   const body = projectId ? { project: projectId } : {};
   const response = await fetchWithTimeout2(`${endpoint}/v1internal:fetchAvailableModels`, {
@@ -11402,7 +11385,7 @@ async function fetchAvailableModels(accessToken, projectId) {
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": "application/json",
-      "User-Agent": quotaUserAgent
+      "User-Agent": ANTIGRAVITY_CLI_USER_AGENT
     },
     body: JSON.stringify(body)
   });
@@ -11480,10 +11463,9 @@ async function fetchRateLimitSummary(accessToken, projectId) {
     const response = await fetchWithEndpointFallback("/v1internal:retrieveUserQuotaSummary", {
       method: "POST",
       headers: {
-        // The CLI-style `antigravity/<version> <platform>` agent, not the
-        // Electron one: the backend keys what it reports off the client it
-        // thinks is calling.
-        ...getRandomizedHeaders("antigravity"),
+        // The backend keys what it reports off the client it thinks is
+        // calling; agy sends its CLI agent and nothing else.
+        "User-Agent": ANTIGRAVITY_CLI_USER_AGENT,
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json"
       },
@@ -11895,69 +11877,8 @@ function createProactiveRefreshQueue(client, providerId, config) {
   return new ProactiveRefreshQueue(client, providerId, config);
 }
 
-// src/plugin/version.ts
-var VERSION_URL = "https://antigravity-auto-updater-974169037036.us-central1.run.app";
-var CHANGELOG_URL = "https://antigravity.google/changelog";
-var FETCH_TIMEOUT_MS3 = 5e3;
-var CHANGELOG_SCAN_CHARS = 5e3;
-var VERSION_REGEX = /\d+\.\d+\.\d+/;
-function parseVersion(text) {
-  const match = text.match(VERSION_REGEX);
-  return match ? match[0] : null;
-}
-async function tryFetchVersion(url, maxChars) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS3);
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) return null;
-    let text = await response.text();
-    if (maxChars) text = text.slice(0, maxChars);
-    return parseVersion(text);
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-async function initAntigravityVersion() {
-  const log16 = createLogger("version");
-  const fallback = getAntigravityVersion();
-  let version;
-  let source;
-  version = await tryFetchVersion(VERSION_URL);
-  if (version) {
-    source = "api";
-  } else {
-    version = await tryFetchVersion(CHANGELOG_URL, CHANGELOG_SCAN_CHARS);
-    if (version) {
-      source = "changelog";
-    } else {
-      source = "fallback";
-      setAntigravityVersion(fallback);
-      log16.info("version-fetch-failed", { fallback });
-      return;
-    }
-  }
-  if (version !== fallback) {
-    log16.info("version-updated", { version, source, previous: fallback });
-  } else {
-    log16.debug("version-unchanged", { version, source });
-  }
-  setAntigravityVersion(version);
-}
-
 // src/plugin/search.ts
 var log10 = createLogger("search");
-var sessionCounter = 0;
-var sessionPrefix = `search-${Date.now().toString(36)}`;
-function generateRequestId() {
-  return `search-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-function getSessionId() {
-  sessionCounter++;
-  return `${sessionPrefix}-${sessionCounter}`;
-}
 function formatSearchResult(result) {
   const lines = [];
   lines.push("## Search Results\n");
@@ -12038,7 +11959,7 @@ function parseSearchResponse(data) {
   return result;
 }
 async function executeSearch(args, accessToken, projectId, abortSignal) {
-  const { query, urls, thinking = true } = args;
+  const { query, urls } = args;
   let prompt = query;
   if (urls && urls.length > 0) {
     const urlList = urls.join("\n");
@@ -12047,49 +11968,34 @@ async function executeSearch(args, accessToken, projectId, abortSignal) {
 URLs to analyze:
 ${urlList}`;
   }
-  const tools = [];
-  tools.push({ googleSearch: {} });
+  const tools = [
+    { googleSearch: { enhancedContent: { imageSearch: { maxResultCount: 5 } } } }
+  ];
   if (urls && urls.length > 0) {
     tools.push({ urlContext: {} });
   }
-  const requestPayload = {
-    systemInstruction: {
-      parts: [{ text: SEARCH_SYSTEM_INSTRUCTION }]
-    },
-    contents: [
-      {
-        role: "user",
-        parts: [{ text: prompt }]
-      }
-    ],
-    tools,
-    // Gemini 3.8 Flash takes no sampling settings, and its thinking level
-    // matches the tier in SEARCH_MODEL.
-    generationConfig: {
-      thinkingConfig: { thinkingLevel: "low" }
-    }
-  };
   const wrappedBody = {
     project: projectId,
+    request: {
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      systemInstruction: { role: "user", parts: [{ text: SEARCH_SYSTEM_INSTRUCTION }] },
+      tools,
+      generationConfig: { candidateCount: 1 }
+    },
     model: SEARCH_MODEL,
     userAgent: "antigravity",
-    requestId: generateRequestId(),
-    request: {
-      ...requestPayload,
-      sessionId: getSessionId()
-    }
+    requestType: "web_search"
   };
   const url = `${ANTIGRAVITY_ENDPOINT}/v1internal:generateContent`;
   log10.debug("Executing search", {
     query,
-    urlCount: urls?.length ?? 0,
-    thinking
+    urlCount: urls?.length ?? 0
   });
   try {
-    const response = await fetch(url, {
+    const response = await googleFetch(url, {
       method: "POST",
       headers: {
-        ...getAntigravityHeaders(),
+        "User-Agent": ANTIGRAVITY_CLI_USER_AGENT,
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json"
       },
@@ -12346,7 +12252,7 @@ function extractGeminiModelFromUrl(urlString) {
     return void 0;
   }
 }
-function isRecord(value) {
+function isRecord2(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 function toThinkingTier(value) {
@@ -12354,10 +12260,10 @@ function toThinkingTier(value) {
   return void 0;
 }
 function mergeExtraBody(payload) {
-  const extraBody = isRecord(payload.extra_body) ? payload.extra_body : isRecord(payload.extraBody) ? payload.extraBody : void 0;
+  const extraBody = isRecord2(payload.extra_body) ? payload.extra_body : isRecord2(payload.extraBody) ? payload.extraBody : void 0;
   if (!extraBody) return void 0;
-  if (isRecord(extraBody.generationConfig)) {
-    const generationConfig = isRecord(payload.generationConfig) ? payload.generationConfig : {};
+  if (isRecord2(extraBody.generationConfig)) {
+    const generationConfig = isRecord2(payload.generationConfig) ? payload.generationConfig : {};
     for (const [key, value] of Object.entries(extraBody.generationConfig)) {
       if (!(key in generationConfig)) {
         generationConfig[key] = value;
@@ -12374,14 +12280,14 @@ function mergeExtraBody(payload) {
 }
 function applyAgySdkGeminiBodyTransforms(payload, model, thinkingLevel) {
   const extraBody = mergeExtraBody(payload);
-  const generationConfig = isRecord(payload.generationConfig) ? payload.generationConfig : {};
+  const generationConfig = isRecord2(payload.generationConfig) ? payload.generationConfig : {};
   sanitizeGeminiGenerationConfigForModel(payload, model);
   const variantConfig = extractVariantThinkingConfig(
-    isRecord(payload.providerOptions) ? payload.providerOptions : void 0,
+    isRecord2(payload.providerOptions) ? payload.providerOptions : void 0,
     generationConfig
   );
-  const extraThinkingConfig = isRecord(extraBody?.thinkingConfig) ? extraBody.thinkingConfig : void 0;
-  const existingThinkingConfig = isRecord(generationConfig.thinkingConfig) ? generationConfig.thinkingConfig : extraThinkingConfig ? { ...extraThinkingConfig } : {};
+  const extraThinkingConfig = isRecord2(extraBody?.thinkingConfig) ? extraBody.thinkingConfig : void 0;
+  const existingThinkingConfig = isRecord2(generationConfig.thinkingConfig) ? generationConfig.thinkingConfig : extraThinkingConfig ? { ...extraThinkingConfig } : {};
   if (isGemini3Model(model)) {
     const resolvedLevel = variantConfig?.thinkingLevel ?? (typeof existingThinkingConfig.thinkingLevel === "string" ? existingThinkingConfig.thinkingLevel : void 0) ?? (variantConfig?.thinkingBudget !== void 0 ? thinkingLevelFromBudget(variantConfig.thinkingBudget) : void 0) ?? thinkingLevel ?? "low";
     existingThinkingConfig.thinkingLevel = resolvedLevel;
@@ -12803,40 +12709,15 @@ function markWarmupSuccess(sessionId) {
     if (first) warmupSucceededSessionIds.delete(first);
   }
 }
-function isWSL2() {
+function isWSL() {
   if (process.platform !== "linux") return false;
   try {
-    const { readFileSync: readFileSync9 } = __require("node:fs");
-    const release = readFileSync9("/proc/version", "utf8").toLowerCase();
-    return release.includes("microsoft") || release.includes("wsl");
+    const { readFileSync: readFileSync8 } = __require("node:fs");
+    const release2 = readFileSync8("/proc/version", "utf8").toLowerCase();
+    return release2.includes("microsoft") || release2.includes("wsl");
   } catch {
     return false;
   }
-}
-function isWSL22() {
-  if (!isWSL2()) return false;
-  try {
-    const { readFileSync: readFileSync9 } = __require("node:fs");
-    const version = readFileSync9("/proc/version", "utf8").toLowerCase();
-    return version.includes("wsl2") || version.includes("microsoft-standard");
-  } catch {
-    return false;
-  }
-}
-function isRemoteEnvironment2() {
-  if (process.env.SSH_CLIENT || process.env.SSH_TTY || process.env.SSH_CONNECTION) {
-    return true;
-  }
-  if (process.env.REMOTE_CONTAINERS || process.env.CODESPACES) {
-    return true;
-  }
-  if (process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY && !isWSL2()) {
-    return true;
-  }
-  return false;
-}
-function shouldSkipLocalServer() {
-  return isWSL22() || isRemoteEnvironment2();
 }
 async function openBrowser(url) {
   try {
@@ -12848,7 +12729,7 @@ async function openBrowser(url) {
       exec(`start "" "${url}"`);
       return true;
     }
-    if (isWSL2()) {
+    if (isWSL()) {
       try {
         exec(`wslview "${url}"`);
         return true;
@@ -13020,7 +12901,7 @@ async function verifyAccountAccess(account, client, providerId) {
   }
   const projectId = parsed.managedProjectId ?? parsed.projectId ?? account.managedProjectId ?? account.projectId ?? ANTIGRAVITY_DEFAULT_PROJECT_ID;
   const headers = {
-    ...getAntigravityHeaders(),
+    "User-Agent": ANTIGRAVITY_CLI_USER_AGENT,
     Authorization: `Bearer ${refreshedAuth.access}`,
     "Content-Type": "application/json"
   };
@@ -13037,7 +12918,7 @@ async function verifyAccountAccess(account, client, providerId) {
   const timeoutId = setTimeout(() => controller.abort(), 2e4);
   let response;
   try {
-    response = await fetch(`${ANTIGRAVITY_ENDPOINT}/v1internal:streamGenerateContent?alt=sse`, {
+    response = await googleFetch(`${ANTIGRAVITY_ENDPOINT}/v1internal:streamGenerateContent?alt=sse`, {
       method: "POST",
       headers,
       body: JSON.stringify(requestBody),
@@ -13186,14 +13067,6 @@ function getStateFromAuthorizationUrl(authorizationUrl) {
     return "";
   }
 }
-function extractOAuthCallbackParams(url) {
-  const code = url.searchParams.get("code");
-  const state2 = url.searchParams.get("state");
-  if (!code || !state2) {
-    return null;
-  }
-  return { code, state: state2 };
-}
 function parseOAuthCallbackInput(value, fallbackState) {
   const trimmed = value.trim();
   if (!trimmed) {
@@ -13219,11 +13092,9 @@ function parseOAuthCallbackInput(value, fallbackState) {
 }
 async function promptManualOAuthInput(fallbackState) {
   console.log("1. Open the URL above in your browser and complete Google sign-in.");
-  console.log("2. After approving, copy the full redirected localhost URL from the address bar.");
+  console.log("2. Antigravity's page then shows an authorization code: copy it.");
   console.log("3. Paste it back here.\n");
-  const callbackInput = await promptOAuthCallbackValue(
-    "Paste the redirect URL (or just the code) here: "
-  );
+  const callbackInput = await promptOAuthCallbackValue("Paste the authorization code here: ");
   const params = parseOAuthCallbackInput(callbackInput, fallbackState);
   if ("error" in params) {
     return { type: "failed", error: params.error };
@@ -13521,7 +13392,6 @@ function createSoftQuotaBlockedResponse(input2) {
   ].join("\n");
   return createSyntheticErrorResponse(errorMessage, input2.requestedModel, input2.family);
 }
-var FIRST_RETRY_DELAY_MS = 1e3;
 var INVALID_GRANT_RECHECK_COOLDOWN_MS = 15e3;
 var RATE_LIMIT_DEDUP_WINDOW_MS = 2e3;
 var RATE_LIMIT_STATE_RESET_MS = 12e4;
@@ -13539,15 +13409,15 @@ function getRateLimitBackoff(accountIndex, quotaKey, serverRetryAfterMs, maxBack
       isDuplicate: true
     };
   }
-  const attempt = previous && now - previous.lastAt < RATE_LIMIT_STATE_RESET_MS ? previous.consecutive429 + 1 : 1;
+  const attempt2 = previous && now - previous.lastAt < RATE_LIMIT_STATE_RESET_MS ? previous.consecutive429 + 1 : 1;
   rateLimitStateByAccountQuota.set(stateKey, {
-    consecutive429: attempt,
+    consecutive429: attempt2,
     lastAt: now,
     quotaKey
   });
   const baseDelay = serverRetryAfterMs ?? 1e3;
-  const backoffDelay = Math.min(baseDelay * Math.pow(2, attempt - 1), maxBackoffMs);
-  return { attempt, delayMs: Math.max(baseDelay, backoffDelay), isDuplicate: false };
+  const backoffDelay = Math.min(baseDelay * Math.pow(2, attempt2 - 1), maxBackoffMs);
+  return { attempt: attempt2, delayMs: Math.max(baseDelay, backoffDelay), isDuplicate: false };
 }
 function resetRateLimitState(accountIndex, quotaKey) {
   const stateKey = `${accountIndex}:${quotaKey}`;
@@ -13555,9 +13425,6 @@ function resetRateLimitState(accountIndex, quotaKey) {
 }
 function headerStyleToQuotaKey(family) {
   return family === "claude" ? "claude" : "gemini-antigravity";
-}
-function hasUsableEndpointAfterIndex(index) {
-  return index < ANTIGRAVITY_ENDPOINT_FALLBACKS.length - 1;
 }
 var accountFailureState = /* @__PURE__ */ new Map();
 var MAX_CONSECUTIVE_FAILURES = 5;
@@ -13639,7 +13506,6 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
   let cachedGetAuth = null;
   initializeDebug(config);
   initLogger(client);
-  await initAntigravityVersion();
   if (config.health_score) {
     initHealthTracker({
       initial: config.health_score.initial,
@@ -13722,12 +13588,13 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
     description: "Search the web using Google Search and analyze URLs. Returns real-time information from the internet with source citations. Use this when you need up-to-date information about current events, recent developments, or any topic that may have changed. You can also provide specific URLs to analyze. IMPORTANT: If the user mentions or provides any URLs in their query, you MUST extract those URLs and pass them in the 'urls' parameter for direct analysis.",
     args: {
       query: tool.schema.string().describe("The search query or question to answer using web search"),
-      urls: tool.schema.array(tool.schema.string()).optional().describe("List of specific URLs to fetch and analyze. IMPORTANT: Always extract and include any URLs mentioned by the user in their query here."),
-      thinking: tool.schema.boolean().optional().default(true).describe("Enable deep thinking for more thorough analysis (default: true)")
+      urls: tool.schema.array(tool.schema.string()).optional().describe("List of specific URLs to fetch and analyze. IMPORTANT: Always extract and include any URLs mentioned by the user in their query here.")
     },
     async execute(args, ctx) {
       log11.debug("Google Search tool called", { query: args.query, urlCount: args.urls?.length ?? 0 });
-      const auth = cachedGetAuth ? await cachedGetAuth() : null;
+      const manager = activeLoaderAccountManager;
+      const account = manager ? (ctx.sessionID ? manager.accountForSession(ctx.sessionID) : null) ?? manager.getCurrentAccountForFamily("gemini") : null;
+      const auth = account && manager ? manager.toAuthDetails(account) : cachedGetAuth ? await cachedGetAuth() : null;
       if (!auth || !isOAuthAuth(auth)) {
         return "Error: Not authenticated with Antigravity. Please run `opencode auth login` to authenticate.";
       }
@@ -13737,6 +13604,7 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
       if (!accessToken || accessTokenExpired(auth)) {
         try {
           const refreshed = await refreshAccessToken(auth, client, providerId);
+          if (refreshed && account && manager) manager.updateFromAuth(account, refreshed);
           accessToken = refreshed?.access;
         } catch (error) {
           return `Error: Failed to refresh access token: ${error instanceof Error ? error.message : String(error)}`;
@@ -13748,8 +13616,7 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
       return executeSearch(
         {
           query: args.query,
-          urls: args.urls,
-          thinking: args.thinking
+          urls: args.urls
         },
         accessToken,
         projectId,
@@ -13865,8 +13732,6 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
             }
           };
         }
-        const authParts = parseRefreshParts(auth.refresh);
-        const storedAccounts = await loadAccounts();
         activeRefreshQueue?.stop();
         activeRefreshQueue = null;
         const previousAccountManager = activeLoaderAccountManager;
@@ -13945,6 +13810,8 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
             const urlString = toUrlString(input2);
             const family = getModelFamilyFromUrl(urlString);
             const model = extractModelFromUrl(urlString);
+            const sessionKey = readHostSessionKey(input2, init);
+            const pluginRequestId = randomUUID3();
             const agySdkCredentials = getAgySdkCredentials(config, apiKeyAuth);
             const debugLines = [];
             const pushDebug = (line) => {
@@ -13995,10 +13862,6 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
               } catch {
               }
             };
-            const hasOtherAccountWithAntigravity = (currentAccount) => {
-              if (family !== "gemini") return false;
-              return accountManager.hasOtherAccountWithAntigravityAvailable(currentAccount.index, family, model);
-            };
             while (true) {
               checkAborted();
               const accountCount = accountManager.getAccountCount();
@@ -14047,7 +13910,8 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                 config.pid_offset_enabled,
                 config.soft_quota_threshold_percent,
                 softQuotaCacheTtlMs,
-                triedSwitchIndices
+                triedSwitchIndices,
+                sessionKey
               );
               if (!account) {
                 if (accountCount > 0 && triedSwitchIndices.size >= accountCount) {
@@ -14105,7 +13969,6 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                       requestedModel: model ?? void 0
                     });
                   }
-                  const waitSecValue2 = Math.max(1, Math.ceil(softQuotaWaitMs / 1e3));
                   pushDebug(`all-over-soft-quota family=${family} accounts=${accountCount} waitMs=${softQuotaWaitMs}`);
                   if (!softQuotaToastShown) {
                     await showToast(`All ${accountCount} account(s) over ${threshold}% quota. Waiting ${formatWaitTime(softQuotaWaitMs)}...`, "warning");
@@ -14341,7 +14204,7 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                 });
                 try {
                   pushDebug("thinking-warmup: start");
-                  const warmupResponse = await fetch(warmupUrl, warmupInit);
+                  const warmupResponse = await googleFetch(warmupUrl, warmupInit);
                   const transformed = await transformAntigravityResponse(
                     warmupResponse,
                     true,
@@ -14375,6 +14238,22 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                 let tokenConsumed = false;
                 let capacityRetryCount = 0;
                 let lastEndpointIndex = -1;
+                let agyRetries = 0;
+                let agyWaitedMs = 0;
+                const retryLikeAgy = async (status, serverAskedMs) => {
+                  const delayMs = Math.max(agyRetryDelayMs(agyRetries), serverAskedMs ?? 0);
+                  const maxWaitMs = (config.max_rate_limit_wait_seconds ?? 300) * 1e3;
+                  if (maxWaitMs > 0 && agyWaitedMs + delayMs > maxWaitMs) return false;
+                  agyRetries += 1;
+                  agyWaitedMs += delayMs;
+                  pushDebug(`retrying on account ${account.index} after ${status} in ${delayMs}ms (retry ${agyRetries})`);
+                  await showToast(
+                    status === 429 ? `Rate limited. Retrying in ${Math.ceil(delayMs / 1e3)}s...` : `\u23F3 Server busy (${status}). Retrying in ${Math.ceil(delayMs / 1e3)}s...`,
+                    "warning"
+                  );
+                  await sleep(delayMs, abortSignal);
+                  return true;
+                };
                 for (let i = 0; i < ANTIGRAVITY_ENDPOINT_FALLBACKS.length; i++) {
                   if (i !== lastEndpointIndex) {
                     capacityRetryCount = 0;
@@ -14393,7 +14272,8 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                       {
                         claudeToolHardening: config.claude_tool_hardening,
                         claudePromptAutoCaching: config.claude_prompt_auto_caching,
-                        fingerprint: account.fingerprint
+                        fingerprint: account.fingerprint,
+                        pluginRequestId
                       }
                     );
                     const originalUrl = toUrlString(input2);
@@ -14433,15 +14313,59 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                       tokenConsumed = getTokenTracker().consume(account.index);
                     }
                     const requestBody = prepared.init.body;
-                    const sendInit = typeof requestBody === "string" ? withGzipBody(prepared.init, requestBody) : prepared.init;
+                    const sendInit = prepared.init;
                     const hedgeAfterMs = isImageGenerationModel(prepared.effectiveModel ?? "") ? 0 : config.hedge_stalled_requests_after_seconds * 1e3;
                     const hedgeLabel = debugContext?.id ?? "request";
-                    let response = prepared.streaming && typeof requestBody === "string" ? await fetchStreamWithHedge(
-                      (signal) => fetch(prepared.request, { ...sendInit, signal }),
+                    const hedgeAccount = hedgeAfterMs > 0 ? accountManager.peekOtherAccountForFamily(
+                      family,
+                      model,
+                      headerStyle,
+                      config.soft_quota_threshold_percent,
+                      softQuotaCacheTtlMs,
+                      /* @__PURE__ */ new Set([...triedSwitchIndices, account.index])
+                    ) : null;
+                    let hedgeWon = false;
+                    let response = prepared.streaming && typeof requestBody === "string" && hedgeAccount ? await fetchStreamWithHedge(
+                      (signal) => googleFetch(prepared.request, { ...sendInit, signal }),
                       hedgeAfterMs,
                       sendInit.signal,
-                      (event) => debugLogToFile(event === "sent" ? `[Hedge] ${hedgeLabel}: no content after ${hedgeAfterMs}ms, sending the request again` : `[Hedge] ${hedgeLabel}: the repeat answered first`)
-                    ) : await fetch(prepared.request, sendInit);
+                      (event) => {
+                        if (event === "won") hedgeWon = true;
+                        debugLogToFile(event === "sent" ? `[Hedge] ${hedgeLabel}: no content after ${hedgeAfterMs}ms on account ${account.index}, sending it on account ${hedgeAccount.index}` : `[Hedge] ${hedgeLabel}: account ${hedgeAccount.index} answered first`);
+                      },
+                      async (signal) => {
+                        let hedgeAuth = accountManager.toAuthDetails(hedgeAccount);
+                        if (accessTokenExpired(hedgeAuth)) {
+                          const refreshed = await refreshAccessToken(hedgeAuth, client, providerId);
+                          if (!refreshed) throw new Error("Antigravity token refresh failed");
+                          accountManager.updateFromAuth(hedgeAccount, refreshed);
+                          hedgeAuth = refreshed;
+                        }
+                        const hedgeContext = await ensureProjectContext(hedgeAuth);
+                        const repeat = await prepareAntigravityRequest(
+                          input2,
+                          init,
+                          hedgeContext.auth.access ?? "",
+                          hedgeContext.effectiveProjectId,
+                          currentEndpoint,
+                          headerStyle,
+                          forceThinkingRecovery,
+                          {
+                            claudeToolHardening: config.claude_tool_hardening,
+                            claudePromptAutoCaching: config.claude_prompt_auto_caching,
+                            fingerprint: hedgeAccount.fingerprint,
+                            pluginRequestId
+                          }
+                        );
+                        return googleFetch(repeat.request, { ...repeat.init, signal });
+                      }
+                    ) : await googleFetch(prepared.request, sendInit);
+                    if (hedgeWon && hedgeAccount) {
+                      accountManager.markRateLimitedWithReason(account, family, headerStyle, model, "MODEL_CAPACITY_EXHAUSTED", accountManager.stalledRestMs(account.index));
+                      accountManager.markAccountUsed(hedgeAccount.index);
+                      getHealthTracker().recordSuccess(hedgeAccount.index);
+                      if (sessionKey) accountManager.assignSessionAccount(sessionKey, hedgeAccount.index);
+                    }
                     pushDebug(`status=${response.status} ${response.statusText}`);
                     if (response.status === 429 || response.status === 503 || response.status === 529) {
                       if (tokenConsumed) {
@@ -14449,35 +14373,29 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                         tokenConsumed = false;
                       }
                       const defaultRetryMs = (config.default_retry_after_seconds ?? 60) * 1e3;
-                      const maxBackoffMs = (config.max_backoff_seconds ?? 60) * 1e3;
                       const headerRetryMs = retryAfterMsFromResponse2(response, defaultRetryMs);
                       const bodyInfo = await extractRetryInfoFromBody(response);
                       const serverRetryMs = bodyInfo.retryDelayMs ?? headerRetryMs;
                       const rateLimitReason = parseRateLimitReason(bodyInfo.reason, bodyInfo.message, response.status);
                       if (rateLimitReason === "MODEL_CAPACITY_EXHAUSTED" || rateLimitReason === "SERVER_ERROR") {
-                        if (capacityRetryCount < 3) {
-                          const baseDelayMs = 1e3;
-                          const maxDelayMs = 8e3;
-                          const exponentialDelay = Math.min(baseDelayMs * Math.pow(2, capacityRetryCount), maxDelayMs);
-                          const jitter = exponentialDelay * (0.9 + Math.random() * 0.2);
-                          const waitMs = Math.round(jitter);
-                          const waitSec = Math.round(waitMs / 1e3);
-                          pushDebug(`Server busy (${rateLimitReason}) on account ${account.index}, exponential backoff ${waitMs}ms (attempt ${capacityRetryCount + 1})`);
-                          await showToast(
-                            `\u23F3 Server busy (${response.status}). Retrying in ${waitSec}s...`,
-                            "warning"
-                          );
-                          await sleep(waitMs, abortSignal);
+                        if (rateLimitReason === "MODEL_CAPACITY_EXHAUSTED" && accountManager.peekOtherAccountForFamily(
+                          family,
+                          model,
+                          headerStyle,
+                          config.soft_quota_threshold_percent,
+                          softQuotaCacheTtlMs,
+                          /* @__PURE__ */ new Set([...triedSwitchIndices, account.index])
+                        )) {
+                          pushDebug(`No capacity on account ${account.index}; switching account`);
+                          accountManager.markRateLimitedWithReason(account, family, headerStyle, model, rateLimitReason, serverRetryMs);
+                          lastError = new Error(`Model capacity exhausted on account ${account.index}`);
+                          lastFailure = createFailureContext(response);
+                          shouldSwitchAccount = true;
+                          break;
+                        }
+                        if (await retryLikeAgy(response.status, bodyInfo.retryDelayMs ?? null)) {
                           capacityRetryCount++;
                           i -= 1;
-                          continue;
-                        }
-                        pushDebug(`Max capacity retries (3) exhausted for endpoint ${currentEndpoint}, regenerating fingerprint...`);
-                        const newFingerprint = accountManager.regenerateAccountFingerprint(account.index);
-                        if (newFingerprint) {
-                          pushDebug(`Fingerprint regenerated for account ${account.index}`);
-                        }
-                        if (hasUsableEndpointAfterIndex(i)) {
                           continue;
                         }
                         accountManager.markRateLimitedWithReason(account, family, headerStyle, model, rateLimitReason, serverRetryMs);
@@ -14492,7 +14410,7 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                           return capacityAgySdkFallback;
                         }
                         pushDebug(
-                          `No further usable endpoint or quota for headerStyle=${headerStyle} after capacity exhaustion; switching account`
+                          `Gave up on account ${account.index} after ${capacityRetryCount} retries (${rateLimitReason}); switching account`
                         );
                         lastError = new Error(
                           `Model capacity exhausted (${rateLimitReason}) on account ${account.index} after ${capacityRetryCount} retries`
@@ -14502,11 +14420,11 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                         break;
                       }
                       const quotaKey2 = headerStyleToQuotaKey(family);
-                      const { attempt, delayMs, isDuplicate } = getRateLimitBackoff(account.index, quotaKey2, serverRetryMs);
+                      const { attempt: attempt2, delayMs } = getRateLimitBackoff(account.index, quotaKey2, serverRetryMs);
                       const smartBackoffMs = calculateBackoffMs(rateLimitReason, account.consecutiveFailures ?? 0, serverRetryMs);
                       const effectiveDelayMs = Math.max(delayMs, smartBackoffMs);
                       pushDebug(
-                        `429 idx=${account.index} email=${account.email ?? ""} family=${family} delayMs=${effectiveDelayMs} attempt=${attempt} reason=${rateLimitReason}`
+                        `429 idx=${account.index} email=${account.email ?? ""} family=${family} delayMs=${effectiveDelayMs} attempt=${attempt2} reason=${rateLimitReason}`
                       );
                       if (bodyInfo.message) {
                         pushDebug(`429 message=${bodyInfo.message}`);
@@ -14527,33 +14445,22 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                       );
                       await logResponseBody(debugContext, response, 429);
                       getHealthTracker().recordRateLimit(account.index);
-                      const accountLabel2 = account.email || `Account ${account.index + 1}`;
-                      if (attempt === 1 && rateLimitReason !== "QUOTA_EXHAUSTED") {
-                        if (config.scheduling_mode === "cache_first") {
-                          const maxCacheFirstWaitMs = config.max_cache_first_wait_seconds * 1e3;
-                          if (effectiveDelayMs <= maxCacheFirstWaitMs) {
-                            pushDebug(`cache_first: waiting ${effectiveDelayMs}ms for same account to recover`);
-                            await showToast(`\u23F3 Waiting ${Math.ceil(effectiveDelayMs / 1e3)}s for same account (prompt cache preserved)...`, "info");
-                            accountManager.markRateLimitedWithReason(account, family, headerStyle, model, rateLimitReason, serverRetryMs);
-                            await sleep(effectiveDelayMs, abortSignal);
-                            i -= 1;
-                            continue;
-                          }
-                          pushDebug(`cache_first: wait ${effectiveDelayMs}ms exceeds max ${maxCacheFirstWaitMs}ms, switching account`);
-                        }
-                        if (config.switch_on_first_rate_limit && accountCount > 1) {
-                          accountManager.markRateLimitedWithReason(account, family, headerStyle, model, rateLimitReason, serverRetryMs, config.failure_ttl_seconds * 1e3);
-                          shouldSwitchAccount = true;
-                          break;
-                        }
-                        await showToast(`Rate limited. Quick retry in 1s...`, "warning");
-                        await sleep(FIRST_RETRY_DELAY_MS, abortSignal);
+                      const otherAccount = accountManager.peekOtherAccountForFamily(
+                        family,
+                        model,
+                        headerStyle,
+                        config.soft_quota_threshold_percent,
+                        softQuotaCacheTtlMs,
+                        /* @__PURE__ */ new Set([...triedSwitchIndices, account.index])
+                      );
+                      const retryHere = rateLimitReason !== "QUOTA_EXHAUSTED" && (!otherAccount || attempt2 === 1 && (config.scheduling_mode === "cache_first" || !config.switch_on_first_rate_limit));
+                      if (retryHere && await retryLikeAgy(response.status, bodyInfo.retryDelayMs ?? null)) {
                         i -= 1;
                         continue;
                       }
                       accountManager.markRateLimitedWithReason(account, family, headerStyle, model, rateLimitReason, serverRetryMs, config.failure_ttl_seconds * 1e3);
                       accountManager.requestSaveToDisk();
-                      if (family === "gemini" && hasOtherAccountWithAntigravity(account)) {
+                      if (otherAccount) {
                         pushDebug(`antigravity exhausted on account ${account.index}, but available on others. Switching account.`);
                         await showToast(`Rate limited again. Switching account...`, "warning");
                         shouldSwitchAccount = true;
@@ -14569,15 +14476,9 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                       if (agySdkFallbackResponse && !isRetryableAgySdkCredentialStatus(agySdkFallbackResponse.status)) {
                         return agySdkFallbackResponse;
                       }
-                      const quotaName = "Antigravity";
                       if (accountCount > 1) {
                         const quotaMsg = bodyInfo.quotaResetTime ? ` (quota resets ${bodyInfo.quotaResetTime})` : ``;
                         await showToast(`Rate limited again. Switching account...${quotaMsg}`, "warning");
-                      } else {
-                        const expBackoffMs = Math.min(FIRST_RETRY_DELAY_MS * Math.pow(2, attempt - 1), 6e4);
-                        const expBackoffFormatted = expBackoffMs >= 1e3 ? `${Math.round(expBackoffMs / 1e3)}s` : `${expBackoffMs}ms`;
-                        await showToast(`Rate limited. Retrying in ${expBackoffFormatted} (attempt ${attempt})...`, "warning");
-                        await sleep(expBackoffMs, abortSignal);
                       }
                       lastFailure = createFailureContext(response);
                       shouldSwitchAccount = true;
@@ -14663,12 +14564,15 @@ var createAntigravityRuntime = (providerId) => async ({ client, directory }) => 
                       );
                     }
                     if (response.ok) {
-                      account.consecutiveFailures = 0;
-                      getHealthTracker().recordSuccess(account.index);
-                      accountManager.markAccountUsed(account.index);
+                      if (!hedgeWon) {
+                        account.consecutiveFailures = 0;
+                        accountManager.clearStalls(account.index);
+                        getHealthTracker().recordSuccess(account.index);
+                        accountManager.markAccountUsed(account.index);
+                      }
                       void triggerAsyncQuotaRefreshForAccount(
                         accountManager,
-                        account.index,
+                        (hedgeWon && hedgeAccount ? hedgeAccount : account).index,
                         client,
                         providerId,
                         config.quota_refresh_interval_minutes
@@ -14769,6 +14673,7 @@ Alternatively, you can:
                       getTokenTracker().refund(account.index);
                       tokenConsumed = false;
                     }
+                    checkAborted();
                     if (error instanceof Error && error.message === "THINKING_RECOVERY_NEEDED") {
                       if (!forceThinkingRecovery) {
                         pushDebug("thinking-recovery: API error detected, retrying with forced recovery");
@@ -14864,7 +14769,6 @@ Alternatively, you can:
             if (inputs) {
               const accounts = [];
               const noBrowser = inputs.noBrowser === "true" || inputs["no-browser"] === "true";
-              const useManualMode = noBrowser || shouldSkipLocalServer();
               let startFresh = true;
               let refreshAccountIndex;
               const existingStorage2 = await loadAccounts();
@@ -15279,74 +15183,9 @@ Re-authenticating ${refreshEmail || "account"}...
                   const authorization2 = await authorizeAntigravity(projectId2);
                   const fallbackState2 = getStateFromAuthorizationUrl(authorization2.url);
                   console.log("\nOAuth URL:\n" + authorization2.url + "\n");
-                  if (useManualMode) {
-                    const browserOpened = await openBrowser(authorization2.url);
-                    if (!browserOpened) {
-                      console.log("Could not open browser automatically.");
-                      console.log("Please open the URL above manually in your local browser.\n");
-                    }
-                    return promptManualOAuthInput(fallbackState2);
-                  }
-                  let listener2 = null;
-                  if (!isHeadless) {
-                    try {
-                      listener2 = await startOAuthListener();
-                    } catch {
-                      listener2 = null;
-                    }
-                  }
-                  if (!isHeadless) {
-                    await openBrowser(authorization2.url);
-                  }
-                  if (listener2) {
-                    try {
-                      const SOFT_TIMEOUT_MS = 3e4;
-                      const callbackPromise = listener2.waitForCallback();
-                      let softTimer;
-                      const timeoutPromise = new Promise((_, reject) => {
-                        softTimer = setTimeout(() => reject(new Error("SOFT_TIMEOUT")), SOFT_TIMEOUT_MS);
-                      });
-                      let callbackUrl;
-                      try {
-                        callbackUrl = await Promise.race([callbackPromise, timeoutPromise]);
-                      } catch (err) {
-                        if (err instanceof Error && err.message === "SOFT_TIMEOUT") {
-                          console.log("\n\u23F3 Automatic callback not received after 30 seconds.");
-                          console.log("You can paste the redirect URL manually.\n");
-                          console.log("OAuth URL (in case you need it again):");
-                          console.log(authorization2.url + "\n");
-                          try {
-                            await listener2.close();
-                          } catch {
-                          }
-                          return promptManualOAuthInput(fallbackState2);
-                        }
-                        throw err;
-                      } finally {
-                        clearTimeout(softTimer);
-                      }
-                      const params = extractOAuthCallbackParams(callbackUrl);
-                      if (!params) {
-                        return { type: "failed", error: "Missing code or state in callback URL" };
-                      }
-                      return exchangeAntigravity(params.code, params.state);
-                    } catch (error) {
-                      if (error instanceof Error && error.message !== "SOFT_TIMEOUT") {
-                        return {
-                          type: "failed",
-                          error: error.message
-                        };
-                      }
-                      return {
-                        type: "failed",
-                        error: error instanceof Error ? error.message : "Unknown error"
-                      };
-                    } finally {
-                      try {
-                        await listener2.close();
-                      } catch {
-                      }
-                    }
+                  if (!noBrowser && !isHeadless && !await openBrowser(authorization2.url)) {
+                    console.log("Could not open browser automatically.");
+                    console.log("Please open the URL above manually in your local browser.\n");
                   }
                   return promptManualOAuthInput(fallbackState2);
                 })();
@@ -15459,92 +15298,14 @@ Re-authenticating ${refreshEmail || "account"}...
             const projectId = "";
             const existingStorage = await loadAccounts();
             const existingCount = existingStorage?.accounts.length ?? 0;
-            const useManualFlow = isHeadless || shouldSkipLocalServer();
-            let listener = null;
-            if (!useManualFlow) {
-              try {
-                listener = await startOAuthListener();
-              } catch {
-                listener = null;
-              }
-            }
             const authorization = await authorizeAntigravity(projectId);
             const fallbackState = getStateFromAuthorizationUrl(authorization.url);
-            if (!useManualFlow) {
-              const browserOpened = await openBrowser(authorization.url);
-              if (!browserOpened) {
-                listener?.close().catch(() => {
-                });
-                listener = null;
-              }
-            }
-            if (listener) {
-              return {
-                url: authorization.url,
-                instructions: "Complete sign-in in your browser. We'll automatically detect the redirect back to localhost.",
-                method: "auto",
-                callback: async () => {
-                  const CALLBACK_TIMEOUT_MS = 3e4;
-                  try {
-                    const callbackPromise = listener.waitForCallback();
-                    let callbackTimer;
-                    const timeoutPromise = new Promise((_, reject) => {
-                      callbackTimer = setTimeout(() => reject(new Error("CALLBACK_TIMEOUT")), CALLBACK_TIMEOUT_MS);
-                    });
-                    let callbackUrl;
-                    try {
-                      callbackUrl = await Promise.race([callbackPromise, timeoutPromise]);
-                    } catch (err) {
-                      if (err instanceof Error && err.message === "CALLBACK_TIMEOUT") {
-                        return {
-                          type: "failed",
-                          error: "Callback timeout - please use CLI with --no-browser flag for manual input"
-                        };
-                      }
-                      throw err;
-                    } finally {
-                      clearTimeout(callbackTimer);
-                    }
-                    const params = extractOAuthCallbackParams(callbackUrl);
-                    if (!params) {
-                      return { type: "failed", error: "Missing code or state in callback URL" };
-                    }
-                    const result = await exchangeAntigravity(params.code, params.state);
-                    if (result.type === "success") {
-                      try {
-                        await persistAccountPool([result], false);
-                      } catch {
-                      }
-                      const newTotal = existingCount + 1;
-                      const toastMessage = existingCount > 0 ? `Added account${result.email ? ` (${result.email})` : ""} - ${newTotal} total` : `Authenticated${result.email ? ` (${result.email})` : ""}`;
-                      try {
-                        await client.tui.showToast({
-                          body: {
-                            message: toastMessage,
-                            variant: "success"
-                          }
-                        });
-                      } catch {
-                      }
-                    }
-                    return result;
-                  } catch (error) {
-                    return {
-                      type: "failed",
-                      error: error instanceof Error ? error.message : "Unknown error"
-                    };
-                  } finally {
-                    try {
-                      await listener.close();
-                    } catch {
-                    }
-                  }
-                }
-              };
+            if (!isHeadless) {
+              await openBrowser(authorization.url);
             }
             return {
               url: authorization.url,
-              instructions: "Visit the URL above, complete OAuth, then paste either the full redirect URL or the authorization code.",
+              instructions: "Visit the URL above and sign in with Google. Antigravity's page then shows an authorization code: paste it here.",
               method: "code",
               callback: async (codeInput) => {
                 const params = parseOAuthCallbackInput(codeInput, fallbackState);
@@ -15633,9 +15394,7 @@ var liveAccountPool = {
 };
 var oauthFlowHelpers = {
   openBrowser,
-  shouldSkipLocalServer,
   getStateFromAuthorizationUrl,
-  extractOAuthCallbackParams,
   parseOAuthCallbackInput,
   persistAccountPool
 };
@@ -15696,7 +15455,7 @@ import { dirname as dirname5, join as join12 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 
 // src/v2/credentials.ts
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 var OAUTH_METHOD_ID = "antigravity";
 function credentialToAuth(credential) {
   if (!credential) return { type: "none" };
@@ -15711,7 +15470,7 @@ function credentialToAuth(credential) {
   return { type: "api", key: credential.key };
 }
 function digest(value) {
-  return createHash3("sha256").update(value).digest("hex").slice(0, 16);
+  return createHash5("sha256").update(value).digest("hex").slice(0, 16);
 }
 function authSignature(connection, credential) {
   if (!connection || !credential) return "none";
@@ -15772,7 +15531,7 @@ function isFree(cost) {
     (entry) => entry.input === 0 && entry.output === 0 && entry.cache.read === 0 && entry.cache.write === 0
   );
 }
-function isRecord2(value) {
+function isRecord3(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 function positiveInt(value, fallback) {
@@ -15788,7 +15547,7 @@ function hasLegacyThinkingKeys(settings) {
 }
 function translateVariantSettings(settings) {
   const { thinkingLevel, thinkingBudget, thinkingConfig, ...rest } = settings;
-  const config = isRecord2(thinkingConfig) ? { ...thinkingConfig } : {};
+  const config = isRecord3(thinkingConfig) ? { ...thinkingConfig } : {};
   if (typeof thinkingLevel === "string" && config.thinkingLevel === void 0) {
     config.thinkingLevel = thinkingLevel;
   }
@@ -15798,17 +15557,17 @@ function translateVariantSettings(settings) {
   return Object.keys(config).length > 0 ? { ...rest, thinkingConfig: config } : rest;
 }
 function legacyVariantsToV2(variants) {
-  if (!isRecord2(variants)) return [];
+  if (!isRecord3(variants)) return [];
   const converted = [];
   for (const [id, value] of Object.entries(variants)) {
-    if (!id || !isRecord2(value)) continue;
+    if (!id || !isRecord3(value)) continue;
     converted.push({ id, settings: translateVariantSettings(value) });
   }
   return converted;
 }
 function toV2Model(providerID, id, definition) {
-  const limit = isRecord2(definition.limit) ? definition.limit : {};
-  const modalities = isRecord2(definition.modalities) ? definition.modalities : {};
+  const limit = isRecord3(definition.limit) ? definition.limit : {};
+  const modalities = isRecord3(definition.modalities) ? definition.modalities : {};
   const name = typeof definition.name === "string" && definition.name.length > 0 ? definition.name : id;
   return {
     id,
@@ -16219,14 +15978,6 @@ function buildLoginForm(accounts) {
     });
   }
   fields.push({
-    key: "noBrowser",
-    type: "boolean",
-    title: "Enter the authorization code manually",
-    description: "Skip the local callback listener (for SSH, containers and WSL).",
-    default: false,
-    hidden: true
-  });
-  fields.push({
     key: "projectId",
     type: "string",
     title: "Google Cloud project ID",
@@ -16379,15 +16130,8 @@ async function activeAccountCredential() {
 var log12 = createLogger("v2-oauth");
 var LOGIN_TIMEOUT_MS = 5 * 60 * 1e3;
 var FAILED_REFRESH_RETRY_MS = 60 * 1e3;
-function isHeadlessEnvironment() {
-  return !!(process.env.SSH_CONNECTION || process.env.SSH_CLIENT || process.env.SSH_TTY || process.env.OPENCODE_HEADLESS);
-}
-function isTruthyAnswer(value) {
-  return value === true || value === "true";
-}
 function createOAuthMethod(deps) {
   const { helpers, client, integrationID, management } = deps;
-  const startListener = deps.startListener ?? startOAuthListener;
   const createAuthorization = deps.createAuthorization ?? authorizeAntigravity;
   const exchangeCode = deps.exchangeCode ?? exchangeAntigravity;
   const refreshToken = deps.refreshToken ?? refreshAccessToken;
@@ -16433,57 +16177,13 @@ function createOAuthMethod(deps) {
       return completeManagement(withKeepOpenHint(outcome.text));
     }
     const projectId = typeof answer.projectId === "string" ? answer.projectId.trim() : "";
-    const manual = isTruthyAnswer(answer.noBrowser) || isHeadlessEnvironment() || helpers.shouldSkipLocalServer();
-    let listener = null;
-    if (!manual) {
-      try {
-        listener = await startListener();
-      } catch (error) {
-        log12.debug("OAuth callback listener unavailable, falling back to manual code entry", {
-          error: String(error)
-        });
-      }
-    }
-    let authorization;
-    try {
-      authorization = await createAuthorization(projectId);
-    } catch (error) {
-      await listener?.close().catch(() => {
-      });
-      throw error;
-    }
+    const authorization = await createAuthorization(projectId);
     const fallbackState = helpers.getStateFromAuthorizationUrl(authorization.url);
-    const expiresAt = Date.now() + LOGIN_TIMEOUT_MS;
-    if (listener) {
-      const activeListener = listener;
-      const callback = (async () => {
-        try {
-          const callbackUrl = await activeListener.waitForCallback();
-          const params = helpers.extractOAuthCallbackParams(callbackUrl);
-          if (!params) {
-            throw new Error("Missing code or state in callback URL");
-          }
-          return await completeLogin(params.code, params.state);
-        } finally {
-          await activeListener.close().catch(() => {
-          });
-        }
-      })();
-      callback.catch(() => {
-      });
-      return {
-        mode: "auto",
-        url: authorization.url,
-        instructions: "Complete the Google sign-in in your browser. The redirect back to localhost is detected automatically.",
-        expiresAt,
-        callback
-      };
-    }
     return {
       mode: "code",
       url: authorization.url,
-      instructions: "Open the URL, complete the Google sign-in, then paste the full redirect URL (or just the authorization code).",
-      expiresAt,
+      instructions: "Open the URL and sign in with Google. Antigravity's page then shows an authorization code: copy it and paste it here.",
+      expiresAt: Date.now() + LOGIN_TIMEOUT_MS,
       callback: async (input2) => {
         const params = helpers.parseOAuthCallbackInput(input2, fallbackState);
         if ("error" in params) {
@@ -16536,8 +16236,8 @@ function createOAuthMethod(deps) {
 }
 
 // src/v2/proxy.ts
-import { randomBytes as randomBytes3 } from "node:crypto";
-import { createServer as createServer2 } from "node:http";
+import { randomBytes as randomBytes4 } from "node:crypto";
+import { createServer } from "node:http";
 var log13 = createLogger("v2-proxy");
 var GEMINI_UPSTREAM_ORIGIN = "https://generativelanguage.googleapis.com";
 var MAX_REQUEST_BODY_BYTES = 256 * 1024 * 1024;
@@ -16712,7 +16412,7 @@ async function handleRequest(req, res, routes) {
 }
 async function startSharedProxy() {
   const routes = /* @__PURE__ */ new Map();
-  const server = createServer2((req, res) => {
+  const server = createServer((req, res) => {
     handleRequest(req, res, routes).catch((error) => {
       log13.error("Unhandled proxy error", { error: String(error) });
       sendJsonError(res, 500, "Internal proxy error", "INTERNAL");
@@ -16753,7 +16453,7 @@ async function registerProxyRoute(upstream) {
     if (sharedProxy === pending) sharedProxy = void 0;
     throw error;
   }
-  const token = randomBytes3(16).toString("hex");
+  const token = randomBytes4(16).toString("hex");
   proxy.routes.set(token, upstream);
   let disposed = false;
   return {
@@ -16768,35 +16468,6 @@ async function registerProxyRoute(upstream) {
       }
     }
   };
-}
-
-// src/v2/request-kind.ts
-var REQUEST_KIND_HEADER = "x-antigravity-request-kind";
-var TITLE_THINKING = { thinkingLevel: "low", includeThoughts: false };
-function isRecord3(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function applyRequestKind(url, init) {
-  const headers = new Headers(init.headers);
-  const kind = headers.get(REQUEST_KIND_HEADER);
-  if (kind === null) return init;
-  headers.delete(REQUEST_KIND_HEADER);
-  const untagged = { ...init, headers };
-  if (kind !== "title" || !/\/models\/[^/:]*gemini-(?:[3-9]|[1-9]\d+)(?=[.-]|[:/]|$)/i.test(url) || typeof init.body !== "string") {
-    return untagged;
-  }
-  let body;
-  try {
-    body = JSON.parse(init.body);
-  } catch {
-    return untagged;
-  }
-  if (!isRecord3(body)) return untagged;
-  const generationConfig = isRecord3(body.generationConfig) ? body.generationConfig : {};
-  const thinkingConfig = isRecord3(generationConfig.thinkingConfig) ? generationConfig.thinkingConfig : {};
-  const { thinkingBudget: _budget, thinking_budget: _snakeBudget, ...rest } = thinkingConfig;
-  body.generationConfig = { ...generationConfig, thinkingConfig: { ...rest, ...TITLE_THINKING } };
-  return { ...untagged, body: JSON.stringify(body) };
 }
 
 // src/v2/runtime.ts
@@ -17092,13 +16763,17 @@ var V2Runtime = class _V2Runtime {
       name: "google_search",
       description: legacyTool.description,
       input: input2,
-      execute: async (rawInput) => {
+      execute: async (rawInput, context) => {
         const parsed = shape.safeParse(rawInput);
         if (!parsed.success) {
           return { content: `Error: invalid google_search arguments: ${parsed.error.message}` };
         }
         await this.loaderResult().catch(() => void 0);
-        const content = await legacyTool.execute(parsed.data, { abort: new AbortController().signal });
+        const { signal, sessionID } = context ?? {};
+        const content = await legacyTool.execute(parsed.data, {
+          abort: signal ?? new AbortController().signal,
+          sessionID
+        });
         return { content };
       }
     });

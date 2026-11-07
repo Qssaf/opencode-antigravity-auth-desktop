@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { AccountManager, type ModelFamily, type HeaderStyle } from "./accounts";
+import { AccountManager } from "./accounts";
 import type { AccountStorageV4 } from "./storage";
 
 /**
@@ -17,162 +17,6 @@ import type { AccountStorageV4 } from "./storage";
 describe("Antigravity-first fallback", () => {
   beforeEach(() => {
     vi.useRealTimers();
-  });
-
-  describe("hasOtherAccountWithAntigravityAvailable", () => {
-    it("returns true when another account has antigravity available", () => {
-      const stored: AccountStorageV4 = {
-        version: 4,
-        accounts: [
-          { refreshToken: "r1", projectId: "p1", addedAt: 1, lastUsed: 0 },
-          { refreshToken: "r2", projectId: "p2", addedAt: 1, lastUsed: 0 },
-        ],
-        activeIndex: 0,
-      };
-
-      const manager = new AccountManager(undefined, stored);
-      const accounts = manager.getAccounts();
-      
-      // Mark account 0's antigravity as rate-limited
-      manager.markRateLimited(accounts[0]!, 60000, "gemini", "antigravity");
-
-      // Account 1 should have antigravity available
-      const hasOther = manager.hasOtherAccountWithAntigravityAvailable(
-        accounts[0]!.index,
-        "gemini",
-        null
-      );
-
-      expect(hasOther).toBe(true);
-    });
-
-    it("returns false when all other accounts are also rate-limited for antigravity", () => {
-      const stored: AccountStorageV4 = {
-        version: 4,
-        accounts: [
-          { refreshToken: "r1", projectId: "p1", addedAt: 1, lastUsed: 0 },
-          { refreshToken: "r2", projectId: "p2", addedAt: 1, lastUsed: 0 },
-        ],
-        activeIndex: 0,
-      };
-
-      const manager = new AccountManager(undefined, stored);
-      const accounts = manager.getAccounts();
-      
-      // Mark both accounts' antigravity as rate-limited
-      manager.markRateLimited(accounts[0]!, 60000, "gemini", "antigravity");
-      manager.markRateLimited(accounts[1]!, 60000, "gemini", "antigravity");
-
-      const hasOther = manager.hasOtherAccountWithAntigravityAvailable(
-        accounts[0]!.index,
-        "gemini",
-        null
-      );
-
-      expect(hasOther).toBe(false);
-    });
-
-    it("skips disabled accounts", () => {
-      const stored: AccountStorageV4 = {
-        version: 4,
-        accounts: [
-          { refreshToken: "r1", projectId: "p1", addedAt: 1, lastUsed: 0 },
-          { refreshToken: "r2", projectId: "p2", addedAt: 1, lastUsed: 0, enabled: false },
-        ],
-        activeIndex: 0,
-      };
-
-      const manager = new AccountManager(undefined, stored);
-      const accounts = manager.getAccounts();
-      
-      // Mark account 0's antigravity as rate-limited
-      manager.markRateLimited(accounts[0]!, 60000, "gemini", "antigravity");
-
-      // Account 1 is disabled, so should return false
-      const hasOther = manager.hasOtherAccountWithAntigravityAvailable(
-        accounts[0]!.index,
-        "gemini",
-        null
-      );
-
-      expect(hasOther).toBe(false);
-    });
-
-    it("skips cooling down accounts", () => {
-      const stored: AccountStorageV4 = {
-        version: 4,
-        accounts: [
-          { refreshToken: "r1", projectId: "p1", addedAt: 1, lastUsed: 0 },
-          { refreshToken: "r2", projectId: "p2", addedAt: 1, lastUsed: 0 },
-        ],
-        activeIndex: 0,
-      };
-
-      const manager = new AccountManager(undefined, stored);
-      const accounts = manager.getAccounts();
-      
-      // Mark account 0's antigravity as rate-limited
-      manager.markRateLimited(accounts[0]!, 60000, "gemini", "antigravity");
-      // Mark account 1 as cooling down
-      manager.markAccountCoolingDown(accounts[1]!, 60000, "auth-failure");
-
-      const hasOther = manager.hasOtherAccountWithAntigravityAvailable(
-        accounts[0]!.index,
-        "gemini",
-        null
-      );
-
-      expect(hasOther).toBe(false);
-    });
-
-    it("works with model-specific rate limits", () => {
-      const stored: AccountStorageV4 = {
-        version: 4,
-        accounts: [
-          { refreshToken: "r1", projectId: "p1", addedAt: 1, lastUsed: 0 },
-          { refreshToken: "r2", projectId: "p2", addedAt: 1, lastUsed: 0 },
-        ],
-        activeIndex: 0,
-      };
-
-      const manager = new AccountManager(undefined, stored);
-      const accounts = manager.getAccounts();
-      
-      // Mark account 0's antigravity as rate-limited for gemini-3-pro
-      manager.markRateLimited(accounts[0]!, 60000, "gemini", "antigravity", "gemini-3-pro");
-
-      // Account 1 should have antigravity available for gemini-3-pro
-      const hasOther = manager.hasOtherAccountWithAntigravityAvailable(
-        accounts[0]!.index,
-        "gemini",
-        "gemini-3-pro"
-      );
-
-      expect(hasOther).toBe(true);
-    });
-
-    it("returns false for Claude family", () => {
-      const stored: AccountStorageV4 = {
-        version: 4,
-        accounts: [
-          { refreshToken: "r1", projectId: "p1", addedAt: 1, lastUsed: 0 },
-          { refreshToken: "r2", projectId: "p2", addedAt: 1, lastUsed: 0 },
-        ],
-        activeIndex: 0,
-      };
-
-      const manager = new AccountManager(undefined, stored);
-
-      // For Claude, this method should always return false
-      // (Claude has no gemini-cli fallback, only antigravity)
-      const hasOther = manager.hasOtherAccountWithAntigravityAvailable(
-        0,
-        "claude",
-        null
-      );
-
-      expect(hasOther).toBe(false);
-    });
   });
 
   describe("Pre-check fallback logic", () => {
@@ -228,8 +72,8 @@ describe("Antigravity-first fallback", () => {
       manager.markRateLimited(accounts[1]!, 60000, "gemini", "antigravity");
 
       // Verify no account has antigravity available
-      expect(manager.hasOtherAccountWithAntigravityAvailable(0, "gemini", null)).toBe(false);
-      expect(manager.hasOtherAccountWithAntigravityAvailable(1, "gemini", null)).toBe(false);
+      expect(manager.peekOtherAccountForFamily("gemini", null, "antigravity", 100, 600_000, new Set([0]))).toBeNull();
+      expect(manager.peekOtherAccountForFamily("gemini", null, "antigravity", 100, 600_000, new Set([1]))).toBeNull();
 
       // There is no Gemini CLI quota to fall back to.
       expect(manager.getCurrentOrNextForFamily("gemini", null, "sticky", "antigravity")).toBeNull();

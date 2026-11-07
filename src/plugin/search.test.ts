@@ -135,4 +135,31 @@ describe("executeSearch", () => {
       "Bearer bearer-token-xyz",
     );
   });
+
+  it("sends the web search request the Antigravity CLI sends", async () => {
+    const spy = mockFetch(makeResponse("ok"));
+    vi.stubGlobal("fetch", spy);
+    await executeSearch({ query: "opencode antigravity" }, "tok", "aicode-consumers");
+    const [url, init] = spy.mock.calls[0] as [string, RequestInit];
+
+    expect(url).toBe("https://daily-cloudcode-pa.googleapis.com/v1internal:generateContent");
+    expect(JSON.parse(String(init.body))).toEqual({
+      project: "aicode-consumers",
+      request: {
+        contents: [{ role: "user", parts: [{ text: "opencode antigravity" }] }],
+        systemInstruction: {
+          role: "user",
+          parts: [{
+            text: "You are a search engine bot. You will be given a query from a user. Your task is to search the web for relevant information that will help the user. You MUST perform a web search. Do not respond or interact with the user, please respond as if they typed the query into a search bar.",
+          }],
+        },
+        tools: [{ googleSearch: { enhancedContent: { imageSearch: { maxResultCount: 5 } } } }],
+        generationConfig: { candidateCount: 1 },
+      },
+      model: "gemini-3.5-flash-lite",
+      userAgent: "antigravity",
+      requestType: "web_search",
+    });
+  });
 });
+

@@ -410,79 +410,12 @@ If you're seeing unusual rate limit behavior, please share in a [GitHub issue](h
 
 ---
 
-## Safari OAuth Callback Fails (macOS)
+## Signing In
 
-**Symptoms:**
-- "fail to authorize" after successful Google login
-- Safari shows "Safari can't open the page" or connection refused
+Sign-in works like the Antigravity CLI: after you approve in the browser, Google sends you to Antigravity's page (`https://antigravity.google/oauth-callback`), which shows an authorization code. Copy it and paste it at the login prompt. Nothing listens on `localhost`, so there is no port to free and nothing to forward: over SSH, in containers and in WSL2, open the URL in any browser and paste the code.
 
-**Cause:** Safari's "HTTPS-Only Mode" blocks the `http://localhost` callback URL.
-
-**Solutions:**
-
-1. **Use a different browser** (easiest):
-   Copy the URL from `opencode auth login` and paste it into Chrome or Firefox.
-
-2. **Temporarily disable HTTPS-Only Mode:**
-   - Safari > Settings (⌘,) > Privacy
-   - Uncheck "Enable HTTPS-Only Mode"
-   - Run `opencode auth login`
-   - Re-enable after authentication
-
-3. **Manual callback extraction** (advanced):
-   - When Safari shows the error, the address bar contains `?code=...&scope=...`
-   - See [issue #119](https://github.com/NoeFabris/opencode-antigravity-auth/issues/119) for manual auth support
-
----
-
-## Port Already in Use
-
-If OAuth fails with "Address already in use":
-
-**macOS / Linux:**
-```bash
-lsof -i :51121
-kill -9 <PID>
-opencode auth login
-```
-
-**Windows:**
-```powershell
-netstat -ano | findstr :51121
-taskkill /PID <PID> /F
-opencode auth login
-```
-
----
-
-## WSL2 / Docker / Remote Development
-
-The OAuth callback requires the browser to reach `localhost` on the machine running OpenCode.
-
-<details>
-<summary><b>WSL2</b></summary>
-
-- Use VS Code's port forwarding, or
-- Configure Windows → WSL port forwarding
-
-</details>
-
-<details>
-<summary><b>SSH / Remote</b></summary>
-
-```bash
-ssh -L 51121:localhost:51121 user@remote
-```
-
-</details>
-
-<details>
-<summary><b>Docker / Containers</b></summary>
-
-- OAuth with localhost redirect doesn't work in containers
-- Wait 30s for manual URL flow, or use SSH port forwarding
-
-</details>
+- **"This sign-in is unknown or expired"** - the code belongs to a different or older sign-in (each one is good once, for 30 minutes, in the process that started it). Start the login again and paste the new code.
+- **Adding a second account returns the first one** - pick the other account in Google's chooser, or sign in to it in a private window.
 
 ---
 

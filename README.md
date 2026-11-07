@@ -509,73 +509,12 @@ If you encounter errors during a session:
 
 ---
 
-### OAuth Callback Issues
+### Signing In
 
-<details>
-<summary><b>Safari OAuth Callback Fails (macOS)</b></summary>
+Sign-in works like the Antigravity CLI: after you approve in the browser, Google sends you to Antigravity's page (`https://antigravity.google/oauth-callback`), which shows an authorization code. Copy it and paste it at the login prompt. Nothing listens on `localhost`, so it works the same over SSH, in containers and in WSL2: open the URL in any browser.
 
-**Symptoms:**
-- "fail to authorize" after successful Google login
-- Safari shows "Safari can't open the page"
-
-**Cause:** Safari's "HTTPS-Only Mode" blocks `http://localhost` callback.
-
-**Solutions:**
-
-1. **Use Chrome or Firefox** (easiest):
-   Copy the OAuth URL and paste into a different browser.
-
-2. **Disable HTTPS-Only Mode temporarily:**
-   - Safari > Settings (⌘,) > Privacy
-   - Uncheck "Enable HTTPS-Only Mode"
-   - Run `opencode auth login`
-   - Re-enable after authentication
-
-</details>
-
-<details>
-<summary><b>Port Conflict (Address Already in Use)</b></summary>
-
-**macOS / Linux:**
-```bash
-# Find process using the port
-lsof -i :51121
-
-# Kill if stale
-kill -9 <PID>
-
-# Retry
-opencode auth login
-```
-
-**Windows (PowerShell):**
-```powershell
-netstat -ano | findstr :51121
-taskkill /PID <PID> /F
-opencode auth login
-```
-
-</details>
-
-<details>
-<summary><b>Docker / WSL2 / Remote Development</b></summary>
-
-OAuth callback requires browser to reach `localhost` on the machine running OpenCode.
-
-**WSL2:**
-- Use VS Code's port forwarding, or
-- Configure Windows → WSL port forwarding
-
-**SSH / Remote:**
-```bash
-ssh -L 51121:localhost:51121 user@remote
-```
-
-**Docker / Containers:**
-- OAuth with localhost redirect doesn't work in containers
-- Wait 30s for manual URL flow, or use SSH port forwarding
-
-</details>
+- **"This sign-in is unknown or expired"** - the code belongs to a different or older sign-in (each one is good once, for 30 minutes, in the process that started it). Run `opencode auth login` again and paste the new code.
+- **Adding a second account returns the first one** - pick the other account in Google's chooser, or sign in to it in a private window.
 
 ---
 

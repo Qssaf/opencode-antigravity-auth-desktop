@@ -218,19 +218,17 @@ describe("fetchRateLimitSummary", () => {
     expect(thirdPartyWeekly?.remainingFraction).toBe(0.99);
   });
 
-  it("falls through to the next host on 403/404/5xx", async () => {
+  it("asks only the daily endpoint, as agy does", async () => {
     const seen: string[] = [];
     global.fetch = (async (url: string) => {
       seen.push(new URL(url).host);
-      return seen.length === 1
-        ? new Response("nope", { status: 404 })
-        : new Response(JSON.stringify(summaryPayload), { status: 200 });
+      return new Response("nope", { status: 404 });
     }) as unknown as typeof fetch;
 
     const summary = await fetchRateLimitSummary("token");
 
-    expect(seen.length).toBeGreaterThan(1);
-    expect(summary.groups).toHaveLength(2);
+    expect(seen).toEqual(["daily-cloudcode-pa.googleapis.com"]);
+    expect(summary.groups).toEqual([]);
   });
 
   it("reports a failure instead of throwing", async () => {

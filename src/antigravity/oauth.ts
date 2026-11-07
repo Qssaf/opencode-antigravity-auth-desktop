@@ -1,4 +1,4 @@
-import { generatePKCE } from "@openauthjs/openauth/pkce";
+import { createHash, randomBytes } from "node:crypto";
 
 import {
   ANTIGRAVITY_CLIENT_ID,
@@ -6,23 +6,48 @@ import {
   ANTIGRAVITY_REDIRECT_URI,
   ANTIGRAVITY_SCOPES,
   ANTIGRAVITY_ENDPOINT_FALLBACKS,
-  ANTIGRAVITY_LOAD_ENDPOINTS,
   ANTIGRAVITY_CLI_USER_AGENT,
-  GEMINI_CLI_HEADERS,
 } from "../constants";
 import { createLogger } from "../plugin/logger";
 import { calculateTokenExpiry } from "../plugin/auth";
+import { googleFetch, googleRequest } from "./google-http";
 
 const log = createLogger("oauth");
 
-interface PkcePair {
-  challenge: string;
-  verifier: string;
-}
-
-interface AntigravityAuthState {
+interface PendingAuthorization {
   verifier: string;
   projectId: string;
+  createdAt: number;
+}
+
+/** A sign-in not completed within this long has to be started again. */
+const AUTHORIZATION_TTL_MS = 30 * 60 * 1000;
+
+/**
+ * Sign-ins waiting for their code, keyed by `state`. The PKCE verifier never
+ * leaves the process (it used to travel inside `state`, where anyone who saw
+ * the redirect had both halves). On globalThis because OpenCode 2.x imports
+ * this module once per location, and a sign-in started in one completes in
+ * whichever module instance handles the pasted code.
+ */
+const pendingAuthorizations = ((globalThis as Record<symbol, unknown>)[
+  Symbol.for("opencode-antigravity-auth/pending-authorizations")
+] ??= new Map<string, PendingAuthorization>()) as Map<string, PendingAuthorization>;
+
+/** Takes the sign-in `state` belongs to; each one can be completed once. */
+function takePendingAuthorization(state: string): PendingAuthorization | undefined {
+  const now = Date.now();
+  for (const [key, pending] of pendingAuthorizations) {
+    if (now - pending.createdAt > AUTHORIZATION_TTL_MS) pendingAuthorizations.delete(key);
+  }
+  const pending = pendingAuthorizations.get(state);
+  pendingAuthorizations.delete(state);
+  return pending;
+}
+
+/** Go's `oauth2.GenerateVerifier`: 32 random bytes, base64url without padding. */
+function generateVerifier(): string {
+  return randomBytes(32).toString("base64url");
 }
 
 /**
@@ -30,7 +55,6 @@ interface AntigravityAuthState {
  */
 export interface AntigravityAuthorization {
   url: string;
-  verifier: string;
   projectId: string;
 }
 
@@ -63,56 +87,33 @@ interface AntigravityUserInfo {
 }
 
 /**
- * Encode an object into a URL-safe base64 string.
- */
-function encodeState(payload: AntigravityAuthState): string {
-  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
-}
-
-/**
- * Decode an OAuth state parameter back into its structured representation.
- */
-function decodeState(state: string): AntigravityAuthState {
-  const normalized = state.replace(/-/g, "+").replace(/_/g, "/");
-  const padded = normalized.padEnd(normalized.length + ((4 - normalized.length % 4) % 4), "=");
-  const json = Buffer.from(padded, "base64").toString("utf8");
-  const parsed = JSON.parse(json);
-  if (typeof parsed.verifier !== "string") {
-    throw new Error("Missing PKCE verifier in state");
-  }
-  return {
-    verifier: parsed.verifier,
-    projectId: typeof parsed.projectId === "string" ? parsed.projectId : "",
-  };
-}
-
-/**
- * Build the Antigravity OAuth authorization URL including PKCE and optional project metadata.
+ * Builds the sign-in URL the way the Antigravity CLI does (Go's
+ * `oauth2.Config.AuthCodeURL`): the v1 endpoint, parameters in alphabetical
+ * order, a 16-byte random `state` and an S256 PKCE challenge. Google then
+ * sends the browser to Antigravity's page, which shows the code to paste back.
  */
 export async function authorizeAntigravity(projectId = ""): Promise<AntigravityAuthorization> {
-  const pkce = (await generatePKCE()) as PkcePair;
+  const verifier = generateVerifier();
+  const state = randomBytes(16).toString("base64url");
+  pendingAuthorizations.set(state, { verifier, projectId: projectId || "", createdAt: Date.now() });
 
-  const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-  url.searchParams.set("client_id", ANTIGRAVITY_CLIENT_ID);
-  url.searchParams.set("response_type", "code");
-  url.searchParams.set("redirect_uri", ANTIGRAVITY_REDIRECT_URI);
-  url.searchParams.set("scope", ANTIGRAVITY_SCOPES.join(" "));
-  url.searchParams.set("code_challenge", pkce.challenge);
-  url.searchParams.set("code_challenge_method", "S256");
-  url.searchParams.set(
-    "state",
-    encodeState({ verifier: pkce.verifier, projectId: projectId || "" }),
-  );
-  url.searchParams.set("access_type", "offline");
-  // `select_account` is what makes multi-account logins work: with `consent`
-  // alone Google silently reuses the browser's current session, so a second
-  // `auth login` returns the account that is already in the pool and looks
-  // like it did nothing. `consent` is kept so a refresh token is always issued.
-  url.searchParams.set("prompt", "select_account consent");
+  const params = new URLSearchParams({
+    access_type: "offline",
+    client_id: ANTIGRAVITY_CLIENT_ID,
+    code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+    code_challenge_method: "S256",
+    // Antigravity sends `consent` alone. `select_account` is kept because with
+    // `consent` alone Google silently reuses the browser's current session,
+    // so a second login returns the account already in the pool.
+    prompt: "select_account consent",
+    redirect_uri: ANTIGRAVITY_REDIRECT_URI,
+    response_type: "code",
+    scope: ANTIGRAVITY_SCOPES.join(" "),
+    state,
+  });
 
   return {
-    url: url.toString(),
-    verifier: pkce.verifier,
+    url: `https://accounts.google.com/o/oauth2/auth?${params}`,
     projectId: projectId || "",
   };
 }
@@ -127,7 +128,7 @@ async function fetchWithTimeout(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    return await googleFetch(url, { ...options, signal: controller.signal });
   } finally {
     clearTimeout(timeout);
   }
@@ -144,11 +145,7 @@ async function fetchProjectID(accessToken: string): Promise<string> {
     "User-Agent": ANTIGRAVITY_CLI_USER_AGENT,
   };
 
-  const loadEndpoints = Array.from(
-    new Set<string>([...ANTIGRAVITY_LOAD_ENDPOINTS, ...ANTIGRAVITY_ENDPOINT_FALLBACKS]),
-  );
-
-  for (const baseEndpoint of loadEndpoints) {
+  for (const baseEndpoint of ANTIGRAVITY_ENDPOINT_FALLBACKS) {
     try {
       const url = `${baseEndpoint}/v1internal:loadCodeAssist`;
       const response = await fetchWithTimeout(url, {
@@ -207,25 +204,29 @@ export async function exchangeAntigravity(
   state: string,
 ): Promise<AntigravityTokenExchangeResult> {
   try {
-    const { verifier, projectId } = decodeState(state);
+    const pending = takePendingAuthorization(state);
+    if (!pending) {
+      return {
+        type: "failed",
+        error: "This sign-in is unknown or expired. Start the login again and paste the code it shows.",
+      };
+    }
+    const { verifier, projectId } = pending;
 
     const startTime = Date.now();
-    const tokenResponse = await fetchWithTimeout("https://oauth2.googleapis.com/token", {
+    // Go's oauth2 token request: form fields in alphabetical order.
+    const tokenResponse = await googleRequest("https://oauth2.googleapis.com/token", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-        "Accept": "*/*",
-        "Accept-Encoding": "gzip, deflate, br",
-        "User-Agent": GEMINI_CLI_HEADERS["User-Agent"],
-      },
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         client_id: ANTIGRAVITY_CLIENT_ID,
         client_secret: ANTIGRAVITY_CLIENT_SECRET,
         code,
+        code_verifier: verifier,
         grant_type: "authorization_code",
         redirect_uri: ANTIGRAVITY_REDIRECT_URI,
-        code_verifier: verifier,
-      }),
+      }).toString(),
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
 
     if (!tokenResponse.ok) {
@@ -235,15 +236,11 @@ export async function exchangeAntigravity(
 
     const tokenPayload = (await tokenResponse.json()) as AntigravityTokenResponse;
 
-    const userInfoResponse = await fetchWithTimeout(
-      "https://www.googleapis.com/oauth2/v1/userinfo?alt=json",
-      {
-        headers: {
-          Authorization: `Bearer ${tokenPayload.access_token}`,
-          "User-Agent": GEMINI_CLI_HEADERS["User-Agent"],
-        },
-      },
-    );
+    const userInfoResponse = await googleRequest("https://www.googleapis.com/oauth2/v2/userinfo", {
+      method: "GET",
+      headers: { Authorization: `Bearer ${tokenPayload.access_token}` },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
 
     const userInfo = userInfoResponse.ok
       ? ((await userInfoResponse.json()) as AntigravityUserInfo)

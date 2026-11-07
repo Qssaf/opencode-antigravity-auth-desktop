@@ -72,6 +72,14 @@ describe("refreshAccessToken", () => {
 
     expect(result?.access).toBe("new-access");
     expect(client.auth.set.mock.calls.length).toBe(0);
+
+    // Sent as the Antigravity CLI's refresh: form fields in alphabetical order.
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://oauth2.googleapis.com/token");
+    expect(init.headers).toEqual({ "Content-Type": "application/x-www-form-urlencoded" });
+    expect([...new URLSearchParams(String(init.body)).keys()]).toEqual([
+      "client_id", "client_secret", "grant_type", "refresh_token",
+    ]);
   });
 
   it("handles Google refresh token rotation", async () => {

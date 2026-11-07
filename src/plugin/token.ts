@@ -1,3 +1,4 @@
+import { googleRequest } from "../antigravity/google-http";
 import { ANTIGRAVITY_CLIENT_ID, ANTIGRAVITY_CLIENT_SECRET } from "../constants";
 import { formatRefreshParts, parseRefreshParts, calculateTokenExpiry } from "./auth";
 import { clearCachedAuth, storeCachedAuth } from "./cache";
@@ -204,17 +205,17 @@ async function performRefresh(
 
   try {
     const startTime = Date.now();
-    const response = await fetch("https://oauth2.googleapis.com/token", {
+    // Sent like the Antigravity CLI's refresh (Go's oauth2): HTTP/2, form
+    // fields in alphabetical order.
+    const response = await googleRequest("https://oauth2.googleapis.com/token", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
-        grant_type: "refresh_token",
-        refresh_token: parts.refreshToken,
         client_id: ANTIGRAVITY_CLIENT_ID,
         client_secret: ANTIGRAVITY_CLIENT_SECRET,
-      }),
+        grant_type: "refresh_token",
+        refresh_token: parts.refreshToken,
+      }).toString(),
       signal: controller.signal,
     });
 
@@ -228,7 +229,7 @@ async function performRefresh(
 
       const { code, description } = parseOAuthErrorPayload(errorText);
       const details = [code, description ?? errorText].filter(Boolean).join(": ");
-      const baseMessage = `Antigravity token refresh failed (${response.status} ${response.statusText})`;
+      const baseMessage = `Antigravity token refresh failed (${response.status}${response.statusText ? ` ${response.statusText}` : ""})`;
       const message = details ? `${baseMessage} - ${details}` : baseMessage;
       log.warn("Token refresh failed", { status: response.status, code, details });
 

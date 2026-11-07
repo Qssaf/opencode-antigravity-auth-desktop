@@ -34,7 +34,7 @@ import {
   setAccountEnabled,
   setAccountsEnabled,
 } from "../plugin/account-admin";
-import { addAccountViaBrowser, completePastedLogin, createAuthorization } from "../plugin/account-login";
+import { completePastedLogin, createAuthorization } from "../plugin/account-login";
 import type { AccountLoginResult } from "../plugin/account-login";
 import { pressEnterToContinue } from "../plugin/cli";
 import { updateOpencodeConfig } from "../plugin/config/updater";
@@ -54,7 +54,7 @@ Usage:
 Commands:
   (none)                 Interactive menu (falls back to \`list\` without a TTY)
   list                   Show stored accounts
-  add [--no-browser]     Sign in and add another Google account
+  add [--no-browser]     Sign in and add another Google account (paste the code)
   enable <n...>          Re-enable accounts n (1-based, several allowed)
   disable <n...>         Exclude accounts n from rotation
   remove <n...> | --all  Delete accounts n, or every account
@@ -97,34 +97,27 @@ function toAccountInfos(storage: AccountStorageV4): AccountInfo[] {
 
 // -- login -------------------------------------------------------------------
 
-/** Pastes the redirect URL by hand, for SSH, containers and `--no-browser`. */
-async function addAccountManually(): Promise<AccountLoginResult> {
-  const { url, state } = await createAuthorization(oauthFlowHelpers);
-  console.log("\nOpen this URL and pick the Google account you want to add:\n");
-  console.log(`${url}\n`);
-  await oauthFlowHelpers.openBrowser(url);
-
-  if (!input.isTTY) {
-    return {
-      ok: false,
-      message: "Pasting the redirect URL needs an interactive terminal. Run this command from one.",
-    };
-  }
-
-  const pasted = await readLine("Paste the full redirect URL (or just the code): ");
-  return completePastedLogin(oauthFlowHelpers, pasted, state);
-}
-
+/**
+ * Signs in like the Antigravity CLI: Google sends the browser to Antigravity's
+ * page, which shows the authorization code to paste here.
+ */
 async function addAccount(options: { noBrowser: boolean }): Promise<boolean> {
-  const result = options.noBrowser
-    ? await addAccountManually()
-    : await addAccountViaBrowser(oauthFlowHelpers, {
-        onAuthorizationUrl: (url) => {
-          console.log("\nOpen this URL and pick the Google account you want to add:\n");
-          console.log(`${url}\n`);
-          console.log("Waiting for the browser redirect...");
-        },
-      });
+  const result = await (async (): Promise<AccountLoginResult> => {
+    const { url, state } = await createAuthorization(oauthFlowHelpers);
+    console.log("\nOpen this URL and pick the Google account you want to add:\n");
+    console.log(`${url}\n`);
+    if (!options.noBrowser) await oauthFlowHelpers.openBrowser(url);
+
+    if (!input.isTTY) {
+      return {
+        ok: false,
+        message: "Pasting the authorization code needs an interactive terminal. Run this command from one.",
+      };
+    }
+
+    const pasted = await readLine("Paste the authorization code from Antigravity's page: ");
+    return completePastedLogin(oauthFlowHelpers, pasted, state);
+  })();
 
   console.log(`\n${result.message}\n`);
   return result.ok;

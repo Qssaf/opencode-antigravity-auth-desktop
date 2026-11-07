@@ -26,7 +26,7 @@ import { getProjectConfigPath, getUserConfigPath } from "../plugin/config/loader
 import { OPENCODE_MODEL_DEFINITIONS } from "../plugin/config/models";
 import { createLogger } from "../plugin/logger";
 import { loadAccounts } from "../plugin/storage";
-import type { AuthDetails, LoaderResult, PluginResult, Provider, ProviderModel } from "../plugin/types";
+import type { AuthDetails, LoaderResult, Provider, ProviderModel } from "../plugin/types";
 import { authSignature, credentialToAuth, poolAuthSignature } from "./credentials";
 import { createLegacyClient } from "./legacy-client";
 import { catalogFromDefinitions, mergeCatalog } from "./models";
@@ -81,7 +81,7 @@ interface LoadedInterceptor {
 interface LegacySearchTool {
   description: string;
   args: Record<string, unknown>;
-  execute(args: unknown, context: { abort: AbortSignal }): Promise<string>;
+  execute(args: unknown, context: { abort: AbortSignal; sessionID?: string }): Promise<string>;
 }
 
 function isLoaderResult(value: LoaderResult | Record<string, unknown>): value is LoaderResult {
@@ -456,15 +456,20 @@ export class V2Runtime {
       name: "google_search",
       description: legacyTool.description,
       input,
-      execute: async (rawInput) => {
+      execute: async (rawInput, context) => {
         const parsed = shape.safeParse(rawInput);
         if (!parsed.success) {
           return { content: `Error: invalid google_search arguments: ${parsed.error.message}` };
         }
         // The pipeline reads the account pool the loader builds.
         await this.loaderResult().catch(() => undefined);
-        // 2.x tool calls carry no abort signal, so the search runs to its own timeout.
-        const content = await legacyTool.execute(parsed.data, { abort: new AbortController().signal });
+        // OpenCode's tool context (checked against @opencode/plugin 2.2.5) carries
+        // the chat's id, which picks the chat's account, and the call's abort signal.
+        const { signal, sessionID } = (context ?? {}) as { signal?: AbortSignal; sessionID?: string };
+        const content = await legacyTool.execute(parsed.data, {
+          abort: signal ?? new AbortController().signal,
+          sessionID,
+        });
         return { content };
       },
     });

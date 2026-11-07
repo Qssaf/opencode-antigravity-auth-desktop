@@ -47,14 +47,15 @@ describe("project resolution requests", () => {
     expect(init?.signal).toBeInstanceOf(AbortSignal);
   });
 
-  it("moves on to the next endpoint when one fails", async () => {
+  it("asks only the daily endpoint, as agy does", async () => {
     const fetchMock = vi
       .fn()
       .mockRejectedValueOnce(new DOMException("The operation was aborted due to timeout", "TimeoutError"))
       .mockResolvedValue(new Response(JSON.stringify({ cloudaicompanionProject: "p" })));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(loadManagedProject("access-token", "project")).resolves.toEqual({ cloudaicompanionProject: "p" });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await expect(loadManagedProject("access-token", "project")).resolves.toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("https://daily-cloudcode-pa.googleapis.com/");
   });
 });

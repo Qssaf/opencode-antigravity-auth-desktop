@@ -6,9 +6,10 @@
  * wrapper that makes separate API calls with only the grounding tools enabled.
  */
 
+import { googleFetch } from "../antigravity/google-http";
 import {
+  ANTIGRAVITY_CLI_USER_AGENT,
   ANTIGRAVITY_ENDPOINT,
-  getAntigravityHeaders,
   SEARCH_MODEL,
   SEARCH_TIMEOUT_MS,
   SEARCH_SYSTEM_INSTRUCTION,
@@ -84,7 +85,6 @@ interface AntigravitySearchResponse {
 export interface SearchArgs {
   query: string;
   urls?: string[];
-  thinking?: boolean;
 }
 
 export interface SearchResult {
@@ -97,18 +97,6 @@ export interface SearchResult {
 // ============================================================================
 // Helper Functions
 // ============================================================================
-
-let sessionCounter = 0;
-const sessionPrefix = `search-${Date.now().toString(36)}`;
-
-function generateRequestId(): string {
-  return `search-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function getSessionId(): string {
-  sessionCounter++;
-  return `${sessionPrefix}-${sessionCounter}`;
-}
 
 function formatSearchResult(result: SearchResult): string {
   const lines: string[] = [];
@@ -226,7 +214,7 @@ export async function executeSearch(
   projectId: string,
   abortSignal?: AbortSignal,
 ): Promise<string> {
-  const { query, urls, thinking = true } = args;
+  const { query, urls } = args;
 
   // Build prompt with optional URLs
   let prompt = query;
@@ -235,41 +223,26 @@ export async function executeSearch(
     prompt = `${query}\n\nURLs to analyze:\n${urlList}`;
   }
 
-  // Build tools array - only grounding tools, no function declarations
-  const tools: Array<Record<string, unknown>> = [];
-  tools.push({ googleSearch: {} });
+  // The Antigravity CLI's web search, field for field. URL analysis has no agy
+  // counterpart; it adds the urlContext tool.
+  const tools: Array<Record<string, unknown>> = [
+    { googleSearch: { enhancedContent: { imageSearch: { maxResultCount: 5 } } } },
+  ];
   if (urls && urls.length > 0) {
     tools.push({ urlContext: {} });
   }
 
-  const requestPayload = {
-    systemInstruction: {
-      parts: [{ text: SEARCH_SYSTEM_INSTRUCTION }],
-    },
-    contents: [
-      {
-        role: "user",
-        parts: [{ text: prompt }],
-      },
-    ],
-    tools,
-    // Gemini 3.8 Flash takes no sampling settings, and its thinking level
-    // matches the tier in SEARCH_MODEL.
-    generationConfig: {
-      thinkingConfig: { thinkingLevel: "low" },
-    },
-  };
-
-  // Wrap in Antigravity format
   const wrappedBody = {
     project: projectId,
+    request: {
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      systemInstruction: { role: "user", parts: [{ text: SEARCH_SYSTEM_INSTRUCTION }] },
+      tools,
+      generationConfig: { candidateCount: 1 },
+    },
     model: SEARCH_MODEL,
     userAgent: "antigravity",
-    requestId: generateRequestId(),
-    request: {
-      ...requestPayload,
-      sessionId: getSessionId(),
-    },
+    requestType: "web_search",
   };
 
   // Use non-streaming endpoint for search
@@ -278,14 +251,13 @@ export async function executeSearch(
   log.debug("Executing search", {
     query,
     urlCount: urls?.length ?? 0,
-    thinking,
   });
 
   try {
-    const response = await fetch(url, {
+    const response = await googleFetch(url, {
       method: "POST",
       headers: {
-        ...getAntigravityHeaders(),
+        "User-Agent": ANTIGRAVITY_CLI_USER_AGENT,
         Authorization: `Bearer ${accessToken}`,
         "Content-Type": "application/json",
       },

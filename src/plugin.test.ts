@@ -2,17 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, rmSync, writeFileSync, promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gunzipSync } from "node:zlib";
 
 import type { PluginClient } from "./plugin/types";
 import { AccountManager } from "./plugin/accounts";
 import { DEFAULT_CONFIG } from "./plugin/config";
 
-/** The JSON a mocked fetch was sent. Antigravity request bodies go out gzipped. */
+/** The JSON a mocked fetch was sent. */
 function sentJson(init?: RequestInit): unknown {
   const body = init?.body;
   if (body === undefined || body === null) return {};
-  return JSON.parse(typeof body === "string" ? body : gunzipSync(body as Uint8Array).toString("utf8"));
+  return JSON.parse(String(body));
 }
 
 vi.mock("@opencode-ai/plugin", () => ({
@@ -42,7 +41,14 @@ vi.mock("./plugin/storage", async (importOriginal) => {
   };
 });
 
+// Spied on so the retry tests can shorten agy's delays (seconds long).
+vi.mock("./plugin/agy-wire", async (importOriginal) => {
+  const original = await importOriginal<typeof import("./plugin/agy-wire")>();
+  return { ...original, agyRetryDelayMs: vi.fn(original.agyRetryDelayMs) };
+});
+
 const { createAntigravityPlugin, liveAccountPool, loopEscapeTestHooks, oauthFlowHelpers, __testExports } = await import("./plugin");
+const agyWire = await import("./plugin/agy-wire");
 const storageModule = await import("./plugin/storage");
 const { resetPublicGeminiApiModelCatalogForTests } = await import("./plugin/model-catalog");
 const { resetAgySdkCredentialStateForTests } = await import("./plugin/api-key");
@@ -1168,7 +1174,9 @@ describe("Gemini 3.5 Flash-Lite and 3.7 Flash through the plugin fetch", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo, init?: RequestInit) => {
       const url = typeof input === "string" ? input : (input as Request).url;
       if (url.includes("cloudcode-pa") && url.includes("GenerateContent")) {
-        expect(new Headers(init?.headers).get("content-encoding")).toBe("gzip");
+        // Sent as the Antigravity CLI sends it: body not compressed, no Accept header.
+        expect(new Headers(init?.headers).get("content-encoding")).toBeNull();
+        expect(new Headers(init?.headers).get("accept")).toBeNull();
         const body = sentJson(init) as {
           model?: string;
           request?: { generationConfig?: { thinkingConfig?: { thinkingLevel?: string } } };
@@ -1219,7 +1227,7 @@ describe("Gemini 3.5 Flash-Lite and 3.7 Flash through the plugin fetch", () => {
     expect(text).toContain("thinking");
     expect(text).toContain("hi");
     expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({ model: backend, thinkingLevel: sentLevel });
+    expect(sent[0]).toMatchObject({ model: backend, thinkingLevel: sentLevel.toUpperCase() });
   });
 });
 
@@ -1241,19 +1249,6 @@ describe("stalled requests through the plugin fetch", () => {
     process.env.OPENCODE_CONFIG_DIR = tmpConfigDir;
     vi.mocked(storageModule.loadAccounts).mockReset();
     vi.mocked(storageModule.saveAccounts).mockReset();
-    vi.mocked(storageModule.loadAccounts).mockResolvedValue({
-      version: 4,
-      accounts: [{
-        email: "a@example.com",
-        refreshToken: "a",
-        projectId: "p-a",
-        managedProjectId: "p-a",
-        addedAt: 0,
-        lastUsed: 0,
-        enabled: true,
-      }],
-      activeIndex: 0,
-    });
   });
 
   afterEach(() => {
@@ -1265,25 +1260,58 @@ describe("stalled requests through the plugin fetch", () => {
     rmSync(tmpConfigDir, { recursive: true, force: true });
   });
 
-  /** Streams one request for `model` whose every upstream attempt answers 300ms in. */
-  async function streamThrough(model: string): Promise<{ status: number; text: string; attempts: number }> {
-    let attempts = 0;
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo) => {
+  const account = (refreshToken: string) => ({
+    email: `${refreshToken}@example.com`,
+    refreshToken,
+    projectId: "p-a",
+    managedProjectId: "p-a",
+    addedAt: 0,
+    lastUsed: 0,
+    enabled: true,
+  });
+
+  /**
+   * Streams one request for `model` through a pool of `accounts` (refresh
+   * tokens) whose every upstream attempt answers 300ms in, and returns the
+   * Authorization header of each attempt.
+   */
+  async function streamThrough(
+    model: string,
+    accounts: string[],
+    firstAnswer?: Response,
+    answerDelaysMs: number[] = [],
+    signal?: AbortSignal,
+  ): Promise<{ status: number; text: string; attempts: string[] }> {
+    vi.mocked(storageModule.loadAccounts).mockResolvedValue({
+      version: 4,
+      accounts: accounts.map(account),
+      activeIndex: 0,
+    });
+    const attempts: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo, init?: RequestInit) => {
       const url = typeof input === "string" ? input : (input as Request).url;
       if (url.includes("cloudcode-pa") && url.includes("GenerateContent")) {
-        attempts += 1;
+        if (init?.signal?.aborted) throw init.signal.reason;
+        attempts.push(new Headers(init?.headers).get("Authorization") ?? "");
+        if (firstAnswer && attempts.length === 1) return firstAnswer;
+        const delayMs = answerDelaysMs[attempts.length - 1] ?? 300;
         const body = new ReadableStream<Uint8Array>({
           start(controller) {
-            setTimeout(() => {
+            const timer = setTimeout(() => {
               controller.enqueue(new TextEncoder().encode(SSE_BODY));
               controller.close();
-            }, 300);
+            }, delayMs);
+            init?.signal?.addEventListener("abort", () => {
+              clearTimeout(timer);
+              controller.error(init.signal?.reason);
+            });
           },
         });
         return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
       }
       if (url.includes("oauth2.googleapis.com")) {
-        return new Response(JSON.stringify({ access_token: "valid-access-token", expires_in: 3600 }), {
+        const refresh = new URLSearchParams(String(init?.body ?? "")).get("refresh_token");
+        return new Response(JSON.stringify({ access_token: `access-for-${refresh}`, expires_in: 3600 }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });
@@ -1305,22 +1333,74 @@ describe("stalled requests through the plugin fetch", () => {
     });
     const res = await (loader as { fetch: typeof fetch }).fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,
-      { method: "POST", body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "hi" }] }] }) },
+      { method: "POST", body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "hi" }] }] }), signal },
     );
     return { status: res.status, text: await res.text(), attempts };
   }
 
-  it("sends a Gemini request again when it has produced nothing after the hedge delay", async () => {
-    const result = await streamThrough("antigravity-gemini-3.8-flash");
+  it("sends a stalled Gemini request once more on the other account", async () => {
+    const result = await streamThrough("antigravity-gemini-3.8-flash", ["a", "b"]);
     expect(result.status).toBe(200);
     expect(result.text).toContain("hi");
-    expect(result.attempts).toBe(2);
+    expect(result.attempts).toHaveLength(2);
+    expect(new Set(result.attempts).size).toBe(2);
+  });
+
+  it("credits the account whose repeat answered, not the one that stalled", async () => {
+    // The runtime builds its own tracker, so spy on the class.
+    const { HealthScoreTracker } = await import("./plugin/rotation");
+    const recordSuccess = vi.spyOn(HealthScoreTracker.prototype, "recordSuccess");
+    try {
+      const result = await streamThrough("antigravity-gemini-3.8-flash", ["a", "b"], undefined, [1000, 100]);
+      expect(result.status).toBe(200);
+      expect(result.attempts).toHaveLength(2);
+      expect(recordSuccess.mock.calls.map(([index]) => index)).toEqual([1]);
+    } finally {
+      recordSuccess.mockRestore();
+    }
+  });
+
+  it("moves a request to the other account at once when the first has no capacity", async () => {
+    const noCapacity = new Response(
+      JSON.stringify({ error: { code: 503, message: "No capacity available for model gemini-3.8-flash-high on the server", status: "UNAVAILABLE" } }),
+      { status: 503, headers: { "content-type": "application/json" } },
+    );
+    const started = Date.now();
+    const result = await streamThrough("antigravity-gemini-3.8-flash", ["a", "b"], noCapacity);
+    expect(result.status).toBe(200);
+    expect(result.text).toContain("hi");
+    expect(result.attempts).toHaveLength(2);
+    expect(new Set(result.attempts).size).toBe(2);
+    // No same-account backoff (the first retry waited ~1s).
+    expect(Date.now() - started).toBeLessThan(900);
+  });
+
+  it("stops at once when the request is aborted, without trying other endpoints", async () => {
+    const attempts: string[] = [];
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new Error("user aborted")), 100);
+    await expect(
+      streamThrough("antigravity-gemini-3.8-flash", ["a"], undefined, [1000], controller.signal).catch((error) => {
+        attempts.push(...vi.mocked(fetch).mock.calls
+          .filter(([input]) => String(input).includes("GenerateContent"))
+          .map(([input]) => String(input)));
+        throw error;
+      }),
+    ).rejects.toThrow("user aborted");
+    expect(attempts).toHaveLength(1);
+  });
+
+  it("never repeats a stalled request on the same account", async () => {
+    const result = await streamThrough("antigravity-gemini-3.8-flash", ["a"]);
+    expect(result.status).toBe(200);
+    expect(result.text).toContain("hi");
+    expect(result.attempts).toHaveLength(1);
   });
 
   it("does not repeat image generation, which can take that long", async () => {
-    const result = await streamThrough("gemini-3-pro-image");
+    const result = await streamThrough("gemini-3-pro-image", ["a", "b"]);
     expect(result.status).toBe(200);
-    expect(result.attempts).toBe(1);
+    expect(result.attempts).toHaveLength(1);
   });
 });
 
@@ -1945,3 +2025,207 @@ describe("empty streaming response retry", () => {
     expect(await response.text()).toContain("answer");
   }, 20_000);
 });
+
+describe("retries like the Antigravity CLI", () => {
+  let tmpConfigDir: string;
+  const savedEnv: Record<string, string | undefined> = {};
+  const SSE_OK =
+    'data: {"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"},"finishReason":"STOP","index":0}]}\n\n';
+  const NO_CAPACITY = JSON.stringify({
+    error: { code: 503, message: "No capacity available for model gemini-3.8-flash-high on the server", status: "UNAVAILABLE" },
+  });
+  const RATE_LIMITED = JSON.stringify({
+    error: {
+      code: 429,
+      message: "You have exhausted your capacity on this model.",
+      status: "RESOURCE_EXHAUSTED",
+      details: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "RATE_LIMIT_EXCEEDED" }],
+    },
+  });
+
+  beforeEach(() => {
+    tmpConfigDir = join(tmpdir(), `opencode-antigravity-retry-${process.pid}-${Date.now()}`);
+    mkdirSync(tmpConfigDir, { recursive: true });
+    for (const key of ["OPENCODE_CONFIG_DIR", "OPENCODE_ANTIGRAVITY_API_KEYS", "GEMINI_API_KEY", "GOOGLE_API_KEY"]) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+    process.env.OPENCODE_CONFIG_DIR = tmpConfigDir;
+    vi.mocked(storageModule.loadAccounts).mockReset();
+    vi.mocked(storageModule.saveAccounts).mockReset();
+    vi.mocked(agyWire.agyRetryDelayMs).mockClear();
+    vi.mocked(agyWire.agyRetryDelayMs).mockImplementation(() => 5);
+  });
+
+  afterEach(() => {
+    for (const [key, val] of Object.entries(savedEnv)) {
+      if (val === undefined) delete process.env[key];
+      else process.env[key] = val;
+    }
+    vi.unstubAllGlobals();
+    rmSync(tmpConfigDir, { recursive: true, force: true });
+    vi.mocked(agyWire.agyRetryDelayMs).mockRestore();
+  });
+
+  /** One account; the model endpoint answers `answers` in turn, then 200. */
+  async function run(answers: Array<{ status: number; body: string }>, requests = 1, config: Record<string, unknown> = {}) {
+    writeFileSync(join(tmpConfigDir, "antigravity.json"), JSON.stringify(config));
+    vi.mocked(storageModule.loadAccounts).mockResolvedValue({
+      version: 4,
+      accounts: [{ email: "a@example.com", refreshToken: "a", projectId: "p-a", managedProjectId: "p-a", addedAt: 0, lastUsed: 0, enabled: true }],
+      activeIndex: 0,
+    });
+    const calls: Array<{ host: string; body: { request: { labels: Record<string, string> }; requestId: string } }> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url.includes("GenerateContent")) {
+        calls.push({ host: new URL(url).host, body: JSON.parse(String(init?.body)) });
+        const answer = answers[calls.length - 1];
+        if (answer) return new Response(answer.body, { status: answer.status, headers: { "content-type": "application/json" } });
+        return new Response(SSE_OK, { status: 200, headers: { "content-type": "text/event-stream" } });
+      }
+      if (url.includes("oauth2.googleapis.com")) {
+        return new Response(JSON.stringify({ access_token: "access", expires_in: 3600 }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ models: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+
+    const plugin = await createAntigravityPlugin("google")({ client, directory: tmpConfigDir });
+    const loader = await plugin.auth.loader(async () => ({
+      type: "oauth" as const,
+      refresh: formatRefreshParts({ refreshToken: "a", projectId: "p-a", managedProjectId: "p-a" }),
+      access: "valid-access-token",
+      expires: Date.now() + 3_600_000,
+    }), { id: "google", api: "https://generativelanguage.googleapis.com/v1beta", npm: "@ai-sdk/google", models: {} });
+    const statuses: number[] = [];
+    for (let n = 0; n < requests; n++) {
+      const res = await (loader as { fetch: typeof fetch }).fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/antigravity-gemini-3.8-flash:streamGenerateContent?alt=sse",
+        {
+          method: "POST",
+          headers: { "x-opencode-session": "ses_retry" },
+          body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "hi" }] }] }),
+        },
+      );
+      await res.text();
+      statuses.push(res.status);
+    }
+    return { statuses, calls };
+  }
+
+  it("retries a 503 on the same account and endpoint, numbering the retries as agy does", async () => {
+    const { statuses, calls } = await run([{ status: 503, body: NO_CAPACITY }, { status: 503, body: NO_CAPACITY }]);
+
+    expect(statuses).toEqual([200]);
+    expect(calls.map((call) => call.host)).toEqual(Array(3).fill("daily-cloudcode-pa.googleapis.com"));
+    expect(vi.mocked(agyWire.agyRetryDelayMs).mock.calls.map(([retry]) => retry)).toEqual([0, 1]);
+    // One model call: the same request_id, and each failed attempt adds a step.
+    expect(new Set(calls.map((call) => call.body.request.labels.request_id)).size).toBe(1);
+    expect(calls.map((call) => call.body.request.labels.last_step_index)).toEqual(["0", "1", "2"]);
+    expect(calls.map((call) => call.body.requestId.split("/").pop())).toEqual(["1", "2", "3"]);
+  });
+
+  it("retries a 429 on the only account and leaves it unlocked once the retry succeeds", async () => {
+    const { statuses, calls } = await run([{ status: 429, body: RATE_LIMITED }, { status: 429, body: RATE_LIMITED }], 2);
+
+    expect(statuses).toEqual([200, 200]);
+    // Two attempts failed, two succeeded: the second request went out at once.
+    expect(calls).toHaveLength(4);
+    expect(calls[3]?.body.request.labels.request_id).not.toBe(calls[0]?.body.request.labels.request_id);
+  });
+
+  it("gives up once the retries would wait longer than max_rate_limit_wait_seconds", async () => {
+    vi.mocked(agyWire.agyRetryDelayMs).mockImplementation(() => 600);
+    const { statuses, calls } = await run(
+      Array(5).fill({ status: 503, body: NO_CAPACITY }),
+      1,
+      { max_rate_limit_wait_seconds: 1 },
+    );
+
+    expect(statuses).toEqual([503]);
+    expect(calls).toHaveLength(2);
+  });
+});
+
+describe("google_search runs on the chat's account", () => {
+  let tmpConfigDir: string;
+  const savedEnv: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    tmpConfigDir = join(tmpdir(), `opencode-antigravity-search-${process.pid}-${Date.now()}`);
+    mkdirSync(tmpConfigDir, { recursive: true });
+    for (const key of ["OPENCODE_CONFIG_DIR", "OPENCODE_ANTIGRAVITY_API_KEYS", "GEMINI_API_KEY", "GOOGLE_API_KEY"]) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+    process.env.OPENCODE_CONFIG_DIR = tmpConfigDir;
+    vi.mocked(storageModule.loadAccounts).mockReset();
+    vi.mocked(storageModule.saveAccounts).mockReset();
+  });
+
+  afterEach(() => {
+    for (const [key, val] of Object.entries(savedEnv)) {
+      if (val === undefined) delete process.env[key];
+      else process.env[key] = val;
+    }
+    vi.unstubAllGlobals();
+    rmSync(tmpConfigDir, { recursive: true, force: true });
+  });
+
+  it("sends a chat's search with the token of the account its model calls use", async () => {
+    const longAgo = Date.now() - 7_200_000;
+    vi.mocked(storageModule.loadAccounts).mockResolvedValue({
+      version: 4,
+      accounts: ["a", "b"].map((refreshToken) => ({
+        email: `${refreshToken}@example.com`, refreshToken, projectId: "p", managedProjectId: "p", addedAt: 0, lastUsed: longAgo, enabled: true,
+      })),
+      activeIndex: 0,
+    });
+    const auths: Record<string, string[]> = { model: [], search: [] };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      const authorization = new Headers(init?.headers).get("Authorization") ?? "";
+      if (url.includes("streamGenerateContent")) {
+        auths.model!.push(authorization);
+        return new Response('data: {"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"},"finishReason":"STOP"}]}\n\n', { status: 200 });
+      }
+      if (url.includes(":generateContent")) {
+        auths.search!.push(authorization);
+        return new Response(JSON.stringify({ response: { candidates: [{ content: { parts: [{ text: "found" }] } }] } }), { status: 200 });
+      }
+      if (url.includes("oauth2.googleapis.com")) {
+        const refresh = new URLSearchParams(String(init?.body ?? "")).get("refresh_token");
+        return new Response(JSON.stringify({ access_token: `access-${refresh}`, expires_in: 3600 }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ models: [] }), { status: 200 });
+    }));
+
+    const plugin = await createAntigravityPlugin("google")({ client, directory: tmpConfigDir });
+    // OpenCode's own credential is account a.
+    const loader = await plugin.auth.loader(async () => ({
+      type: "oauth" as const,
+      refresh: formatRefreshParts({ refreshToken: "a", projectId: "p", managedProjectId: "p" }),
+      access: "access-a",
+      expires: Date.now() + 3_600_000,
+    }), { id: "google", api: "https://generativelanguage.googleapis.com/v1beta", npm: "@ai-sdk/google", models: {} });
+    // Another chat takes account a first, so the chat under test lands on b.
+    for (const chat of ["ses_other", "ses_searching"]) {
+      const res = await (loader as { fetch: typeof fetch }).fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/antigravity-gemini-3.8-flash:streamGenerateContent?alt=sse",
+        { method: "POST", headers: { "x-opencode-session": chat }, body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "hi" }] }] }) },
+      );
+      await res.text();
+    }
+    const chatAuthorization = auths.model![1];
+    expect(chatAuthorization).not.toBe(auths.model![0]);
+
+    const search = plugin.tool?.google_search as unknown as {
+      execute(args: { query: string }, ctx: { sessionID: string; abort: AbortSignal }): Promise<string>;
+    };
+    const result = await search.execute({ query: "q" }, { sessionID: "ses_searching", abort: new AbortController().signal });
+
+    expect(result).toContain("found");
+    expect(auths.search).toEqual([chatAuthorization]);
+  });
+});
+

@@ -46,7 +46,6 @@ src/
     │   ├── schema.ts        # Zod config schema
     │   └── loader.ts        # Config file loading
     ├── accounts.ts          # Multi-account management
-    ├── server.ts            # OAuth callback server
     └── debug.ts             # Debug logging
 ```
 

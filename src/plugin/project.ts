@@ -1,9 +1,9 @@
 import {
   ANTIGRAVITY_ENDPOINT_FALLBACKS,
-  ANTIGRAVITY_LOAD_ENDPOINTS,
   ANTIGRAVITY_DEFAULT_PROJECT_ID,
   ANTIGRAVITY_CLI_USER_AGENT,
 } from "../constants";
+import { googleFetch } from "../antigravity/google-http";
 import { formatRefreshParts, parseRefreshParts } from "./auth";
 import { createLogger } from "./logger";
 import type { OAuthAuthDetails, ProjectContextResult } from "./types";
@@ -139,13 +139,9 @@ export async function loadManagedProject(
     "User-Agent": ANTIGRAVITY_CLI_USER_AGENT,
   };
 
-  const loadEndpoints = Array.from(
-    new Set<string>([...ANTIGRAVITY_LOAD_ENDPOINTS, ...ANTIGRAVITY_ENDPOINT_FALLBACKS]),
-  );
-
-  for (const baseEndpoint of loadEndpoints) {
+  for (const baseEndpoint of ANTIGRAVITY_ENDPOINT_FALLBACKS) {
     try {
-      const response = await fetch(
+      const response = await googleFetch(
         `${baseEndpoint}/v1internal:loadCodeAssist`,
         {
           method: "POST",
@@ -189,7 +185,7 @@ export async function onboardManagedProject(
   for (const baseEndpoint of ANTIGRAVITY_ENDPOINT_FALLBACKS) {
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       try {
-        const response = await fetch(
+        const response = await googleFetch(
           `${baseEndpoint}/v1internal:onboardUser`,
           {
             method: "POST",

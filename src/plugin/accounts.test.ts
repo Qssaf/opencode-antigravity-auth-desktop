@@ -711,6 +711,73 @@ describe("AccountManager", () => {
       });
     });
 
+    describe("hybrid strategy per chat", () => {
+      const twoRested = (): AccountStorageV4 => {
+        const longAgo = Date.now() - 7_200_000;
+        return {
+          version: 4,
+          accounts: [
+            { refreshToken: "r1", projectId: "p1", addedAt: 1, lastUsed: longAgo },
+            { refreshToken: "r2", projectId: "p2", addedAt: 1, lastUsed: longAgo },
+          ],
+          activeIndex: 0,
+        };
+      };
+      const pick = (manager: AccountManager, chat: string) =>
+        manager.getCurrentOrNextForFamily("gemini", null, "hybrid", "antigravity", false, 100, 600_000, undefined, chat)?.index;
+
+      it("keeps a chat on its account while a rested account would outscore it", () => {
+        const manager = new AccountManager(undefined, twoRested());
+        const first = pick(manager, "chat-1");
+        // The other account has rested two hours, which alone would win a switch.
+        expect([pick(manager, "chat-1"), pick(manager, "chat-1"), pick(manager, "chat-1")]).toEqual([first, first, first]);
+        // A new chat goes to the rested account.
+        expect(pick(manager, "chat-2")).not.toBe(first);
+      });
+
+      it("moves a chat off a rate-limited account and keeps it on the new one", () => {
+        const manager = new AccountManager(undefined, twoRested());
+        const first = pick(manager, "chat-1")!;
+        manager.markRateLimited(manager.getAccounts()[first]!, 60_000, "gemini");
+        const moved = pick(manager, "chat-1");
+        expect(moved).not.toBe(first);
+        expect(pick(manager, "chat-1")).toBe(moved);
+      });
+
+      it("rests an account longer each time its requests keep stalling", () => {
+        const manager = new AccountManager(undefined, twoRested());
+        const minutes = [1, 2, 3, 4].map(() => manager.stalledRestMs(1) / 60_000);
+        expect(minutes).toEqual([5, 15, 45, 60]);
+        manager.clearStalls(1);
+        expect(manager.stalledRestMs(1)).toBe(5 * 60_000);
+      });
+
+      it("keeps chats and stall counts on the right accounts after one is removed", () => {
+        const stored = twoRested();
+        stored.accounts.unshift({ refreshToken: "r0", projectId: "p0", addedAt: 1, lastUsed: Date.now() });
+        const manager = new AccountManager(undefined, stored);
+        const chatOn = (index: number) => {
+          for (let n = 0; n < 50; n++) if (pick(manager, `chat-${n}`) === index) return `chat-${n}`;
+          throw new Error(`no chat landed on account ${index}`);
+        };
+        const onR2 = chatOn(2);
+        manager.stalledRestMs(2);
+        manager.removeAccount(manager.getAccounts()[0]!);
+        // r2 is now index 1: its chat and its one stall follow it.
+        expect(pick(manager, onR2)).toBe(1);
+        expect(manager.stalledRestMs(1)).toBe(15 * 60_000);
+      });
+
+      it("peekOtherAccountForFamily names another usable account without selecting it", () => {
+        const manager = new AccountManager(undefined, twoRested());
+        const before = manager.getAccounts().map((a) => a.lastUsed);
+        expect(manager.peekOtherAccountForFamily("gemini", null, "antigravity", 100, 600_000, new Set([0]))?.index).toBe(1);
+        expect(manager.getAccounts().map((a) => a.lastUsed)).toEqual(before);
+        manager.markRateLimited(manager.getAccounts()[1]!, 60_000, "gemini");
+        expect(manager.peekOtherAccountForFamily("gemini", null, "antigravity", 100, 600_000, new Set([0]))).toBeNull();
+      });
+    });
+
     describe("hybrid strategy with token bucket", () => {
       it("returns account based on health and token availability", () => {
         const stored: AccountStorageV4 = {
