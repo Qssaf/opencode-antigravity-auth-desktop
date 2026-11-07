@@ -668,12 +668,12 @@ Control how the plugin handles rate limits:
 
 | Option | Default | What it does |
 |--------|---------|--------------|
-| `scheduling_mode` | `"cache_first"` | `"cache_first"` = wait for same account (preserves prompt cache), `"balance"` = switch immediately, `"performance_first"` = round-robin |
-| `max_cache_first_wait_seconds` | `60` | Max seconds to wait in cache_first mode before switching accounts |
+| `scheduling_mode` | `"cache_first"` | `"cache_first"` = retry a first rate limit on the same account after the Antigravity CLI's 4 s (preserves prompt cache), `"balance"` = switch immediately, `"performance_first"` = round-robin |
+| `max_cache_first_wait_seconds` | `60` | No longer used: the same-account retry follows the Antigravity CLI's delays, bounded by `max_rate_limit_wait_seconds` |
 | `failure_ttl_seconds` | `3600` | Reset failure count after this many seconds (prevents old failures from permanently penalizing accounts) |
 
 **When to use each mode:**
-- **cache_first** (default): Best for long conversations. Waits for the same account to recover, preserving your prompt cache.
+- **cache_first** (default): Best for long conversations. Retries a first rate limit on the same account (after 4 s, like the Antigravity CLI), preserving your prompt cache.
 - **balance**: Best for quick tasks. Switches accounts immediately when rate-limited for maximum availability.
 - **performance_first**: Best for many short requests. Distributes load evenly across all accounts.
 

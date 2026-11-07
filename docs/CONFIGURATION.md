@@ -204,7 +204,7 @@ These settings are `false` by default:
 |--------|---------|-------------|
 | `empty_response_max_attempts` | `4` | Retries for empty API responses |
 | `empty_response_retry_delay_ms` | `2000` | Delay between retries |
-| `hedge_stalled_requests_after_seconds` | `10` | Send a streamed request once more, on another account, when it has produced nothing after this many seconds; the first answer wins, the chat moves to that account and the stalled one is left out for 5 minutes (15, 45, then 60 while it keeps stalling). Never repeated on the same account, so with one usable account nothing is repeated. Image generation is never repeated. Each repeat counts against quota. `0` disables |
+| `hedge_stalled_requests_after_seconds` | `0` (off) | Send a streamed request once more, on another account, when it has produced nothing after this many seconds (off by default: a repeat sends the same conversation from two accounts at once); the first answer wins, the chat moves to that account and the stalled one is left out for 5 minutes (15, 45, then 60 while it keeps stalling). Never repeated on the same account, so with one usable account nothing is repeated. Image generation is never repeated. Each repeat counts against quota. `0` disables |
 | `tool_id_recovery` | `true` | Fix mismatched tool IDs from context compaction |
 | `claude_tool_hardening` | `true` | Prevent tool parameter hallucination |
 | `max_rate_limit_wait_seconds` | `300` | Max wait time when rate limited (0=unlimited) |
@@ -216,7 +216,7 @@ These settings are `false` by default:
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `proactive_token_refresh` | `true` | Refresh tokens before expiry |
+| `proactive_token_refresh` | `false` | Refresh tokens in the background before expiry. Off by default: it renews idle accounts every ~30 min, which the Antigravity CLI never does (it refreshes when it needs a token) |
 | `proactive_refresh_buffer_seconds` | `1800` | Refresh 30 min before expiry |
 | `proactive_refresh_check_interval_seconds` | `300` | Check interval |
 

@@ -299,10 +299,15 @@ export const AntigravityConfigSchema = z.object({
    * Enable proactive background token refresh.
    * When enabled, tokens are refreshed in the background before they expire,
    * ensuring requests never block on token refresh.
-   * 
-   * @default true
+   *
+   * Off by default: it renews every account's token about every 30 minutes
+   * while OpenCode runs, idle accounts included and all accounts in the same
+   * cycle. The Antigravity CLI refreshes a token only when it is about to use
+   * it, which is what happens with this off.
+   *
+   * @default false
    */
-  proactive_token_refresh: z.boolean().default(true),
+  proactive_token_refresh: z.boolean().default(false),
   
   /**
    * Seconds before token expiry to trigger proactive refresh.
@@ -557,7 +562,7 @@ export const DEFAULT_CONFIG: AntigravityConfig = {
   tool_id_recovery: true,
   claude_tool_hardening: true,
   claude_prompt_auto_caching: false,
-  proactive_token_refresh: true,
+  proactive_token_refresh: false,
   proactive_refresh_buffer_seconds: 1800,
   proactive_refresh_check_interval_seconds: 300,
   max_rate_limit_wait_seconds: 300,
