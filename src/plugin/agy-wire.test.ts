@@ -130,5 +130,38 @@ describe("Antigravity CLI wire format", () => {
     const tools = JSON.parse(prepared.init.body as string).request.tools as Array<{ functionDeclarations: Array<{ name: string }> }>;
     expect(tools.map((tool) => tool.functionDeclarations.map((declaration) => declaration.name))).toEqual([["read"], ["write"]]);
   });
+
+  it("names tool calls with stable UUIDs, as agy does", () => {
+    const uuid = "70565840-407e-41c8-b16c-4a34f4ba4c3e";
+    const sendCalls = () => {
+      const prepared = prepareAntigravityRequest(
+        URL_38,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            contents: [
+              { role: "user", parts: [{ text: "read it" }] },
+              { role: "model", parts: [{ functionCall: { id: "tool_9d3431172cc042e681a7c1ab122c5b60", name: "read", args: {} }, thoughtSignature: "s".repeat(64) }] },
+              { role: "user", parts: [{ functionResponse: { id: "tool_9d3431172cc042e681a7c1ab122c5b60", name: "read", response: { content: "x" } } }] },
+              { role: "model", parts: [{ functionCall: { id: uuid, name: "read", args: {} }, thoughtSignature: "s".repeat(64) }] },
+            ],
+          }),
+        },
+        "token",
+        "aicode-consumers",
+        undefined,
+        "antigravity",
+      );
+      const contents = JSON.parse(prepared.init.body as string).request.contents as Array<{ parts: Array<Record<string, { id?: string }>> }>;
+      return contents.flatMap((content) => content.parts).map((part) => (part.functionCall ?? part.functionResponse)?.id).filter(Boolean);
+    };
+
+    const [call, result, kept] = sendCalls();
+    expect(call).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(result).toBe(call);
+    expect(kept).toBe(uuid);
+    // The same history gets the same ids next time.
+    expect(sendCalls()[0]).toBe(call);
+  });
 });
 

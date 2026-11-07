@@ -332,6 +332,25 @@ ${accountSeed}` : void 0);
     labels
   };
 }
+var UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function agyToolCallIds(contents) {
+  if (!Array.isArray(contents)) return;
+  for (const content of contents) {
+    const parts = content?.parts;
+    if (!Array.isArray(parts)) continue;
+    for (const part of parts) {
+      const call = part;
+      for (const named of [call?.functionCall, call?.functionResponse]) {
+        if (named && typeof named.id === "string" && !UUID.test(named.id)) named.id = uuidFor(named.id);
+      }
+    }
+  }
+}
+function uuidFor(seed) {
+  const h = createHash("sha256").update(seed).digest("hex");
+  const variant = (8 + (parseInt(h[16], 16) & 3)).toString(16);
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${variant}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
 function agyRetryDelayMs(retry) {
   if (retry <= 0) return 4e3;
   return Math.round(Math.min(3e4, 4e3 * 2 ** retry) * (0.5 + 0.5 * Math.random()));
@@ -7887,11 +7906,8 @@ function sanitizeRequestPayloadForAntigravity(payload, restore) {
             sig = void 0;
           }
           if (sig) {
-            return {
-              ...part,
-              thought_signature: sig,
-              thoughtSignature: sig
-            };
+            const { thought_signature: _snake, ...rest } = part;
+            return { ...rest, thoughtSignature: sig };
           }
           const newPart = { ...part };
           delete newPart.thoughtSignature;
@@ -8922,6 +8938,7 @@ ${hint}`;
         if (headerStyle === "antigravity") {
           const wireModel = toAntigravityWireModel(effectiveModel);
           const { contents, systemInstruction, tools, generationConfig, ...rest } = requestPayload;
+          agyToolCallIds(contents);
           const thinkingConfig = generationConfig?.thinkingConfig;
           if (typeof thinkingConfig?.thinkingLevel === "string") {
             thinkingConfig.thinkingLevel = thinkingConfig.thinkingLevel.toUpperCase();

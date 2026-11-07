@@ -48,7 +48,7 @@ import {
   transformThinkingParts,
   type AntigravityApiBody,
 } from "./request-helpers";
-import { agyRequestIds, agySessionId } from "./agy-wire";
+import { agyRequestIds, agySessionId, agyToolCallIds } from "./agy-wire";
 import { TITLE_REQUEST_HEADER } from "../v2/request-kind";
 import {
   CLAUDE_TOOL_SYSTEM_INSTRUCTION,
@@ -526,11 +526,9 @@ function sanitizeRequestPayloadForAntigravity(
               }
 
               if (sig) {
-                return {
-                  ...part,
-                  thought_signature: sig,
-                  thoughtSignature: sig,
-                };
+                // camelCase only, as the Antigravity CLI sends it.
+                const { thought_signature: _snake, ...rest } = part;
+                return { ...rest, thoughtSignature: sig };
               }
 
               // If not the first part, just return the part without adding any signature keys
@@ -2256,6 +2254,7 @@ export function prepareAntigravityRequest(
           // see agy-wire.ts for the identifiers.
           const wireModel = toAntigravityWireModel(effectiveModel);
           const { contents, systemInstruction, tools, generationConfig, ...rest } = requestPayload;
+          agyToolCallIds(contents);
           const thinkingConfig = (generationConfig as { thinkingConfig?: Record<string, unknown> } | undefined)?.thinkingConfig;
           if (typeof thinkingConfig?.thinkingLevel === "string") {
             thinkingConfig.thinkingLevel = thinkingConfig.thinkingLevel.toUpperCase();

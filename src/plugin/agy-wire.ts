@@ -110,6 +110,35 @@ export function agyRequestIds(
   };
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Google returns tool calls without ids, so the client names them: agy with a
+ * UUID, OpenCode with `tool_<hex>`. OpenCode's ids go out as UUIDs derived
+ * from them, so the same history always carries the same ids and every call
+ * still pairs with its result.
+ */
+export function agyToolCallIds(contents: unknown): void {
+  if (!Array.isArray(contents)) return;
+  for (const content of contents) {
+    const parts = (content as { parts?: unknown } | null)?.parts;
+    if (!Array.isArray(parts)) continue;
+    for (const part of parts) {
+      const call = (part as { functionCall?: { id?: unknown }; functionResponse?: { id?: unknown } } | null);
+      for (const named of [call?.functionCall, call?.functionResponse]) {
+        if (named && typeof named.id === "string" && !UUID.test(named.id)) named.id = uuidFor(named.id);
+      }
+    }
+  }
+}
+
+/** A version-4-shaped UUID, stable for `seed`. */
+function uuidFor(seed: string): string {
+  const h = createHash("sha256").update(seed).digest("hex");
+  const variant = (8 + (parseInt(h[16]!, 16) & 3)).toString(16);
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-${variant}${h.slice(17, 20)}-${h.slice(20, 32)}`;
+}
+
 /**
  * How long agy waits before retrying a call Google answered 503 or 429 (seen
  * 2026-11-07): 4 s, then a random 50-100% of 8 s, 16 s and 30 s, staying at 30 s.
