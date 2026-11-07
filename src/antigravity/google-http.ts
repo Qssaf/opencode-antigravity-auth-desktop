@@ -47,6 +47,14 @@ interface PooledSession {
 
 const pool = new Map<string, PooledSession>();
 
+/** A request the server never processed, so it is safe to send again. */
+class UnsentRequestError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "UnsentRequestError";
+  }
+}
+
 function openSession(origin: string, key: string | undefined): PooledSession {
   const session = connect(origin);
   session.unref();
@@ -120,8 +128,9 @@ function attempt(
     try {
       stream = entry.session.request(outgoing);
     } catch (error) {
+      // The connection would not take another request (it is closing).
       release(entry, pooled);
-      reject(error);
+      reject(new UnsentRequestError("HTTP/2 connection unusable", { cause: error }));
       return;
     }
 
@@ -157,11 +166,17 @@ function attempt(
       stream.close(constants.NGHTTP2_CANCEL);
       fail(signal?.reason ?? new Error("Aborted"));
     };
-    stream.on("error", (error) => fail(error));
+    stream.on("error", (error) =>
+      fail(
+        !settled && stream.rstCode === constants.NGHTTP2_REFUSED_STREAM
+          ? new UnsentRequestError("HTTP/2 stream refused", { cause: error })
+          : error,
+      ));
     stream.on("close", () => {
       streamClosed = true;
       if (!settled || (stream.rstCode ?? 0) !== constants.NGHTTP2_NO_ERROR) {
-        fail(new Error(`HTTP/2 stream closed early (code ${stream.rstCode})`));
+        const message = `HTTP/2 stream closed early (code ${stream.rstCode})`;
+        fail(!settled && stream.rstCode === constants.NGHTTP2_REFUSED_STREAM ? new UnsentRequestError(message) : new Error(message));
         return;
       }
       endIfDone();
@@ -239,14 +254,15 @@ export async function googleFetch(
   const reused = key ? pool.get(key) : undefined;
   const live = reused && !reused.session.closed && !reused.session.destroyed ? reused : undefined;
 
+  const entry = live ?? openSession(url.origin, key);
   try {
-    return await attempt(url, init, body, live ?? openSession(url.origin, key), reuse);
+    return await attempt(url, init, body, entry, reuse);
   } catch (error) {
-    // A kept connection the server has since closed: Go's transport retries
-    // such a request once on a new connection, before anything was answered.
-    if (!live || init.signal?.aborted) throw error;
-    if (key && pool.get(key) === live) pool.delete(key);
-    live.session.close();
+    // Like Go's transport, send again (once, on a new connection) only a
+    // request the server never processed: anything else could run twice.
+    if (!(error instanceof UnsentRequestError) || init.signal?.aborted) throw error;
+    if (key && pool.get(key) === entry) pool.delete(key);
+    entry.session.close();
     return attempt(url, init, body, openSession(url.origin, key), reuse);
   }
 }

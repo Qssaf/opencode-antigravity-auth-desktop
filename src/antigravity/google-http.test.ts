@@ -115,4 +115,45 @@ describe("googleRequest", () => {
     const response = await googleFetch(`${origin}/x`, { method: "POST", body: "{}" });
     await expect(response.text()).rejects.toThrow();
   });
+
+  it("retries on a new connection only a request the server refused unprocessed", async () => {
+    let hits = 0;
+    const server = createServer((req, res) => {
+      hits += 1;
+      if (hits === 2) {
+        // Received and then failed: Go does not send it again.
+        req.stream.close(2);
+        return;
+      }
+      if (hits === 3) {
+        // REFUSED_STREAM: not processed, safe to send again.
+        req.stream.close(7);
+        return;
+      }
+      res.writeHead(200);
+      res.end("ok");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    close = () => server.close();
+    const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const send = () => googleFetch(`${origin}/x`, { method: "POST", headers: { Authorization: "Bearer r" }, body: "{}" });
+
+    expect(await (await send()).text()).toBe("ok");
+    await expect(send()).rejects.toThrow();
+    expect(hits).toBe(2);
+    expect(await (await send()).text()).toBe("ok");
+    expect(hits).toBe(4);
+  });
+
+  it("fails at once when no connection can be made", async () => {
+    const server = createServer(() => {});
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+
+    const started = Date.now();
+    await expect(googleFetch(`http://127.0.0.1:${port}/x`, { method: "POST", body: "{}" })).rejects.toThrow();
+    expect(Date.now() - started).toBeLessThan(2000);
+  });
 });
+

@@ -42,9 +42,13 @@ interface Conversation {
   lastRequest?: string;
 }
 
-/** On globalThis: OpenCode 2.x imports this module once per location. */
+/**
+ * On globalThis: OpenCode 2.x imports this module once per location. The key
+ * names the entry shape, because the map outlives a reload of changed plugin
+ * code in a running OpenCode; bump it whenever `Conversation` changes.
+ */
 const conversations = ((globalThis as Record<symbol, unknown>)[
-  Symbol.for("opencode-antigravity-auth/agy-conversations")
+  Symbol.for("opencode-antigravity-auth/agy-conversations/v2")
 ] ??= new Map<string, Conversation>()) as Map<string, Conversation>;
 
 /** A signed 64-bit decimal, stable for `seed` (an account's device id). */

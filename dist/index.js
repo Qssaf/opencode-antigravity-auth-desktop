@@ -90,6 +90,12 @@ function toPayload(body) {
   throw new TypeError("Unsupported request body for an HTTP/2 request to Google");
 }
 var pool = /* @__PURE__ */ new Map();
+var UnsentRequestError = class extends Error {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "UnsentRequestError";
+  }
+};
 function openSession(origin, key) {
   const session = connect(origin);
   session.unref();
@@ -150,7 +156,7 @@ function attempt(url, init, payload, entry, pooled) {
       stream = entry.session.request(outgoing);
     } catch (error) {
       release(entry, pooled);
-      reject(error);
+      reject(new UnsentRequestError("HTTP/2 connection unusable", { cause: error }));
       return;
     }
     let settled = false;
@@ -182,11 +188,14 @@ function attempt(url, init, payload, entry, pooled) {
       stream.close(constants.NGHTTP2_CANCEL);
       fail(signal?.reason ?? new Error("Aborted"));
     };
-    stream.on("error", (error) => fail(error));
+    stream.on("error", (error) => fail(
+      !settled && stream.rstCode === constants.NGHTTP2_REFUSED_STREAM ? new UnsentRequestError("HTTP/2 stream refused", { cause: error }) : error
+    ));
     stream.on("close", () => {
       streamClosed = true;
       if (!settled || (stream.rstCode ?? 0) !== constants.NGHTTP2_NO_ERROR) {
-        fail(new Error(`HTTP/2 stream closed early (code ${stream.rstCode})`));
+        const message = `HTTP/2 stream closed early (code ${stream.rstCode})`;
+        fail(!settled && stream.rstCode === constants.NGHTTP2_REFUSED_STREAM ? new UnsentRequestError(message) : new Error(message));
         return;
       }
       endIfDone();
@@ -249,12 +258,13 @@ async function googleFetch(input2, init = {}, reuse = true) {
 ${new Headers(init.headers).get("authorization") ?? ""}` : void 0;
   const reused = key ? pool.get(key) : void 0;
   const live = reused && !reused.session.closed && !reused.session.destroyed ? reused : void 0;
+  const entry = live ?? openSession(url.origin, key);
   try {
-    return await attempt(url, init, body, live ?? openSession(url.origin, key), reuse);
+    return await attempt(url, init, body, entry, reuse);
   } catch (error) {
-    if (!live || init.signal?.aborted) throw error;
-    if (key && pool.get(key) === live) pool.delete(key);
-    live.session.close();
+    if (!(error instanceof UnsentRequestError) || init.signal?.aborted) throw error;
+    if (key && pool.get(key) === entry) pool.delete(key);
+    entry.session.close();
     return attempt(url, init, body, openSession(url.origin, key), reuse);
   }
 }
@@ -270,7 +280,7 @@ var MODEL_ENUMS = {
   "gemini-3.8-flash-low": "MODEL_PLACEHOLDER_M320"
 };
 var MAX_CONVERSATIONS = 1e3;
-var conversations = globalThis[/* @__PURE__ */ Symbol.for("opencode-antigravity-auth/agy-conversations")] ??= /* @__PURE__ */ new Map();
+var conversations = globalThis[/* @__PURE__ */ Symbol.for("opencode-antigravity-auth/agy-conversations/v2")] ??= /* @__PURE__ */ new Map();
 function agySessionId(seed) {
   return createHash("sha256").update(seed).digest().readBigInt64BE(0).toString();
 }
@@ -1541,11 +1551,14 @@ function calculateTokenExpiry(requestTimeMs, expiresInSeconds) {
 var log2 = createLogger("oauth");
 var AUTHORIZATION_TTL_MS = 30 * 60 * 1e3;
 var pendingAuthorizations = globalThis[/* @__PURE__ */ Symbol.for("opencode-antigravity-auth/pending-authorizations")] ??= /* @__PURE__ */ new Map();
-function takePendingAuthorization(state2) {
+function forgetExpiredAuthorizations() {
   const now = Date.now();
-  for (const [key, pending2] of pendingAuthorizations) {
-    if (now - pending2.createdAt > AUTHORIZATION_TTL_MS) pendingAuthorizations.delete(key);
+  for (const [key, pending] of pendingAuthorizations) {
+    if (now - pending.createdAt > AUTHORIZATION_TTL_MS) pendingAuthorizations.delete(key);
   }
+}
+function takePendingAuthorization(state2) {
+  forgetExpiredAuthorizations();
   const pending = pendingAuthorizations.get(state2);
   pendingAuthorizations.delete(state2);
   return pending;
@@ -1556,6 +1569,7 @@ function generateVerifier() {
 async function authorizeAntigravity(projectId = "") {
   const verifier = generateVerifier();
   const state2 = randomBytes2(16).toString("base64url");
+  forgetExpiredAuthorizations();
   pendingAuthorizations.set(state2, { verifier, projectId: projectId || "", createdAt: Date.now() });
   const params = new URLSearchParams({
     access_type: "offline",

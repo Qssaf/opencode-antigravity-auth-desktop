@@ -34,12 +34,16 @@ const pendingAuthorizations = ((globalThis as Record<symbol, unknown>)[
   Symbol.for("opencode-antigravity-auth/pending-authorizations")
 ] ??= new Map<string, PendingAuthorization>()) as Map<string, PendingAuthorization>;
 
-/** Takes the sign-in `state` belongs to; each one can be completed once. */
-function takePendingAuthorization(state: string): PendingAuthorization | undefined {
+function forgetExpiredAuthorizations(): void {
   const now = Date.now();
   for (const [key, pending] of pendingAuthorizations) {
     if (now - pending.createdAt > AUTHORIZATION_TTL_MS) pendingAuthorizations.delete(key);
   }
+}
+
+/** Takes the sign-in `state` belongs to; each one can be completed once. */
+function takePendingAuthorization(state: string): PendingAuthorization | undefined {
+  forgetExpiredAuthorizations();
   const pending = pendingAuthorizations.get(state);
   pendingAuthorizations.delete(state);
   return pending;
@@ -95,6 +99,7 @@ interface AntigravityUserInfo {
 export async function authorizeAntigravity(projectId = ""): Promise<AntigravityAuthorization> {
   const verifier = generateVerifier();
   const state = randomBytes(16).toString("base64url");
+  forgetExpiredAuthorizations();
   pendingAuthorizations.set(state, { verifier, projectId: projectId || "", createdAt: Date.now() });
 
   const params = new URLSearchParams({
