@@ -91,13 +91,15 @@ need the rebuild.
 src/
 ├── plugin.ts                # Shared runtime + OpenCode 1.x entry, fetch interceptor
 ├── constants.ts             # Endpoints, headers, API config, system prompts
-├── antigravity/oauth.ts     # OAuth token exchange
+├── antigravity/oauth.ts     # OAuth sign-in and token exchange (agy's flow: paste the code)
+├── antigravity/google-http.ts # HTTP/2 client for every request to Google (Go's header set)
 ├── cli/accounts.ts          # `antigravity-accounts` binary (account pool management)
 ├── v2/                      # OpenCode 2.x adapter (see below)
 └── plugin/
     ├── auth.ts              # Token validation & refresh
     ├── request.ts           # Request transformation (core logic)
     ├── request-helpers.ts   # Schema cleaning, thinking filters
+    ├── agy-wire.ts          # agy's ids, retries and tool-call layout on the wire
     ├── thinking-recovery.ts # Turn boundary detection
     ├── recovery.ts          # Session recovery (tool_result_missing)
     ├── quota.ts             # Quota checking (API usage stats)

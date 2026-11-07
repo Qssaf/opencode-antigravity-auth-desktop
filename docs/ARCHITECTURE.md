@@ -36,6 +36,7 @@ src/
     ├── auth.ts              # Token validation & refresh
     ├── request.ts           # Request transformation (main logic)
     ├── request-helpers.ts   # Schema cleaning, thinking filters
+    ├── agy-wire.ts          # agy's ids, retries and tool-call layout on the wire
     ├── thinking-recovery.ts # Turn boundary detection, crash recovery
     ├── recovery.ts          # Session recovery (tool_result_missing)
     ├── quota.ts             # Quota checking (API usage stats)
