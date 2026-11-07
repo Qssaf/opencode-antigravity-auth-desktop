@@ -48,7 +48,7 @@ import {
   transformThinkingParts,
   type AntigravityApiBody,
 } from "./request-helpers";
-import { agyRequestIds, agySessionId, agyToolCallIds } from "./agy-wire";
+import { agyRequestIds, agySessionId, agyToolCallIds, agyToolResults } from "./agy-wire";
 import { TITLE_REQUEST_HEADER } from "../v2/request-kind";
 import {
   CLAUDE_TOOL_SYSTEM_INSTRUCTION,
@@ -2255,6 +2255,8 @@ export function prepareAntigravityRequest(
           const wireModel = toAntigravityWireModel(effectiveModel);
           const { contents, systemInstruction, tools, generationConfig, ...rest } = requestPayload;
           agyToolCallIds(contents);
+          // Seen from agy on Gemini; Claude's translation needs results in a user turn.
+          if (!isClaudeModel(effectiveModel)) agyToolResults(contents);
           const thinkingConfig = (generationConfig as { thinkingConfig?: Record<string, unknown> } | undefined)?.thinkingConfig;
           if (typeof thinkingConfig?.thinkingLevel === "string") {
             thinkingConfig.thinkingLevel = thinkingConfig.thinkingLevel.toUpperCase();

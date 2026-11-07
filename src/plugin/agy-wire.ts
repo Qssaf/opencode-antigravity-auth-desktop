@@ -132,6 +132,31 @@ export function agyToolCallIds(contents: unknown): void {
   }
 }
 
+/**
+ * agy sends a turn of tool results as a `model` turn, each result as
+ * `{ output: "<text>" }`; OpenCode sends a `user` turn of `{ name, content }`.
+ * Results of any other shape are left alone.
+ */
+export function agyToolResults(contents: unknown): void {
+  if (!Array.isArray(contents)) return;
+  for (const content of contents) {
+    const turn = content as { role?: unknown; parts?: unknown } | null;
+    const parts = turn?.parts;
+    if (!turn || !Array.isArray(parts) || parts.length === 0) continue;
+    if (!parts.every((part) => (part as { functionResponse?: unknown } | null)?.functionResponse)) continue;
+    turn.role = "model";
+    for (const part of parts) {
+      const result = (part as { functionResponse: { response?: unknown } }).functionResponse;
+      const response = result.response as Record<string, unknown> | undefined;
+      if (!response || typeof response !== "object" || !("content" in response)) continue;
+      if (Object.keys(response).some((key) => key !== "name" && key !== "content")) continue;
+      result.response = {
+        output: typeof response.content === "string" ? response.content : JSON.stringify(response.content),
+      };
+    }
+  }
+}
+
 /** A version-4-shaped UUID, stable for `seed`. */
 function uuidFor(seed: string): string {
   const h = createHash("sha256").update(seed).digest("hex");

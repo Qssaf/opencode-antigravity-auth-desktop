@@ -346,6 +346,25 @@ function agyToolCallIds(contents) {
     }
   }
 }
+function agyToolResults(contents) {
+  if (!Array.isArray(contents)) return;
+  for (const content of contents) {
+    const turn = content;
+    const parts = turn?.parts;
+    if (!turn || !Array.isArray(parts) || parts.length === 0) continue;
+    if (!parts.every((part) => part?.functionResponse)) continue;
+    turn.role = "model";
+    for (const part of parts) {
+      const result = part.functionResponse;
+      const response = result.response;
+      if (!response || typeof response !== "object" || !("content" in response)) continue;
+      if (Object.keys(response).some((key) => key !== "name" && key !== "content")) continue;
+      result.response = {
+        output: typeof response.content === "string" ? response.content : JSON.stringify(response.content)
+      };
+    }
+  }
+}
 function uuidFor(seed) {
   const h = createHash("sha256").update(seed).digest("hex");
   const variant = (8 + (parseInt(h[16], 16) & 3)).toString(16);
@@ -8939,6 +8958,7 @@ ${hint}`;
           const wireModel = toAntigravityWireModel(effectiveModel);
           const { contents, systemInstruction, tools, generationConfig, ...rest } = requestPayload;
           agyToolCallIds(contents);
+          if (!isClaudeModel(effectiveModel)) agyToolResults(contents);
           const thinkingConfig = generationConfig?.thinkingConfig;
           if (typeof thinkingConfig?.thinkingLevel === "string") {
             thinkingConfig.thinkingLevel = thinkingConfig.thinkingLevel.toUpperCase();

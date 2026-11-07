@@ -163,5 +163,43 @@ describe("Antigravity CLI wire format", () => {
     // The same history gets the same ids next time.
     expect(sendCalls()[0]).toBe(call);
   });
+
+  it("sends tool results as agy does: a model turn of { output } results", () => {
+    const prepared = prepareAntigravityRequest(
+      URL_38,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          contents: [
+            { role: "user", parts: [{ text: "read both" }] },
+            {
+              role: "model",
+              parts: [
+                { functionCall: { id: "a", name: "read", args: {} }, thoughtSignature: "s".repeat(64) },
+                { functionCall: { id: "b", name: "read", args: {} } },
+              ],
+            },
+            {
+              role: "user",
+              parts: [
+                { functionResponse: { id: "a", name: "read", response: { name: "read", content: "first file" } } },
+                { functionResponse: { id: "b", name: "read", response: { name: "read", content: { error: "missing" } } } },
+              ],
+            },
+          ],
+        }),
+      },
+      "token",
+      "aicode-consumers",
+      undefined,
+      "antigravity",
+    );
+    const contents = JSON.parse(prepared.init.body as string).request.contents as Array<{ role: string; parts: Array<{ functionResponse?: { response: unknown } }> }>;
+    expect(contents.map((content) => content.role)).toEqual(["user", "model", "model"]);
+    expect(contents[2]!.parts.map((part) => part.functionResponse?.response)).toEqual([
+      { output: "first file" },
+      { output: JSON.stringify({ error: "missing" }) },
+    ]);
+  });
 });
 
