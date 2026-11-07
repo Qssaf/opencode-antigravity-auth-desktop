@@ -1167,6 +1167,21 @@ export function stripHostClientHeaders(headers: Headers): void {
   }
 }
 
+/**
+ * agy sends every function in a tools entry of its own; other tools (search,
+ * code execution) keep their place.
+ */
+function oneFunctionPerTool(tools: unknown): unknown {
+  if (!Array.isArray(tools)) return tools;
+  return tools.flatMap((tool) => {
+    const declarations = (tool as { functionDeclarations?: unknown } | null)?.functionDeclarations;
+    if (!Array.isArray(declarations) || declarations.length <= 1) return [tool];
+    const { functionDeclarations: _all, ...rest } = tool as Record<string, unknown>;
+    const split = declarations.map((declaration) => ({ functionDeclarations: [declaration] }));
+    return Object.keys(rest).length > 0 ? [...split, rest] : split;
+  });
+}
+
 export function prepareAntigravityRequest(
   input: string,
   init: RequestInit | undefined,
@@ -2259,7 +2274,7 @@ export function prepareAntigravityRequest(
             request: {
               contents,
               systemInstruction,
-              tools,
+              tools: oneFunctionPerTool(tools),
               ...rest,
               labels,
               generationConfig,

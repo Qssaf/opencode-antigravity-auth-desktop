@@ -106,5 +106,29 @@ describe("Antigravity CLI wire format", () => {
     expect(next.request.labels.cascade_id).toBe(chat.request.labels.cascade_id);
     expect(next.request.labels.request_id.endsWith("-1")).toBe(true);
   });
+
+  it("gives each function its own tools entry, as agy does", () => {
+    const prepared = prepareAntigravityRequest(
+      URL_38,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: "hi" }] }],
+          tools: [{
+            functionDeclarations: [
+              { name: "read", description: "Read", parameters: { type: "object", properties: { path: { type: "string" } } } },
+              { name: "write", description: "Write", parameters: { type: "object", properties: { path: { type: "string" } } } },
+            ],
+          }],
+        }),
+      },
+      "token",
+      "aicode-consumers",
+      undefined,
+      "antigravity",
+    );
+    const tools = JSON.parse(prepared.init.body as string).request.tools as Array<{ functionDeclarations: Array<{ name: string }> }>;
+    expect(tools.map((tool) => tool.functionDeclarations.map((declaration) => declaration.name))).toEqual([["read"], ["write"]]);
+  });
 });
 

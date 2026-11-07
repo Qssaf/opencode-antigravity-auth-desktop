@@ -8271,6 +8271,16 @@ function stripHostClientHeaders(headers) {
     }
   }
 }
+function oneFunctionPerTool(tools) {
+  if (!Array.isArray(tools)) return tools;
+  return tools.flatMap((tool2) => {
+    const declarations = tool2?.functionDeclarations;
+    if (!Array.isArray(declarations) || declarations.length <= 1) return [tool2];
+    const { functionDeclarations: _all, ...rest } = tool2;
+    const split = declarations.map((declaration) => ({ functionDeclarations: [declaration] }));
+    return Object.keys(rest).length > 0 ? [...split, rest] : split;
+  });
+}
 function prepareAntigravityRequest(input2, init, accessToken, projectId, endpointOverride, headerStyle = "antigravity", forceThinkingRecovery = false, options) {
   if (typeof input2 !== "string" && init?.body === void 0 && input2.body) {
     const requestInput2 = input2;
@@ -8953,7 +8963,7 @@ ${hint}`;
             request: {
               contents,
               systemInstruction,
-              tools,
+              tools: oneFunctionPerTool(tools),
               ...rest,
               labels,
               generationConfig,
