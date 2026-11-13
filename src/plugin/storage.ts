@@ -208,6 +208,12 @@ export interface AccountMetadataV3 {
    * that passively expires an OLD limit cannot erase a NEWER limit written elsewhere.
    */
   clearedSetTimes?: Record<string, number>;
+  /**
+   * Limits set because Google had no capacity for the model (503 "No capacity
+   * available"), not a rate limit: key -> the same reset time as in
+   * rateLimitResetTimes. A limit whose time no longer matches is a rate limit.
+   */
+  noCapacityUntil?: Record<string, number>;
   coolingDownUntil?: number;
   cooldownReason?: CooldownReason;
   /** Per-account device fingerprint for rate limit mitigation */

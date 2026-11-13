@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AccountManager, type ModelFamily, parseRateLimitReason, calculateBackoffMs, resolveQuotaGroup, RATE_LIMIT_CLEAR_TTL_MS } from "./accounts";
+import { accountState } from "./account-admin";
 import type { AccountStorageV4 } from "./storage";
 import type { OAuthAuthDetails } from "./types";
 import * as storageModule from "./storage";
@@ -1265,6 +1266,37 @@ describe("AccountManager", () => {
         );
         expect(backoff3).toBe(1_800_000);
         expect(account.consecutiveFailures).toBe(3);
+
+        vi.useRealTimers();
+      });
+
+      it("keeps Google having no capacity apart from a rate limit", () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1000);
+
+        const stored: AccountStorageV4 = {
+          version: 4,
+          accounts: [
+            { refreshToken: "r1", projectId: "p1", addedAt: 1, lastUsed: 0 },
+            { refreshToken: "r2", projectId: "p2", addedAt: 1, lastUsed: 0 },
+          ],
+          activeIndex: 0,
+        };
+        const manager = new AccountManager(undefined, stored);
+        const [first, second] = manager.getAccounts();
+        const saved = () => manager["createStorageSnapshot"]().accounts;
+
+        // A 503 "No capacity available" on both accounts: Google is out of capacity,
+        // neither account is rate-limited.
+        manager.markRateLimitedWithReason(first!, "gemini", "antigravity", "m", "MODEL_CAPACITY_EXHAUSTED", 60_000);
+        manager.markRateLimitedWithReason(second!, "gemini", "antigravity", "m", "MODEL_CAPACITY_EXHAUSTED", 60_000);
+        expect(manager.onlyOutOfCapacity("gemini", "m")).toBe(true);
+        expect(saved().map((a) => accountState(a))).toEqual(["no-capacity", "no-capacity"]);
+
+        // A real 429 on the same model afterwards is a rate limit again.
+        manager.markRateLimitedWithReason(second!, "gemini", "antigravity", "m", "QUOTA_EXHAUSTED", 3_600_000);
+        expect(manager.onlyOutOfCapacity("gemini", "m")).toBe(false);
+        expect(saved().map((a) => accountState(a))).toEqual(["no-capacity", "rate-limited"]);
 
         vi.useRealTimers();
       });

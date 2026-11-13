@@ -52,6 +52,8 @@
 
 ### Fixed
 
+- **"Rate-limited" when Google had no capacity** - A 503 "No capacity available for model … on the server" was saved as a rate limit, so the account list said `[rate-limited]` and the toast "All accounts rate-limited" while the accounts had 98% of their quota left and Google had sent no 429 at all. These holds are now `[no capacity]`, and the toast says Google has no capacity for that model. With `debug` on, every refusal (status, Google's reason and message) and every answer's status and time go in the debug log; the retries used to leave no trace there. `verify` no longer calls an account an error with "Verification check timed out" when Google is only slow: a one-word ping took about 2 minutes to start on HTTP/2 and HTTP/1.1 alike while the account was fine.
+
 - **`antigravity-accounts add` quit before saving the account** - The HTTP/2 connections to Google are unreferenced so an idle one never keeps a process alive, but they stayed unreferenced during requests too. Once the code was pasted, nothing else kept the CLI running, so Node exited (code 0, no message) while the token exchange was in flight, and the account was never saved. A connection is now referenced while it has a request in flight.
 
 - **Signing in again to a stored account read like a mistake** - Re-adding an account whose sign-in Google revoked (`invalid_grant: Token has been expired or revoked`) replaces its token, which is the fix, but the message said Google had returned the wrong account. It now says the account's sign-in was renewed.

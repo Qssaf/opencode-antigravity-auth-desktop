@@ -146,6 +146,8 @@ export interface ManagedAccount {
   expires?: number;
   enabled: boolean;
   rateLimitResetTimes: RateLimitStateV3;
+  /** See AccountMetadataV3.noCapacityUntil. */
+  noCapacityUntil?: Record<string, number>;
   /**
    * Per-quota-key SET timestamps (key -> setAt epoch ms), recorded whenever a limit
    * is written. Lets the merge resolve conflicts by MUTATION ORDER (compare setAt vs
@@ -241,6 +243,15 @@ function isRateLimitedForHeaderStyle(account: ManagedAccount, family: ModelFamil
   // Then check base family quota
   const baseKey = getQuotaKey(family, headerStyle);
   return isRateLimitedForQuotaKey(account, baseKey);
+}
+
+/** The no-capacity marks that still match a live limit, for the saved file. */
+function liveNoCapacity(account: ManagedAccount): Record<string, number> | undefined {
+  const now = nowMs();
+  const live = Object.entries(account.noCapacityUntil ?? {}).filter(
+    ([key, until]) => until > now && account.rateLimitResetTimes[key as QuotaKey] === until,
+  );
+  return live.length > 0 ? Object.fromEntries(live) : undefined;
 }
 
 function clearExpiredRateLimits(account: ManagedAccount): void {
@@ -499,6 +510,7 @@ export class AccountManager {
             expires: matchesFallback ? authFallback?.expires : undefined,
             enabled: acc.enabled !== false,
             rateLimitResetTimes: acc.rateLimitResetTimes ?? {},
+            noCapacityUntil: acc.noCapacityUntil,
             rateLimitSetTimes: sanitizeRateLimitSetTimes(acc.rateLimitSetTimes, acc.rateLimitResetTimes),
             clearedQuotaKeys: clearedQuotaKeys,
             clearedSetTimes: sanitizeClearedSetTimes(acc.clearedSetTimes, clearedQuotaKeys),
@@ -870,11 +882,32 @@ export class AccountManager {
     const backoffMs = calculateBackoffMs(reason, failures - 1, retryAfterMs);
     const key = getQuotaKey(family, headerStyle, model);
     account.rateLimitResetTimes[key] = now + backoffMs;
+    // Google out of capacity is not the account being rate-limited: kept apart
+    // so the account list and toasts say which it was.
+    if (reason === "MODEL_CAPACITY_EXHAUSTED") {
+      (account.noCapacityUntil ??= {})[key] = now + backoffMs;
+    } else {
+      delete account.noCapacityUntil?.[key];
+    }
     // Record the mutation order and supersede any prior clear marker for this key.
     account.rateLimitSetTimes[key] = now;
     delete account.clearedQuotaKeys[key];
 
     return backoffMs;
+  }
+
+  /**
+   * True when every enabled account is held back for this model only because
+   * Google answered 503 "No capacity available": none is rate-limited.
+   */
+  onlyOutOfCapacity(family: ModelFamily, model?: string | null): boolean {
+    const keys = [getQuotaKey(family, "antigravity", model), getQuotaKey(family, "antigravity")];
+    const now = nowMs();
+    const enabled = this.accounts.filter((a) => a.enabled !== false);
+    return enabled.length > 0 && enabled.every((a) => {
+      const live = keys.filter((k) => (a.rateLimitResetTimes[k] ?? 0) > now);
+      return live.length > 0 && live.every((k) => a.noCapacityUntil?.[k] === a.rateLimitResetTimes[k]);
+    });
   }
 
   markRequestSuccess(account: ManagedAccount): void {
@@ -1237,6 +1270,7 @@ export class AccountManager {
         lastUsed: a.lastUsed,
         enabled: a.enabled,
         rateLimitResetTimes: { ...a.rateLimitResetTimes },
+        noCapacityUntil: liveNoCapacity(a),
         // Emit per-key SET timestamps and clear markers so mergeAccountStorage can
         // resolve conflicts by mutation order (latest setAt vs clearedAt wins),
         // preventing a stale writer from resurrecting a cleared limit or erasing a

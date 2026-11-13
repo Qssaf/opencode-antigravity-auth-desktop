@@ -15,7 +15,7 @@ import type { AccountMetadataV3, AccountStorageV4 } from "./storage";
 import type { PluginClient } from "./types";
 
 /** What an account is currently able to do, derived from its stored state. */
-export type AccountState = "active" | "rate-limited" | "verification-required";
+export type AccountState = "active" | "rate-limited" | "no-capacity" | "verification-required";
 
 export interface AccountAdminResult {
   /** False when the account did not exist or the pool was empty. */
@@ -49,11 +49,12 @@ export function accountState(account: AccountMetadataV3, now = Date.now()): Acco
   if (account.coolingDownUntil && account.coolingDownUntil > now) {
     return "rate-limited";
   }
-  const limits = account.rateLimitResetTimes;
-  if (limits && Object.values(limits).some((reset) => typeof reset === "number" && reset > now)) {
-    return "rate-limited";
-  }
-  return "active";
+  const live = Object.entries(account.rateLimitResetTimes ?? {}).filter(
+    ([, reset]) => typeof reset === "number" && reset > now,
+  );
+  if (live.length === 0) return "active";
+  // Held back only because Google had no capacity (503): the account itself is fine.
+  return live.every(([key, reset]) => account.noCapacityUntil?.[key] === reset) ? "no-capacity" : "rate-limited";
 }
 
 /** The stored pool, or null when nothing usable is stored yet. */

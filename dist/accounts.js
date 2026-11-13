@@ -122,6 +122,7 @@ function release(entry, pooled) {
     return;
   }
   if (entry.active > 0) return;
+  entry.session.unref();
   clearTimeout(entry.idleTimer);
   entry.idleTimer = setTimeout(() => entry.session.close(), IDLE_CLOSE_MS);
   entry.idleTimer.unref?.();
@@ -145,6 +146,7 @@ function attempt(url, init, payload, entry, pooled) {
   return new Promise((resolve, reject) => {
     const signal = init.signal ?? void 0;
     entry.active += 1;
+    entry.session.ref();
     clearTimeout(entry.idleTimer);
     const outgoing = {
       ":method": (init.method ?? "GET").toUpperCase(),
@@ -2049,6 +2051,8 @@ function getStatusBadge(status) {
       return `${ANSI.green}[active]${ANSI.reset}`;
     case "rate-limited":
       return `${ANSI.yellow}[rate-limited]${ANSI.reset}`;
+    case "no-capacity":
+      return `${ANSI.yellow}[no capacity]${ANSI.reset}`;
     case "expired":
       return `${ANSI.red}[expired]${ANSI.reset}`;
     case "verification-required":
@@ -9936,6 +9940,13 @@ function isRateLimitedForHeaderStyle(account, family, headerStyle, model) {
   const baseKey = getQuotaKey(family, headerStyle);
   return isRateLimitedForQuotaKey(account, baseKey);
 }
+function liveNoCapacity(account) {
+  const now = nowMs();
+  const live = Object.entries(account.noCapacityUntil ?? {}).filter(
+    ([key, until]) => until > now && account.rateLimitResetTimes[key] === until
+  );
+  return live.length > 0 ? Object.fromEntries(live) : void 0;
+}
 function clearExpiredRateLimits(account) {
   const now = nowMs();
   const keys = Object.keys(account.rateLimitResetTimes);
@@ -10101,6 +10112,7 @@ var AccountManager = class _AccountManager {
           expires: matchesFallback ? authFallback?.expires : void 0,
           enabled: acc.enabled !== false,
           rateLimitResetTimes: acc.rateLimitResetTimes ?? {},
+          noCapacityUntil: acc.noCapacityUntil,
           rateLimitSetTimes: sanitizeRateLimitSetTimes(acc.rateLimitSetTimes, acc.rateLimitResetTimes),
           clearedQuotaKeys,
           clearedSetTimes: sanitizeClearedSetTimes(acc.clearedSetTimes, clearedQuotaKeys),
@@ -10369,9 +10381,27 @@ var AccountManager = class _AccountManager {
     const backoffMs = calculateBackoffMs(reason, failures - 1, retryAfterMs);
     const key = getQuotaKey(family, headerStyle, model);
     account.rateLimitResetTimes[key] = now + backoffMs;
+    if (reason === "MODEL_CAPACITY_EXHAUSTED") {
+      (account.noCapacityUntil ??= {})[key] = now + backoffMs;
+    } else {
+      delete account.noCapacityUntil?.[key];
+    }
     account.rateLimitSetTimes[key] = now;
     delete account.clearedQuotaKeys[key];
     return backoffMs;
+  }
+  /**
+   * True when every enabled account is held back for this model only because
+   * Google answered 503 "No capacity available": none is rate-limited.
+   */
+  onlyOutOfCapacity(family, model) {
+    const keys = [getQuotaKey(family, "antigravity", model), getQuotaKey(family, "antigravity")];
+    const now = nowMs();
+    const enabled = this.accounts.filter((a) => a.enabled !== false);
+    return enabled.length > 0 && enabled.every((a) => {
+      const live = keys.filter((k) => (a.rateLimitResetTimes[k] ?? 0) > now);
+      return live.length > 0 && live.every((k) => a.noCapacityUntil?.[k] === a.rateLimitResetTimes[k]);
+    });
   }
   markRequestSuccess(account) {
     if (account.consecutiveFailures) {
@@ -10665,6 +10695,7 @@ var AccountManager = class _AccountManager {
         lastUsed: a.lastUsed,
         enabled: a.enabled,
         rateLimitResetTimes: { ...a.rateLimitResetTimes },
+        noCapacityUntil: liveNoCapacity(a),
         // Emit per-key SET timestamps and clear markers so mergeAccountStorage can
         // resolve conflicts by mutation order (latest setAt vs clearedAt wins),
         // preventing a stale writer from resurrecting a cleared limit or erasing a
@@ -10897,6 +10928,634 @@ var AccountManager = class _AccountManager {
     return minWait === 0 ? null : minWait;
   }
 };
+
+// src/plugin/model-catalog.ts
+var CATALOG_TTL_MS = 60 * 60 * 1e3;
+var catalog;
+var antigravityCatalog;
+function modelIdFromName(model) {
+  const raw = (model.name ? model.name.replace(/^models\//, "") : model.baseModelId)?.trim();
+  return raw || null;
+}
+function recordPublicGeminiApiModels(models) {
+  const ids = /* @__PURE__ */ new Set();
+  for (const model of models) {
+    const id = modelIdFromName(model);
+    if (id) ids.add(id.toLowerCase());
+  }
+  if (ids.size === 0) return;
+  catalog = { ids, fetchedAt: Date.now() };
+}
+function getPublicGeminiApiModelIds() {
+  if (!catalog) return void 0;
+  if (Date.now() - catalog.fetchedAt > CATALOG_TTL_MS) return void 0;
+  return catalog.ids;
+}
+function recordAntigravityAvailableModels(models) {
+  if (!models || Object.keys(models).length === 0) return;
+  antigravityCatalog = {
+    models: { ...models },
+    fetchedAt: Date.now()
+  };
+}
+function getCachedAntigravityAvailableModels() {
+  if (!antigravityCatalog) return void 0;
+  if (Date.now() - antigravityCatalog.fetchedAt > CATALOG_TTL_MS) return void 0;
+  return antigravityCatalog.models;
+}
+
+// src/plugin/quota.ts
+var FETCH_TIMEOUT_MS2 = 1e4;
+function buildAuthFromAccount(account) {
+  return {
+    type: "oauth",
+    refresh: formatRefreshParts({
+      refreshToken: account.refreshToken,
+      projectId: account.projectId,
+      managedProjectId: account.managedProjectId
+    }),
+    access: void 0,
+    expires: void 0
+  };
+}
+function normalizeRemainingFraction(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0;
+  }
+  if (value < 0) return 0;
+  if (value > 1) return 1;
+  return value;
+}
+function parseResetTime(resetTime) {
+  if (!resetTime) return null;
+  const timestamp = Date.parse(resetTime);
+  if (!Number.isFinite(timestamp)) {
+    return null;
+  }
+  return timestamp;
+}
+function classifyQuotaGroup(modelName, displayName) {
+  const combined = `${modelName} ${displayName ?? ""}`.toLowerCase();
+  if (combined.includes("claude")) {
+    return "claude";
+  }
+  const id = modelName.toLowerCase().replace(/^antigravity-/, "");
+  if (isGemini2Model(id) || remapRetiredAntigravityGeminiModel(id) !== id) {
+    return null;
+  }
+  const isGemini3 = isGemini3OrLaterModel(combined) || /gemini (?:[3-9]|[1-9]\d+)\b/.test(combined);
+  if (!isGemini3) {
+    return null;
+  }
+  const family = getModelFamily(modelName);
+  return family === "gemini-flash" ? "gemini-flash" : "gemini-pro";
+}
+function aggregateQuota(models) {
+  const groups = {};
+  if (!models) {
+    return { groups, modelCount: 0 };
+  }
+  let totalCount = 0;
+  for (const [modelName, entry] of Object.entries(models)) {
+    const group = classifyQuotaGroup(modelName, entry.displayName ?? entry.modelName);
+    if (!group) {
+      continue;
+    }
+    const quotaInfo = entry.quotaInfo;
+    const remainingFraction = quotaInfo ? normalizeRemainingFraction(quotaInfo.remainingFraction) : void 0;
+    const resetTime = quotaInfo?.resetTime;
+    const resetTimestamp = parseResetTime(resetTime);
+    const validResetTime = resetTimestamp !== null ? resetTime : void 0;
+    totalCount += 1;
+    const existing = groups[group];
+    const nextCount = (existing?.modelCount ?? 0) + 1;
+    let nextRemaining = existing?.remainingFraction;
+    let nextResetTime = existing?.resetTime;
+    if (existing === void 0) {
+      nextRemaining = remainingFraction;
+      nextResetTime = validResetTime;
+    } else if (remainingFraction !== void 0 && (existing.remainingFraction === void 0 || remainingFraction > existing.remainingFraction)) {
+      nextRemaining = remainingFraction;
+      nextResetTime = validResetTime;
+    } else if (remainingFraction !== void 0 && existing.remainingFraction !== void 0 && remainingFraction === existing.remainingFraction) {
+      const existingResetTimestamp = parseResetTime(existing.resetTime);
+      if (resetTimestamp !== null && (existingResetTimestamp === null || resetTimestamp < existingResetTimestamp)) {
+        nextResetTime = validResetTime;
+      }
+    }
+    groups[group] = {
+      remainingFraction: nextRemaining,
+      resetTime: nextResetTime,
+      modelCount: nextCount
+    };
+  }
+  return { groups, modelCount: totalCount };
+}
+async function fetchWithTimeout2(url, options, timeoutMs = FETCH_TIMEOUT_MS2) {
+  return googleFetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
+}
+async function fetchAvailableModels(accessToken, projectId) {
+  const endpoint = ANTIGRAVITY_ENDPOINT_DAILY;
+  const errors = [];
+  const body = projectId ? { project: projectId } : {};
+  const response = await fetchWithTimeout2(`${endpoint}/v1internal:fetchAvailableModels`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      "User-Agent": ANTIGRAVITY_CLI_USER_AGENT
+    },
+    body: JSON.stringify(body)
+  });
+  if (response.ok) {
+    return await response.json();
+  }
+  const message = await response.text().catch(() => "");
+  const snippet = message.trim().slice(0, 200);
+  errors.push(
+    `fetchAvailableModels ${response.status} at ${endpoint}${snippet ? `: ${snippet}` : ""}`
+  );
+  throw new Error(errors.join("; ") || "fetchAvailableModels failed");
+}
+function applyAccountUpdates(account, auth) {
+  const parts = parseRefreshParts(auth.refresh);
+  if (!parts.refreshToken) {
+    return void 0;
+  }
+  const updated = {
+    ...account,
+    refreshToken: parts.refreshToken,
+    projectId: parts.projectId ?? account.projectId,
+    managedProjectId: parts.managedProjectId ?? account.managedProjectId
+  };
+  const changed = updated.refreshToken !== account.refreshToken || updated.projectId !== account.projectId || updated.managedProjectId !== account.managedProjectId;
+  return changed ? updated : void 0;
+}
+var QUOTA_CHECK_CONCURRENCY = 3;
+async function mapWithConcurrency(items, concurrency, fn) {
+  const results = new Array(items.length);
+  if (items.length === 0) {
+    return results;
+  }
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+  let cursor2 = 0;
+  const worker = async () => {
+    while (true) {
+      const index = cursor2;
+      cursor2 += 1;
+      if (index >= items.length) {
+        break;
+      }
+      const item = items[index];
+      if (item === void 0) {
+        continue;
+      }
+      results[index] = await fn(item, index);
+    }
+  };
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
+}
+async function fetchWithEndpointFallback(requestPath, options, timeoutMs = FETCH_TIMEOUT_MS2) {
+  let lastError;
+  for (const endpoint of ANTIGRAVITY_ENDPOINT_FALLBACKS) {
+    try {
+      const response = await fetchWithTimeout2(`${endpoint}${requestPath}`, options, timeoutMs);
+      if (response.ok) {
+        return response;
+      }
+      if (response.status === 403 || response.status === 404 || response.status >= 500) {
+        lastError = new Error(`HTTP ${response.status} at ${endpoint}`);
+        continue;
+      }
+      return response;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("All Antigravity endpoints failed");
+}
+async function fetchRateLimitSummary(accessToken, projectId) {
+  const body = projectId ? { project: projectId } : {};
+  try {
+    const response = await fetchWithEndpointFallback("/v1internal:retrieveUserQuotaSummary", {
+      method: "POST",
+      headers: {
+        // The backend keys what it reports off the client it thinks is
+        // calling; agy sends its CLI agent and nothing else.
+        "User-Agent": ANTIGRAVITY_CLI_USER_AGENT,
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      return { groups: [], error: `HTTP ${response.status}${text ? `: ${text.slice(0, 100)}` : ""}` };
+    }
+    const data = await response.json();
+    return normalizeRateLimitSummary(data);
+  } catch (error) {
+    return { groups: [], error: error instanceof Error ? error.message : String(error) };
+  }
+}
+function normalizeRateLimitSummary(payload) {
+  const groups = (payload.groups ?? []).map((group) => ({
+    displayName: group.displayName || "Unknown group",
+    description: group.description || void 0,
+    buckets: (group.buckets ?? []).map((bucket) => ({
+      bucketId: bucket.bucketId || "",
+      displayName: bucket.displayName || bucket.bucketId || "",
+      window: bucket.window || "",
+      remainingFraction: normalizeRemainingFraction(bucket.remainingFraction) ?? 0,
+      remainingAmount: bucket.remainingAmount,
+      disabled: bucket.disabled === true,
+      resetTime: bucket.resetTime,
+      description: bucket.description || void 0
+    }))
+  }));
+  return { description: payload.description || void 0, groups };
+}
+function isGeminiRateLimitGroup(group) {
+  return /gemini/i.test(group.displayName);
+}
+function findRateLimitBucket(summary, matches, window) {
+  const group = summary?.groups.find(matches);
+  return group?.buckets.find((bucket) => bucket.window === window);
+}
+async function checkSingleAccountQuota(account, index, client2, providerId) {
+  const disabled = account.enabled === false;
+  let auth = buildAuthFromAccount(account);
+  try {
+    if (accessTokenExpired(auth)) {
+      const refreshed = await refreshAccessToken(auth, client2, providerId);
+      if (!refreshed) {
+        throw new Error("Token refresh failed");
+      }
+      auth = refreshed;
+    }
+    const projectContext = await ensureProjectContext(auth);
+    auth = projectContext.auth;
+    const updatedAccount = applyAccountUpdates(account, auth);
+    let quotaResult;
+    const [antigravityResponse, rateLimitSummary] = await Promise.all([
+      fetchAvailableModels(auth.access ?? "", projectContext.effectiveProjectId).catch(() => ({ models: void 0 })),
+      fetchRateLimitSummary(auth.access ?? "", projectContext.effectiveProjectId)
+    ]);
+    if (antigravityResponse.models === void 0) {
+      quotaResult = {
+        groups: {},
+        modelCount: 0,
+        error: "Failed to fetch Antigravity quota"
+      };
+    } else {
+      recordAntigravityAvailableModels(antigravityResponse.models);
+      quotaResult = aggregateQuota(antigravityResponse.models);
+    }
+    for (const [family, groupQuota] of Object.entries(quotaResult.groups)) {
+      const remainingPercent = (groupQuota.remainingFraction ?? 0) * 100;
+      logQuotaStatus(account.email, index, remainingPercent, family);
+    }
+    return {
+      index,
+      email: account.email,
+      status: "ok",
+      disabled,
+      quota: quotaResult,
+      rateLimits: rateLimitSummary,
+      updatedAccount
+    };
+  } catch (error) {
+    logQuotaFetch(
+      "error",
+      void 0,
+      `account=${account.email ?? index} error=${error instanceof Error ? error.message : String(error)}`
+    );
+    return {
+      index,
+      email: account.email,
+      status: "error",
+      disabled,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+async function checkAccountsQuota(accounts, client2, providerId = ANTIGRAVITY_PROVIDER_ID) {
+  logQuotaFetch("start", accounts.length);
+  const results = await mapWithConcurrency(
+    accounts,
+    QUOTA_CHECK_CONCURRENCY,
+    (account, index) => checkSingleAccountQuota(account, index, client2, providerId)
+  );
+  logQuotaFetch(
+    "complete",
+    accounts.length,
+    `ok=${results.filter((r) => r.status === "ok").length} errors=${results.filter((r) => r.status === "error").length}`
+  );
+  return results;
+}
+
+// src/plugin/account-admin.ts
+function accountLabel(account, index) {
+  return account?.email || `Account ${index + 1}`;
+}
+function accountState(account, now = Date.now()) {
+  if (account.verificationRequired) {
+    return "verification-required";
+  }
+  if (account.coolingDownUntil && account.coolingDownUntil > now) {
+    return "rate-limited";
+  }
+  const live = Object.entries(account.rateLimitResetTimes ?? {}).filter(
+    ([, reset]) => typeof reset === "number" && reset > now
+  );
+  if (live.length === 0) return "active";
+  return live.every(([key, reset]) => account.noCapacityUntil?.[key] === reset) ? "no-capacity" : "rate-limited";
+}
+async function loadAccountPool() {
+  const storage = await loadAccounts();
+  return storage && storage.accounts.length > 0 ? storage : null;
+}
+var NO_ACCOUNTS_MESSAGE = "No Google accounts are stored. Run `opencode auth login` to sign in.";
+function renderAccountList(storage) {
+  if (!storage || storage.accounts.length === 0) {
+    return NO_ACCOUNTS_MESSAGE;
+  }
+  const now = Date.now();
+  const lines = storage.accounts.map((account, index) => {
+    const flags = [
+      index === (storage.activeIndex ?? 0) ? "current" : "",
+      account.enabled === false ? "disabled" : "",
+      accountState(account, now) === "active" ? "" : accountState(account, now)
+    ].filter(Boolean);
+    const suffix = flags.length > 0 ? ` [${flags.join(", ")}]` : "";
+    return `  ${index + 1}. ${accountLabel(account, index)}${suffix}`;
+  });
+  return [`${storage.accounts.length} account(s):`, ...lines].join("\n");
+}
+async function renderAccounts() {
+  return renderAccountList(await loadAccountPool());
+}
+async function setAccountEnabled(index, enabled) {
+  const storage = await loadAccountPool();
+  const account = storage?.accounts[index];
+  if (!storage || !account) {
+    return { ok: false, message: `No account ${index + 1}. ${await renderAccounts()}` };
+  }
+  account.enabled = enabled;
+  await saveAccounts(storage);
+  return {
+    ok: true,
+    index,
+    message: `${accountLabel(account, index)} ${enabled ? "enabled" : "disabled"}.`
+  };
+}
+async function setAccountsEnabled(indices, enabled) {
+  const storage = await loadAccountPool();
+  if (!storage) {
+    return { ok: false, applied: [], message: NO_ACCOUNTS_MESSAGE };
+  }
+  const applied = [];
+  const labels = [];
+  const missing = [];
+  for (const index of new Set(indices)) {
+    const account = storage.accounts[index];
+    if (!account) {
+      missing.push(index + 1);
+      continue;
+    }
+    account.enabled = enabled;
+    applied.push(account.refreshToken);
+    labels.push(accountLabel(account, index));
+  }
+  if (applied.length > 0) {
+    await saveAccounts(storage);
+  }
+  const done = labels.length > 0 ? `${labels.join(", ")} ${enabled ? "enabled" : "disabled"}.` : "";
+  const skipped = missing.length > 0 ? `No account ${missing.join(", ")}.` : "";
+  return {
+    ok: applied.length > 0,
+    applied,
+    message: [done, skipped].filter(Boolean).join(" ") || NO_ACCOUNTS_MESSAGE
+  };
+}
+async function deleteAccounts(indices) {
+  const storage = await loadAccountPool();
+  if (!storage) {
+    return { ok: false, applied: [], message: NO_ACCOUNTS_MESSAGE };
+  }
+  const targets = [];
+  const missing = [];
+  for (const index of new Set(indices)) {
+    const account = storage.accounts[index];
+    if (!account) {
+      missing.push(index + 1);
+      continue;
+    }
+    targets.push({ label: accountLabel(account, index), refreshToken: account.refreshToken });
+  }
+  for (const target of targets) {
+    await removeAccountFromStorage(target.refreshToken);
+  }
+  const done = targets.length > 0 ? `Deleted ${targets.map((t) => t.label).join(", ")}.` : "";
+  const skipped = missing.length > 0 ? `No account ${missing.join(", ")}.` : "";
+  return {
+    ok: targets.length > 0,
+    applied: targets.map((t) => t.refreshToken),
+    message: [done, skipped].filter(Boolean).join(" ") || NO_ACCOUNTS_MESSAGE
+  };
+}
+async function deleteAccount(index) {
+  const storage = await loadAccountPool();
+  const account = storage?.accounts[index];
+  if (!storage || !account) {
+    return { ok: false, message: `No account ${index + 1}. ${await renderAccounts()}` };
+  }
+  await removeAccountFromStorage(account.refreshToken);
+  return { ok: true, index, message: `Deleted ${accountLabel(account, index)}.` };
+}
+function formatCountdown(resetTime) {
+  if (!resetTime) return "";
+  const ms = Date.parse(resetTime) - Date.now();
+  if (!Number.isFinite(ms)) return "";
+  if (ms <= 0) return "resetting";
+  const totalMinutes = Math.floor(ms / 6e4);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor(totalMinutes % 1440 / 60);
+  const minutes = totalMinutes % 60;
+  const parts = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  if (parts.length === 0) parts.push(`${Math.max(1, Math.floor(ms / 1e3))}s`);
+  return parts.join(" ");
+}
+function formatPercent(remaining) {
+  return typeof remaining === "number" ? `${Math.round(remaining * 100)}%`.padStart(4) : " N/A";
+}
+function formatBucketCell(summary, gemini, window) {
+  const bucket = findRateLimitBucket(
+    summary,
+    (group) => gemini ? isGeminiRateLimitGroup(group) : !isGeminiRateLimitGroup(group),
+    window
+  );
+  if (!bucket) return "N/A";
+  const countdown = formatCountdown(bucket.resetTime);
+  const exhausted = bucket.disabled ? " [exhausted]" : "";
+  return `${formatPercent(bucket.remainingFraction)}${countdown ? ` (${countdown})` : ""}${exhausted}`;
+}
+function accountStatusLabel(result, activeIndex) {
+  if (result.status === "error") return "ERROR";
+  if (result.disabled) return "DISABLED";
+  return result.index === activeIndex ? "ACTIVE" : "OK";
+}
+function renderTable(headers, rows) {
+  const widths = headers.map(
+    (header, column) => Math.max(header.length, ...rows.map((row2) => (row2[column] ?? "").length))
+  );
+  const line = (left, middle, right) => left + widths.map((width) => "\u2500".repeat(width + 2)).join(middle) + right;
+  const row = (cells) => `\u2502 ${widths.map((width, column) => (cells[column] ?? "").padEnd(width)).join(" \u2502 ")} \u2502`;
+  return [
+    line("\u250C", "\u252C", "\u2510"),
+    row(headers),
+    line("\u251C", "\u253C", "\u2524"),
+    ...rows.map(row),
+    line("\u2514", "\u2534", "\u2518")
+  ].join("\n");
+}
+var RATE_LIMIT_HEADERS = [
+  "Account",
+  "Status",
+  "Gemini weekly",
+  "Gemini 5-hour",
+  "Claude/GPT weekly",
+  "Claude/GPT 5-hour"
+];
+function renderRateLimitDetail(result) {
+  const lines = [];
+  const summary = result.rateLimits;
+  if (summary?.error) {
+    lines.push(`  rate limits: ${summary.error}`);
+    return lines;
+  }
+  if (!summary || summary.groups.length === 0) {
+    lines.push("  rate limits: none reported");
+    return lines;
+  }
+  for (const group of summary.groups) {
+    lines.push(`  ${group.displayName}${group.description ? ` \u2014 ${group.description}` : ""}`);
+    for (const bucket of group.buckets) {
+      const countdown = formatCountdown(bucket.resetTime);
+      lines.push(
+        `    ${bucket.displayName.padEnd(18)} ${formatPercent(bucket.remainingFraction)}${countdown ? ` (resets in ${countdown})` : ""}${bucket.disabled ? " [exhausted]" : ""}`
+      );
+    }
+  }
+  return lines;
+}
+function renderModelQuotaDetail(result) {
+  const lines = [];
+  const groups = result.quota?.groups ?? {};
+  const rows = [
+    ["Claude", groups.claude],
+    ["Gemini 3 Pro", groups["gemini-pro"]],
+    ["Gemini 3 Flash", groups["gemini-flash"]]
+  ];
+  const known = rows.filter(([, data]) => data);
+  if (known.length === 0) {
+    lines.push(`  Antigravity: ${result.quota?.error ?? "no quota information"}`);
+  } else {
+    for (const [name, data] of known) {
+      const countdown = formatCountdown(data?.resetTime);
+      lines.push(
+        `    ${name.padEnd(18)} ${formatPercent(data?.remainingFraction)}${countdown ? ` (resets in ${countdown})` : ""}`
+      );
+    }
+  }
+  return lines;
+}
+async function renderQuota(client2, providerId, options = {}) {
+  const storage = await loadAccountPool();
+  if (!storage) {
+    return NO_ACCOUNTS_MESSAGE;
+  }
+  const results = await checkAccountsQuota(storage.accounts, client2, providerId);
+  const activeIndex = storage.activeIndex ?? 0;
+  const rows = results.map((result) => {
+    const label = result.email || `Account ${result.index + 1}`;
+    const status = accountStatusLabel(result, activeIndex);
+    if (result.status === "error") {
+      const reason = result.error ?? "unknown error";
+      return [label, status, reason.length > 38 ? `${reason.slice(0, 37)}\u2026` : reason, "", "", ""];
+    }
+    return [
+      label,
+      status,
+      formatBucketCell(result.rateLimits, true, "weekly"),
+      formatBucketCell(result.rateLimits, true, "5h"),
+      formatBucketCell(result.rateLimits, false, "weekly"),
+      formatBucketCell(result.rateLimits, false, "5h")
+    ];
+  });
+  const blocks = [
+    "Antigravity rate limits (weekly + 5-hour, per model group)",
+    renderTable(RATE_LIMIT_HEADERS, rows),
+    "Weekly follows your plan tier; the 5-hour pool smooths global demand. Whichever empties first blocks you."
+  ];
+  if (options.detailed) {
+    for (const result of results) {
+      const label = result.email || `Account ${result.index + 1}`;
+      const detail = [`${label}${result.disabled ? " [disabled]" : ""}`];
+      if (result.status === "error") {
+        detail.push(`  error: ${result.error}`);
+      } else {
+        detail.push(...renderRateLimitDetail(result));
+        detail.push("  Model pools (5-hour)");
+        detail.push(...renderModelQuotaDetail(result));
+      }
+      blocks.push(detail.join("\n"));
+    }
+  }
+  return blocks.join("\n\n");
+}
+async function renderVerification(indices, verify, client2, providerId) {
+  const storage = await loadAccountPool();
+  if (!storage) {
+    return NO_ACCOUNTS_MESSAGE;
+  }
+  const lines = [];
+  for (const index of indices) {
+    const account = storage.accounts[index];
+    if (!account) {
+      lines.push(`No account ${index + 1}.`);
+      continue;
+    }
+    const label = accountLabel(account, index);
+    const verification = await verify(account, client2, providerId);
+    if (verification.status === "ok") {
+      lines.push(`${label}: ok`);
+      continue;
+    }
+    if (verification.status === "blocked") {
+      lines.push(`${label}: needs Google verification`);
+      lines.push(`  ${verification.message}`);
+      if (verification.verifyUrl) {
+        lines.push(`  ${verification.verifyUrl}`);
+      }
+      continue;
+    }
+    lines.push(`${label}: error - ${verification.message}`);
+  }
+  return lines.join("\n");
+}
+async function allAccountIndices() {
+  const storage = await loadAccountPool();
+  return storage ? storage.accounts.map((_, index) => index) : [];
+}
+function parseAccountNumber(value) {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isInteger(parsed) && parsed >= 1 ? parsed - 1 : null;
+}
 
 // src/hooks/auto-update-checker/checker.ts
 import * as fs2 from "node:fs";
@@ -11293,332 +11952,6 @@ async function showLocalDevToast(client2, version) {
   }).catch(() => {
   });
   logAutoUpdate(`Local dev toast shown: v${version}`);
-}
-
-// src/plugin/model-catalog.ts
-var CATALOG_TTL_MS = 60 * 60 * 1e3;
-var catalog;
-var antigravityCatalog;
-function modelIdFromName(model) {
-  const raw = (model.name ? model.name.replace(/^models\//, "") : model.baseModelId)?.trim();
-  return raw || null;
-}
-function recordPublicGeminiApiModels(models) {
-  const ids = /* @__PURE__ */ new Set();
-  for (const model of models) {
-    const id = modelIdFromName(model);
-    if (id) ids.add(id.toLowerCase());
-  }
-  if (ids.size === 0) return;
-  catalog = { ids, fetchedAt: Date.now() };
-}
-function getPublicGeminiApiModelIds() {
-  if (!catalog) return void 0;
-  if (Date.now() - catalog.fetchedAt > CATALOG_TTL_MS) return void 0;
-  return catalog.ids;
-}
-function recordAntigravityAvailableModels(models) {
-  if (!models || Object.keys(models).length === 0) return;
-  antigravityCatalog = {
-    models: { ...models },
-    fetchedAt: Date.now()
-  };
-}
-function getCachedAntigravityAvailableModels() {
-  if (!antigravityCatalog) return void 0;
-  if (Date.now() - antigravityCatalog.fetchedAt > CATALOG_TTL_MS) return void 0;
-  return antigravityCatalog.models;
-}
-
-// src/plugin/quota.ts
-var FETCH_TIMEOUT_MS2 = 1e4;
-function buildAuthFromAccount(account) {
-  return {
-    type: "oauth",
-    refresh: formatRefreshParts({
-      refreshToken: account.refreshToken,
-      projectId: account.projectId,
-      managedProjectId: account.managedProjectId
-    }),
-    access: void 0,
-    expires: void 0
-  };
-}
-function normalizeRemainingFraction(value) {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return 0;
-  }
-  if (value < 0) return 0;
-  if (value > 1) return 1;
-  return value;
-}
-function parseResetTime(resetTime) {
-  if (!resetTime) return null;
-  const timestamp = Date.parse(resetTime);
-  if (!Number.isFinite(timestamp)) {
-    return null;
-  }
-  return timestamp;
-}
-function classifyQuotaGroup(modelName, displayName) {
-  const combined = `${modelName} ${displayName ?? ""}`.toLowerCase();
-  if (combined.includes("claude")) {
-    return "claude";
-  }
-  const id = modelName.toLowerCase().replace(/^antigravity-/, "");
-  if (isGemini2Model(id) || remapRetiredAntigravityGeminiModel(id) !== id) {
-    return null;
-  }
-  const isGemini3 = isGemini3OrLaterModel(combined) || /gemini (?:[3-9]|[1-9]\d+)\b/.test(combined);
-  if (!isGemini3) {
-    return null;
-  }
-  const family = getModelFamily(modelName);
-  return family === "gemini-flash" ? "gemini-flash" : "gemini-pro";
-}
-function aggregateQuota(models) {
-  const groups = {};
-  if (!models) {
-    return { groups, modelCount: 0 };
-  }
-  let totalCount = 0;
-  for (const [modelName, entry] of Object.entries(models)) {
-    const group = classifyQuotaGroup(modelName, entry.displayName ?? entry.modelName);
-    if (!group) {
-      continue;
-    }
-    const quotaInfo = entry.quotaInfo;
-    const remainingFraction = quotaInfo ? normalizeRemainingFraction(quotaInfo.remainingFraction) : void 0;
-    const resetTime = quotaInfo?.resetTime;
-    const resetTimestamp = parseResetTime(resetTime);
-    const validResetTime = resetTimestamp !== null ? resetTime : void 0;
-    totalCount += 1;
-    const existing = groups[group];
-    const nextCount = (existing?.modelCount ?? 0) + 1;
-    let nextRemaining = existing?.remainingFraction;
-    let nextResetTime = existing?.resetTime;
-    if (existing === void 0) {
-      nextRemaining = remainingFraction;
-      nextResetTime = validResetTime;
-    } else if (remainingFraction !== void 0 && (existing.remainingFraction === void 0 || remainingFraction > existing.remainingFraction)) {
-      nextRemaining = remainingFraction;
-      nextResetTime = validResetTime;
-    } else if (remainingFraction !== void 0 && existing.remainingFraction !== void 0 && remainingFraction === existing.remainingFraction) {
-      const existingResetTimestamp = parseResetTime(existing.resetTime);
-      if (resetTimestamp !== null && (existingResetTimestamp === null || resetTimestamp < existingResetTimestamp)) {
-        nextResetTime = validResetTime;
-      }
-    }
-    groups[group] = {
-      remainingFraction: nextRemaining,
-      resetTime: nextResetTime,
-      modelCount: nextCount
-    };
-  }
-  return { groups, modelCount: totalCount };
-}
-async function fetchWithTimeout2(url, options, timeoutMs = FETCH_TIMEOUT_MS2) {
-  return googleFetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
-}
-async function fetchAvailableModels(accessToken, projectId) {
-  const endpoint = ANTIGRAVITY_ENDPOINT_DAILY;
-  const errors = [];
-  const body = projectId ? { project: projectId } : {};
-  const response = await fetchWithTimeout2(`${endpoint}/v1internal:fetchAvailableModels`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-      "User-Agent": ANTIGRAVITY_CLI_USER_AGENT
-    },
-    body: JSON.stringify(body)
-  });
-  if (response.ok) {
-    return await response.json();
-  }
-  const message = await response.text().catch(() => "");
-  const snippet = message.trim().slice(0, 200);
-  errors.push(
-    `fetchAvailableModels ${response.status} at ${endpoint}${snippet ? `: ${snippet}` : ""}`
-  );
-  throw new Error(errors.join("; ") || "fetchAvailableModels failed");
-}
-function applyAccountUpdates(account, auth) {
-  const parts = parseRefreshParts(auth.refresh);
-  if (!parts.refreshToken) {
-    return void 0;
-  }
-  const updated = {
-    ...account,
-    refreshToken: parts.refreshToken,
-    projectId: parts.projectId ?? account.projectId,
-    managedProjectId: parts.managedProjectId ?? account.managedProjectId
-  };
-  const changed = updated.refreshToken !== account.refreshToken || updated.projectId !== account.projectId || updated.managedProjectId !== account.managedProjectId;
-  return changed ? updated : void 0;
-}
-var QUOTA_CHECK_CONCURRENCY = 3;
-async function mapWithConcurrency(items, concurrency, fn) {
-  const results = new Array(items.length);
-  if (items.length === 0) {
-    return results;
-  }
-  const workerCount = Math.max(1, Math.min(concurrency, items.length));
-  let cursor2 = 0;
-  const worker = async () => {
-    while (true) {
-      const index = cursor2;
-      cursor2 += 1;
-      if (index >= items.length) {
-        break;
-      }
-      const item = items[index];
-      if (item === void 0) {
-        continue;
-      }
-      results[index] = await fn(item, index);
-    }
-  };
-  await Promise.all(Array.from({ length: workerCount }, () => worker()));
-  return results;
-}
-async function fetchWithEndpointFallback(requestPath, options, timeoutMs = FETCH_TIMEOUT_MS2) {
-  let lastError;
-  for (const endpoint of ANTIGRAVITY_ENDPOINT_FALLBACKS) {
-    try {
-      const response = await fetchWithTimeout2(`${endpoint}${requestPath}`, options, timeoutMs);
-      if (response.ok) {
-        return response;
-      }
-      if (response.status === 403 || response.status === 404 || response.status >= 500) {
-        lastError = new Error(`HTTP ${response.status} at ${endpoint}`);
-        continue;
-      }
-      return response;
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error("All Antigravity endpoints failed");
-}
-async function fetchRateLimitSummary(accessToken, projectId) {
-  const body = projectId ? { project: projectId } : {};
-  try {
-    const response = await fetchWithEndpointFallback("/v1internal:retrieveUserQuotaSummary", {
-      method: "POST",
-      headers: {
-        // The backend keys what it reports off the client it thinks is
-        // calling; agy sends its CLI agent and nothing else.
-        "User-Agent": ANTIGRAVITY_CLI_USER_AGENT,
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(body)
-    });
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      return { groups: [], error: `HTTP ${response.status}${text ? `: ${text.slice(0, 100)}` : ""}` };
-    }
-    const data = await response.json();
-    return normalizeRateLimitSummary(data);
-  } catch (error) {
-    return { groups: [], error: error instanceof Error ? error.message : String(error) };
-  }
-}
-function normalizeRateLimitSummary(payload) {
-  const groups = (payload.groups ?? []).map((group) => ({
-    displayName: group.displayName || "Unknown group",
-    description: group.description || void 0,
-    buckets: (group.buckets ?? []).map((bucket) => ({
-      bucketId: bucket.bucketId || "",
-      displayName: bucket.displayName || bucket.bucketId || "",
-      window: bucket.window || "",
-      remainingFraction: normalizeRemainingFraction(bucket.remainingFraction) ?? 0,
-      remainingAmount: bucket.remainingAmount,
-      disabled: bucket.disabled === true,
-      resetTime: bucket.resetTime,
-      description: bucket.description || void 0
-    }))
-  }));
-  return { description: payload.description || void 0, groups };
-}
-function isGeminiRateLimitGroup(group) {
-  return /gemini/i.test(group.displayName);
-}
-function findRateLimitBucket(summary, matches, window) {
-  const group = summary?.groups.find(matches);
-  return group?.buckets.find((bucket) => bucket.window === window);
-}
-async function checkSingleAccountQuota(account, index, client2, providerId) {
-  const disabled = account.enabled === false;
-  let auth = buildAuthFromAccount(account);
-  try {
-    if (accessTokenExpired(auth)) {
-      const refreshed = await refreshAccessToken(auth, client2, providerId);
-      if (!refreshed) {
-        throw new Error("Token refresh failed");
-      }
-      auth = refreshed;
-    }
-    const projectContext = await ensureProjectContext(auth);
-    auth = projectContext.auth;
-    const updatedAccount = applyAccountUpdates(account, auth);
-    let quotaResult;
-    const [antigravityResponse, rateLimitSummary] = await Promise.all([
-      fetchAvailableModels(auth.access ?? "", projectContext.effectiveProjectId).catch(() => ({ models: void 0 })),
-      fetchRateLimitSummary(auth.access ?? "", projectContext.effectiveProjectId)
-    ]);
-    if (antigravityResponse.models === void 0) {
-      quotaResult = {
-        groups: {},
-        modelCount: 0,
-        error: "Failed to fetch Antigravity quota"
-      };
-    } else {
-      recordAntigravityAvailableModels(antigravityResponse.models);
-      quotaResult = aggregateQuota(antigravityResponse.models);
-    }
-    for (const [family, groupQuota] of Object.entries(quotaResult.groups)) {
-      const remainingPercent = (groupQuota.remainingFraction ?? 0) * 100;
-      logQuotaStatus(account.email, index, remainingPercent, family);
-    }
-    return {
-      index,
-      email: account.email,
-      status: "ok",
-      disabled,
-      quota: quotaResult,
-      rateLimits: rateLimitSummary,
-      updatedAccount
-    };
-  } catch (error) {
-    logQuotaFetch(
-      "error",
-      void 0,
-      `account=${account.email ?? index} error=${error instanceof Error ? error.message : String(error)}`
-    );
-    return {
-      index,
-      email: account.email,
-      status: "error",
-      disabled,
-      error: error instanceof Error ? error.message : String(error)
-    };
-  }
-}
-async function checkAccountsQuota(accounts, client2, providerId = ANTIGRAVITY_PROVIDER_ID) {
-  logQuotaFetch("start", accounts.length);
-  const results = await mapWithConcurrency(
-    accounts,
-    QUOTA_CHECK_CONCURRENCY,
-    (account, index) => checkSingleAccountQuota(account, index, client2, providerId)
-  );
-  logQuotaFetch(
-    "complete",
-    accounts.length,
-    `ok=${results.filter((r) => r.status === "ok").length} errors=${results.filter((r) => r.status === "error").length}`
-  );
-  return results;
 }
 
 // src/plugin/refresh-queue.ts
@@ -12967,7 +13300,7 @@ async function verifyAccountAccess(account, client2, providerId) {
     response = await googleFetch(prepared.request, { ...prepared.init, signal: controller.signal });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      return { status: "error", message: "Verification check timed out." };
+      return { status: "error", message: "Google did not answer within 20 s (it is slow or busy right now; the account is not blocked by this)." };
     }
     return { status: "error", message: `Verification check failed: ${String(error)}` };
   } finally {
@@ -14049,7 +14382,8 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                   );
                 }
                 if (!rateLimitToastShown) {
-                  await showToast(`All ${accountCount2} account(s) rate-limited for ${family}. Waiting ${waitSecValue}s...`, "warning");
+                  const why = accountManager.onlyOutOfCapacity(family, model) ? `Google has no capacity for ${model ?? family} on any account right now (not a rate limit)` : `All ${accountCount2} account(s) rate-limited for ${family}`;
+                  await showToast(`${why}. Waiting ${waitSecValue}s...`, "warning");
                   rateLimitToastShown = true;
                 }
                 triedSwitchIndices.clear();
@@ -14408,6 +14742,9 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                       if (sessionKey) accountManager.assignSessionAccount(sessionKey, hedgeAccount.index);
                     }
                     pushDebug(`status=${response.status} ${response.statusText}`);
+                    debugLogToFile(
+                      `[Antigravity Debug ${debugContext?.id ?? "request"}] answered ${response.status} on account ${account.index} after ${Date.now() - (debugContext?.startedAt ?? Date.now())}ms`
+                    );
                     if (response.status === 429 || response.status === 503 || response.status === 529) {
                       if (tokenConsumed) {
                         getTokenTracker().refund(account.index);
@@ -14418,6 +14755,9 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                       const bodyInfo = await extractRetryInfoFromBody(response);
                       const serverRetryMs = bodyInfo.retryDelayMs ?? headerRetryMs;
                       const rateLimitReason = parseRateLimitReason(bodyInfo.reason, bodyInfo.message, response.status);
+                      debugLogToFile(
+                        `[RateLimit] ${response.status} on account ${account.index} model=${model ?? family} read as ${rateLimitReason} (reason=${bodyInfo.reason ?? "none"} retryDelayMs=${bodyInfo.retryDelayMs ?? "none"}): ${bodyInfo.message ?? "no message"}`
+                      );
                       if (rateLimitReason === "MODEL_CAPACITY_EXHAUSTED" || rateLimitReason === "SERVER_ERROR") {
                         if (rateLimitReason === "MODEL_CAPACITY_EXHAUSTED" && accountManager.peekOtherAccountForFamily(
                           family,
@@ -14818,27 +15158,7 @@ Alternatively, you can:
                 while (true) {
                   const now = Date.now();
                   const existingAccounts = existingStorage2.accounts.map((acc, idx) => {
-                    let status = "unknown";
-                    if (acc.verificationRequired) {
-                      status = "verification-required";
-                    } else {
-                      const rateLimits = acc.rateLimitResetTimes;
-                      if (rateLimits) {
-                        const isRateLimited = Object.values(rateLimits).some(
-                          (resetTime) => typeof resetTime === "number" && resetTime > now
-                        );
-                        if (isRateLimited) {
-                          status = "rate-limited";
-                        } else {
-                          status = "active";
-                        }
-                      } else {
-                        status = "active";
-                      }
-                      if (acc.coolingDownUntil && acc.coolingDownUntil > now) {
-                        status = "rate-limited";
-                      }
-                    }
+                    const status = accountState(acc, now);
                     return {
                       email: acc.email,
                       index: idx,
@@ -15474,308 +15794,6 @@ function resolveHeaderRoutingDecision(urlString) {
   };
 }
 
-// src/plugin/account-admin.ts
-function accountLabel(account, index) {
-  return account?.email || `Account ${index + 1}`;
-}
-function accountState(account, now = Date.now()) {
-  if (account.verificationRequired) {
-    return "verification-required";
-  }
-  if (account.coolingDownUntil && account.coolingDownUntil > now) {
-    return "rate-limited";
-  }
-  const limits = account.rateLimitResetTimes;
-  if (limits && Object.values(limits).some((reset) => typeof reset === "number" && reset > now)) {
-    return "rate-limited";
-  }
-  return "active";
-}
-async function loadAccountPool() {
-  const storage = await loadAccounts();
-  return storage && storage.accounts.length > 0 ? storage : null;
-}
-var NO_ACCOUNTS_MESSAGE = "No Google accounts are stored. Run `opencode auth login` to sign in.";
-function renderAccountList(storage) {
-  if (!storage || storage.accounts.length === 0) {
-    return NO_ACCOUNTS_MESSAGE;
-  }
-  const now = Date.now();
-  const lines = storage.accounts.map((account, index) => {
-    const flags = [
-      index === (storage.activeIndex ?? 0) ? "current" : "",
-      account.enabled === false ? "disabled" : "",
-      accountState(account, now) === "active" ? "" : accountState(account, now)
-    ].filter(Boolean);
-    const suffix = flags.length > 0 ? ` [${flags.join(", ")}]` : "";
-    return `  ${index + 1}. ${accountLabel(account, index)}${suffix}`;
-  });
-  return [`${storage.accounts.length} account(s):`, ...lines].join("\n");
-}
-async function renderAccounts() {
-  return renderAccountList(await loadAccountPool());
-}
-async function setAccountEnabled(index, enabled) {
-  const storage = await loadAccountPool();
-  const account = storage?.accounts[index];
-  if (!storage || !account) {
-    return { ok: false, message: `No account ${index + 1}. ${await renderAccounts()}` };
-  }
-  account.enabled = enabled;
-  await saveAccounts(storage);
-  return {
-    ok: true,
-    index,
-    message: `${accountLabel(account, index)} ${enabled ? "enabled" : "disabled"}.`
-  };
-}
-async function setAccountsEnabled(indices, enabled) {
-  const storage = await loadAccountPool();
-  if (!storage) {
-    return { ok: false, applied: [], message: NO_ACCOUNTS_MESSAGE };
-  }
-  const applied = [];
-  const labels = [];
-  const missing = [];
-  for (const index of new Set(indices)) {
-    const account = storage.accounts[index];
-    if (!account) {
-      missing.push(index + 1);
-      continue;
-    }
-    account.enabled = enabled;
-    applied.push(account.refreshToken);
-    labels.push(accountLabel(account, index));
-  }
-  if (applied.length > 0) {
-    await saveAccounts(storage);
-  }
-  const done = labels.length > 0 ? `${labels.join(", ")} ${enabled ? "enabled" : "disabled"}.` : "";
-  const skipped = missing.length > 0 ? `No account ${missing.join(", ")}.` : "";
-  return {
-    ok: applied.length > 0,
-    applied,
-    message: [done, skipped].filter(Boolean).join(" ") || NO_ACCOUNTS_MESSAGE
-  };
-}
-async function deleteAccounts(indices) {
-  const storage = await loadAccountPool();
-  if (!storage) {
-    return { ok: false, applied: [], message: NO_ACCOUNTS_MESSAGE };
-  }
-  const targets = [];
-  const missing = [];
-  for (const index of new Set(indices)) {
-    const account = storage.accounts[index];
-    if (!account) {
-      missing.push(index + 1);
-      continue;
-    }
-    targets.push({ label: accountLabel(account, index), refreshToken: account.refreshToken });
-  }
-  for (const target of targets) {
-    await removeAccountFromStorage(target.refreshToken);
-  }
-  const done = targets.length > 0 ? `Deleted ${targets.map((t) => t.label).join(", ")}.` : "";
-  const skipped = missing.length > 0 ? `No account ${missing.join(", ")}.` : "";
-  return {
-    ok: targets.length > 0,
-    applied: targets.map((t) => t.refreshToken),
-    message: [done, skipped].filter(Boolean).join(" ") || NO_ACCOUNTS_MESSAGE
-  };
-}
-async function deleteAccount(index) {
-  const storage = await loadAccountPool();
-  const account = storage?.accounts[index];
-  if (!storage || !account) {
-    return { ok: false, message: `No account ${index + 1}. ${await renderAccounts()}` };
-  }
-  await removeAccountFromStorage(account.refreshToken);
-  return { ok: true, index, message: `Deleted ${accountLabel(account, index)}.` };
-}
-function formatCountdown(resetTime) {
-  if (!resetTime) return "";
-  const ms = Date.parse(resetTime) - Date.now();
-  if (!Number.isFinite(ms)) return "";
-  if (ms <= 0) return "resetting";
-  const totalMinutes = Math.floor(ms / 6e4);
-  const days = Math.floor(totalMinutes / 1440);
-  const hours = Math.floor(totalMinutes % 1440 / 60);
-  const minutes = totalMinutes % 60;
-  const parts = [];
-  if (days > 0) parts.push(`${days}d`);
-  if (hours > 0) parts.push(`${hours}h`);
-  if (minutes > 0) parts.push(`${minutes}m`);
-  if (parts.length === 0) parts.push(`${Math.max(1, Math.floor(ms / 1e3))}s`);
-  return parts.join(" ");
-}
-function formatPercent(remaining) {
-  return typeof remaining === "number" ? `${Math.round(remaining * 100)}%`.padStart(4) : " N/A";
-}
-function formatBucketCell(summary, gemini, window) {
-  const bucket = findRateLimitBucket(
-    summary,
-    (group) => gemini ? isGeminiRateLimitGroup(group) : !isGeminiRateLimitGroup(group),
-    window
-  );
-  if (!bucket) return "N/A";
-  const countdown = formatCountdown(bucket.resetTime);
-  const exhausted = bucket.disabled ? " [exhausted]" : "";
-  return `${formatPercent(bucket.remainingFraction)}${countdown ? ` (${countdown})` : ""}${exhausted}`;
-}
-function accountStatusLabel(result, activeIndex) {
-  if (result.status === "error") return "ERROR";
-  if (result.disabled) return "DISABLED";
-  return result.index === activeIndex ? "ACTIVE" : "OK";
-}
-function renderTable(headers, rows) {
-  const widths = headers.map(
-    (header, column) => Math.max(header.length, ...rows.map((row2) => (row2[column] ?? "").length))
-  );
-  const line = (left, middle, right) => left + widths.map((width) => "\u2500".repeat(width + 2)).join(middle) + right;
-  const row = (cells) => `\u2502 ${widths.map((width, column) => (cells[column] ?? "").padEnd(width)).join(" \u2502 ")} \u2502`;
-  return [
-    line("\u250C", "\u252C", "\u2510"),
-    row(headers),
-    line("\u251C", "\u253C", "\u2524"),
-    ...rows.map(row),
-    line("\u2514", "\u2534", "\u2518")
-  ].join("\n");
-}
-var RATE_LIMIT_HEADERS = [
-  "Account",
-  "Status",
-  "Gemini weekly",
-  "Gemini 5-hour",
-  "Claude/GPT weekly",
-  "Claude/GPT 5-hour"
-];
-function renderRateLimitDetail(result) {
-  const lines = [];
-  const summary = result.rateLimits;
-  if (summary?.error) {
-    lines.push(`  rate limits: ${summary.error}`);
-    return lines;
-  }
-  if (!summary || summary.groups.length === 0) {
-    lines.push("  rate limits: none reported");
-    return lines;
-  }
-  for (const group of summary.groups) {
-    lines.push(`  ${group.displayName}${group.description ? ` \u2014 ${group.description}` : ""}`);
-    for (const bucket of group.buckets) {
-      const countdown = formatCountdown(bucket.resetTime);
-      lines.push(
-        `    ${bucket.displayName.padEnd(18)} ${formatPercent(bucket.remainingFraction)}${countdown ? ` (resets in ${countdown})` : ""}${bucket.disabled ? " [exhausted]" : ""}`
-      );
-    }
-  }
-  return lines;
-}
-function renderModelQuotaDetail(result) {
-  const lines = [];
-  const groups = result.quota?.groups ?? {};
-  const rows = [
-    ["Claude", groups.claude],
-    ["Gemini 3 Pro", groups["gemini-pro"]],
-    ["Gemini 3 Flash", groups["gemini-flash"]]
-  ];
-  const known = rows.filter(([, data]) => data);
-  if (known.length === 0) {
-    lines.push(`  Antigravity: ${result.quota?.error ?? "no quota information"}`);
-  } else {
-    for (const [name, data] of known) {
-      const countdown = formatCountdown(data?.resetTime);
-      lines.push(
-        `    ${name.padEnd(18)} ${formatPercent(data?.remainingFraction)}${countdown ? ` (resets in ${countdown})` : ""}`
-      );
-    }
-  }
-  return lines;
-}
-async function renderQuota(client2, providerId, options = {}) {
-  const storage = await loadAccountPool();
-  if (!storage) {
-    return NO_ACCOUNTS_MESSAGE;
-  }
-  const results = await checkAccountsQuota(storage.accounts, client2, providerId);
-  const activeIndex = storage.activeIndex ?? 0;
-  const rows = results.map((result) => {
-    const label = result.email || `Account ${result.index + 1}`;
-    const status = accountStatusLabel(result, activeIndex);
-    if (result.status === "error") {
-      const reason = result.error ?? "unknown error";
-      return [label, status, reason.length > 38 ? `${reason.slice(0, 37)}\u2026` : reason, "", "", ""];
-    }
-    return [
-      label,
-      status,
-      formatBucketCell(result.rateLimits, true, "weekly"),
-      formatBucketCell(result.rateLimits, true, "5h"),
-      formatBucketCell(result.rateLimits, false, "weekly"),
-      formatBucketCell(result.rateLimits, false, "5h")
-    ];
-  });
-  const blocks = [
-    "Antigravity rate limits (weekly + 5-hour, per model group)",
-    renderTable(RATE_LIMIT_HEADERS, rows),
-    "Weekly follows your plan tier; the 5-hour pool smooths global demand. Whichever empties first blocks you."
-  ];
-  if (options.detailed) {
-    for (const result of results) {
-      const label = result.email || `Account ${result.index + 1}`;
-      const detail = [`${label}${result.disabled ? " [disabled]" : ""}`];
-      if (result.status === "error") {
-        detail.push(`  error: ${result.error}`);
-      } else {
-        detail.push(...renderRateLimitDetail(result));
-        detail.push("  Model pools (5-hour)");
-        detail.push(...renderModelQuotaDetail(result));
-      }
-      blocks.push(detail.join("\n"));
-    }
-  }
-  return blocks.join("\n\n");
-}
-async function renderVerification(indices, verify, client2, providerId) {
-  const storage = await loadAccountPool();
-  if (!storage) {
-    return NO_ACCOUNTS_MESSAGE;
-  }
-  const lines = [];
-  for (const index of indices) {
-    const account = storage.accounts[index];
-    if (!account) {
-      lines.push(`No account ${index + 1}.`);
-      continue;
-    }
-    const label = accountLabel(account, index);
-    const verification = await verify(account, client2, providerId);
-    if (verification.status === "ok") {
-      lines.push(`${label}: ok`);
-      continue;
-    }
-    if (verification.status === "blocked") {
-      lines.push(`${label}: needs Google verification`);
-      lines.push(`  ${verification.message}`);
-      if (verification.verifyUrl) {
-        lines.push(`  ${verification.verifyUrl}`);
-      }
-      continue;
-    }
-    lines.push(`${label}: error - ${verification.message}`);
-  }
-  return lines.join("\n");
-}
-async function allAccountIndices() {
-  const storage = await loadAccountPool();
-  return storage ? storage.accounts.map((_, index) => index) : [];
-}
-function parseAccountNumber(value) {
-  const parsed = Number.parseInt(value ?? "", 10);
-  return Number.isInteger(parsed) && parsed >= 1 ? parsed - 1 : null;
-}
-
 // src/plugin/account-login.ts
 async function accountCount() {
   return (await loadAccountPool())?.accounts.length ?? 0;
@@ -15790,7 +15808,7 @@ async function persist(helpers, result, before) {
     email: result.email,
     added,
     total,
-    message: added ? `Added account${who}. ${total} account(s) stored.` : `Signed in${who}, but the pool still holds ${total} account(s) \u2014 Google returned an account that was already stored. Pick a different account in the Google chooser to add another one.`
+    message: added ? `Added account${who}. ${total} account(s) stored.` : `Signed in again${result.email ? ` as ${result.email}` : ""}: its saved sign-in was renewed. ${total} account(s) stored. To add a different account, pick it in Google's chooser.`
   };
 }
 async function createAuthorization(helpers, projectId = "") {

@@ -57,6 +57,7 @@ import { EmptyResponseError } from "./plugin/errors";
 import { AntigravityTokenRefreshError, isRevokedRefreshToken, refreshAccessToken } from "./plugin/token";
 import { clearAccounts, hashRefreshToken, loadAccounts, removeAccountFromStorage, saveAccounts, saveAccountsReplace } from "./plugin/storage";
 import { AccountManager, type ModelFamily, parseRateLimitReason, calculateBackoffMs, computeSoftQuotaCacheTtlMs } from "./plugin/accounts";
+import { accountState } from "./plugin/account-admin";
 import { createAutoUpdateCheckerHook } from "./hooks/auto-update-checker";
 import { loadConfig, initRuntimeConfig, type AntigravityConfig } from "./plugin/config";
 import { createSessionRecoveryHook, getRecoverySuccessToast } from "./plugin/recovery";
@@ -818,7 +819,8 @@ export async function verifyAccountAccess(
     response = await googleFetch(prepared.request, { ...prepared.init, signal: controller.signal });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      return { status: "error", message: "Verification check timed out." };
+      // Google can take minutes to start a reply when it is short of capacity: no answer yet is not a blocked account.
+      return { status: "error", message: "Google did not answer within 20 s (it is slow or busy right now; the account is not blocked by this)." };
     }
     return { status: "error", message: `Verification check failed: ${String(error)}` };
   } finally {
@@ -2409,7 +2411,10 @@ export const createAntigravityRuntime = (providerId: string) => async (
               }
 
               if (!rateLimitToastShown) {
-                await showToast(`All ${accountCount} account(s) rate-limited for ${family}. Waiting ${waitSecValue}s...`, "warning");
+                const why = accountManager.onlyOutOfCapacity(family, model)
+                  ? `Google has no capacity for ${model ?? family} on any account right now (not a rate limit)`
+                  : `All ${accountCount} account(s) rate-limited for ${family}`;
+                await showToast(`${why}. Waiting ${waitSecValue}s...`, "warning");
                 rateLimitToastShown = true;
               }
 
@@ -2870,6 +2875,12 @@ export const createAntigravityRuntime = (providerId: string) => async (
                   if (sessionKey) accountManager.assignSessionAccount(sessionKey, hedgeAccount.index);
                 }
                 pushDebug(`status=${response.status} ${response.statusText}`);
+                // In the debug log for every answer, refused ones included: without it a
+                // request Google never answered and one it refused look the same there.
+                debugLogToFile(
+                  `[Antigravity Debug ${debugContext?.id ?? "request"}] answered ${response.status} on account ${account.index}` +
+                  ` after ${Date.now() - (debugContext?.startedAt ?? Date.now())}ms`,
+                );
 
 
 
@@ -2889,6 +2900,13 @@ export const createAntigravityRuntime = (providerId: string) => async (
 
                   // [Enhanced Parsing] Pass status to handling logic
                   const rateLimitReason = parseRateLimitReason(bodyInfo.reason, bodyInfo.message, response.status);
+                  // Every refusal goes in the debug log, with what Google said: the
+                  // retries below used to leave no trace, so a turn that spent minutes
+                  // being refused looked like a slow model.
+                  debugLogToFile(
+                    `[RateLimit] ${response.status} on account ${account.index} model=${model ?? family} read as ${rateLimitReason}` +
+                    ` (reason=${bodyInfo.reason ?? "none"} retryDelayMs=${bodyInfo.retryDelayMs ?? "none"}): ${bodyInfo.message ?? "no message"}`,
+                  );
 
                   // STRATEGY 1: CAPACITY / SERVER ERROR (Transient)
                   // Goal: Wait and Retry SAME Account. DO NOT LOCK.
@@ -3451,29 +3469,7 @@ export const createAntigravityRuntime = (providerId: string) => async (
               while (true) {
                 const now = Date.now();
                 const existingAccounts = existingStorage.accounts.map((acc, idx) => {
-                  let status: 'active' | 'rate-limited' | 'expired' | 'verification-required' | 'unknown' = 'unknown';
-
-                  if (acc.verificationRequired) {
-                    status = 'verification-required';
-                  } else {
-                    const rateLimits = acc.rateLimitResetTimes;
-                    if (rateLimits) {
-                      const isRateLimited = Object.values(rateLimits).some(
-                        (resetTime) => typeof resetTime === 'number' && resetTime > now
-                      );
-                      if (isRateLimited) {
-                        status = 'rate-limited';
-                      } else {
-                        status = 'active';
-                      }
-                    } else {
-                      status = 'active';
-                    }
-
-                    if (acc.coolingDownUntil && acc.coolingDownUntil > now) {
-                      status = 'rate-limited';
-                    }
-                  }
+                  const status = accountState(acc, now);
 
                   return {
                     email: acc.email,

@@ -2,7 +2,7 @@ import { ANSI } from './ansi';
 import { select, type MenuItem } from './select';
 import { confirm } from './confirm';
 
-export type AccountStatus = 'active' | 'rate-limited' | 'expired' | 'verification-required' | 'unknown';
+export type AccountStatus = 'active' | 'rate-limited' | 'no-capacity' | 'expired' | 'verification-required' | 'unknown';
 
 export interface AccountInfo {
   email?: string;
@@ -45,6 +45,7 @@ function getStatusBadge(status: AccountStatus | undefined): string {
   switch (status) {
     case 'active': return `${ANSI.green}[active]${ANSI.reset}`;
     case 'rate-limited': return `${ANSI.yellow}[rate-limited]${ANSI.reset}`;
+    case 'no-capacity': return `${ANSI.yellow}[no capacity]${ANSI.reset}`;
     case 'expired': return `${ANSI.red}[expired]${ANSI.reset}`;
     case 'verification-required': return `${ANSI.red}[needs verification]${ANSI.reset}`;
     default: return '';
