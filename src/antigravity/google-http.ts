@@ -56,6 +56,9 @@ class UnsentRequestError extends Error {
 }
 
 function openSession(origin: string, key: string | undefined): PooledSession {
+  // Unreferenced while idle, so a pooled connection never keeps the process
+  // alive; `attempt` references it while a request is in flight, or a short
+  // run (the accounts CLI) would exit mid-request.
   const session = connect(origin);
   session.unref();
   const entry: PooledSession = { session, active: 0 };
@@ -77,6 +80,7 @@ function release(entry: PooledSession, pooled: boolean): void {
     return;
   }
   if (entry.active > 0) return;
+  entry.session.unref();
   clearTimeout(entry.idleTimer);
   entry.idleTimer = setTimeout(() => entry.session.close(), IDLE_CLOSE_MS);
   entry.idleTimer.unref?.();
@@ -109,6 +113,7 @@ function attempt(
   return new Promise<Response>((resolve, reject) => {
     const signal = init.signal ?? undefined;
     entry.active += 1;
+    entry.session.ref();
     clearTimeout(entry.idleTimer);
 
     const outgoing: OutgoingHttpHeaders = {

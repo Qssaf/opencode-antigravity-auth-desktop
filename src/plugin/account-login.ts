@@ -34,9 +34,9 @@ async function accountCount(): Promise<number> {
 /**
  * Stores a completed exchange and describes what it did to the pool.
  *
- * Google returning an account that is already stored is the common "nothing
- * happened" case (its chooser was skipped, or the same account was picked), so
- * it is reported as such instead of as a successful add.
+ * Google returning an account that is already stored replaces that account's
+ * refresh token, which is how a revoked sign-in is renewed. It can also mean
+ * the chooser was skipped, so the message says how to add a different one.
  */
 async function persist(helpers: LoginHelpers, result: TokenExchangeSuccess, before: number): Promise<AccountLoginResult> {
   await helpers.persistAccountPool([result], false);
@@ -51,8 +51,8 @@ async function persist(helpers: LoginHelpers, result: TokenExchangeSuccess, befo
     total,
     message: added
       ? `Added account${who}. ${total} account(s) stored.`
-      : `Signed in${who}, but the pool still holds ${total} account(s) — Google returned an account that was already stored. ` +
-        "Pick a different account in the Google chooser to add another one.",
+      : `Signed in again${result.email ? ` as ${result.email}` : ""}: its saved sign-in was renewed. ${total} account(s) stored. ` +
+        "To add a different account, pick it in Google's chooser.",
   };
 }
 

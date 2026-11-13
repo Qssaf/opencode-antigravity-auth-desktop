@@ -145,6 +145,26 @@ describe("googleRequest", () => {
     expect(hits).toBe(4);
   });
 
+  it("keeps a short-lived process (the accounts CLI) alive until the answer arrives", async () => {
+    const server = createServer((_req, res) => {
+      setTimeout(() => res.end("ok"), 300);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    close = () => server.close();
+    const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+    const module = new URL("./google-http.ts", import.meta.url).href;
+    const script = `import(${JSON.stringify(module)}).then(({ googleRequest }) =>
+      googleRequest(${JSON.stringify(`${origin}/token`)}, { method: "POST", body: "{}" }))
+      .then((res) => res.text()).then((text) => console.log("answer:" + text));`;
+    const { execFile } = await import("node:child_process");
+    const stdout = await new Promise<string>((resolve, reject) =>
+      execFile(process.execPath, ["--input-type=module", "-e", script], { timeout: 10_000 }, (error, out) =>
+        error ? reject(error) : resolve(out)));
+
+    expect(stdout).toContain("answer:ok");
+  });
+
   it("fails at once when no connection can be made", async () => {
     const server = createServer(() => {});
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

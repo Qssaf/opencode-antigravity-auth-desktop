@@ -52,6 +52,10 @@
 
 ### Fixed
 
+- **`antigravity-accounts add` quit before saving the account** - The HTTP/2 connections to Google are unreferenced so an idle one never keeps a process alive, but they stayed unreferenced during requests too. Once the code was pasted, nothing else kept the CLI running, so Node exited (code 0, no message) while the token exchange was in flight, and the account was never saved. A connection is now referenced while it has a request in flight.
+
+- **Signing in again to a stored account read like a mistake** - Re-adding an account whose sign-in Google revoked (`invalid_grant: Token has been expired or revoked`) replaces its token, which is the fix, but the message said Google had returned the wrong account. It now says the account's sign-in was renewed.
+
 - **Disable, enable, remove and verify did nothing from `opencode auth login`** - The account picker is a multiselect: Enter submits only the accounts ticked with Space, so highlighting an account and pressing Enter sent none, the action reported "Pick at least one account", and OpenCode still closed with "Connected to Google". The picker now says "Space to tick, Enter to confirm" and refuses an empty answer, so the action always runs on the accounts you picked. Checked in OpenCode 2.2.5's own interactive prompt.
 
 - **A first rate limit no longer waits a minute** - In the default `cache_first` mode, a 429 without a `Retry-After` header made the plugin wait `default_retry_after_seconds` (60 s) before retrying the same account, and marked the account rate-limited first. It now retries after agy's 4 s.
