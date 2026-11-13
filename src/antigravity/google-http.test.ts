@@ -153,14 +153,26 @@ describe("googleRequest", () => {
     close = () => server.close();
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
-    const module = new URL("./google-http.ts", import.meta.url).href;
-    const script = `import(${JSON.stringify(module)}).then(({ googleRequest }) =>
+    // Bundled to plain JavaScript first: Node 20 (CI, and the engines floor) cannot import a .ts file.
+    const { build } = await import("esbuild");
+    const { mkdtemp, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { fileURLToPath, pathToFileURL } = await import("node:url");
+    const dir = await mkdtemp(join(tmpdir(), "google-http-"));
+    const outfile = join(dir, "google-http.mjs");
+    await build({
+      entryPoints: [fileURLToPath(new URL("./google-http.ts", import.meta.url))],
+      bundle: true, format: "esm", platform: "node", outfile, logLevel: "silent",
+    });
+    const script = `import(${JSON.stringify(pathToFileURL(outfile).href)}).then(({ googleRequest }) =>
       googleRequest(${JSON.stringify(`${origin}/token`)}, { method: "POST", body: "{}" }))
       .then((res) => res.text()).then((text) => console.log("answer:" + text));`;
     const { execFile } = await import("node:child_process");
     const stdout = await new Promise<string>((resolve, reject) =>
       execFile(process.execPath, ["--input-type=module", "-e", script], { timeout: 10_000 }, (error, out) =>
-        error ? reject(error) : resolve(out)));
+        error ? reject(error) : resolve(out)))
+      .finally(() => rm(dir, { recursive: true, force: true }));
 
     expect(stdout).toContain("answer:ok");
   });
