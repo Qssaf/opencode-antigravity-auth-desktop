@@ -2,7 +2,7 @@ import type { HeaderStyle } from "../../constants";
 
 export type ModelFamily = "claude" | "gemini-flash" | "gemini-pro";
 
-export type ThinkingTier = "low" | "medium" | "high";
+export type ThinkingTier = "low" | "medium" | "high" | "xhigh";
 
 /**
  * Context for request transformation.
@@ -102,7 +102,10 @@ export interface ResolvedModel {
   thinkingLevel?: string;
   /** Thinking budget for Claude/Gemini 2.5 */
   thinkingBudget?: number;
-  /** The tier suffix that was extracted */
+  /**
+   * The tier suffix that was extracted. Intentionally never "xhigh": that level
+   * is Hydrogen-only and comes from its own model-name regex in the resolver.
+   */
   tier?: ThinkingTier;
   /** Whether this is a thinking-capable model */
   isThinkingModel?: boolean;

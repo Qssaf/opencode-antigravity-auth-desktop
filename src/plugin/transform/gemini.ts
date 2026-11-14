@@ -470,7 +470,7 @@ export function isGemini3Model(model: string): boolean {
 }
 
 const STRICT_SAMPLING_MODEL_REGEX =
-  /^gemini-(?:3\.8-flash(?:-(?:low|medium|high|tiered))?|4-argon(?:-(?:low|medium|high))?)$/i;
+  /^gemini-(?:3\.8-flash(?:-(?:low|medium|high|tiered))?|4-argon(?:-(?:low|medium|high))?|4-hydrogen(?:-(?:low|medium|high|xhigh))?)$/i;
 const DEPRECATED_SAMPLING_FIELDS = [
   "temperature",
   "topP",
@@ -483,9 +483,9 @@ const DEPRECATED_SAMPLING_FIELDS = [
 
 /**
  * Gemini 3.8 Flash ignores deprecated sampling controls and rejects candidate
- * count, as 3.6/3.7 Flash and 3.5 Flash-Lite (since dropped) did. Gemini 4 Argon
- * is assumed to follow them. Remove the controls without affecting older Gemini
- * models.
+ * count, as 3.6/3.7 Flash and 3.5 Flash-Lite (since dropped) did. Gemini 4
+ * Argon and Hydrogen are assumed to follow them. Remove the controls without
+ * affecting older Gemini models.
  */
 export function sanitizeGeminiGenerationConfigForModel(
   payload: RequestPayload,

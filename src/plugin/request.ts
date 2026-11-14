@@ -77,6 +77,7 @@ import {
   getDefaultGemini3ThinkingLevel,
   isClaudeModel,
   isClaudeThinkingModel,
+  clampThinkingLevelForModel,
   CLAUDE_THINKING_MAX_OUTPUT_TOKENS,
   type ThinkingTier,
 } from "./transform";
@@ -1366,7 +1367,10 @@ export function prepareAntigravityRequest(
                 | undefined,
             );
             if (variantConfig?.thinkingLevel) {
-              tierThinkingLevel = variantConfig.thinkingLevel;
+              tierThinkingLevel = clampThinkingLevelForModel(
+                variantConfig.thinkingLevel as ThinkingTier,
+                effectiveModel,
+              );
               tierThinkingBudget = undefined;
               break;
             }
@@ -1397,7 +1401,7 @@ export function prepareAntigravityRequest(
         // Strip tier suffix from model for cache key to prevent cache misses on tier change
         // e.g., "claude-opus-4-6-thinking-high" -> "claude-opus-4-6-thinking"
         const modelForCacheKey = effectiveModel.replace(
-          /-(minimal|low|medium|high)$/i,
+          /-(minimal|low|medium|high|xhigh)$/i,
           "",
         );
         signatureSessionKey = buildSignatureSessionKey(
@@ -1493,8 +1497,12 @@ export function prepareAntigravityRequest(
         );
 
         if (variantConfig?.thinkingLevel && isGemini3) {
-          // Gemini 3 native format - use thinkingLevel directly
-          tierThinkingLevel = variantConfig.thinkingLevel;
+          // Gemini 3 native format - use thinkingLevel directly, clamped to what
+          // this model accepts (xhigh is Hydrogen-only, minimal is not Gemini 4).
+          tierThinkingLevel = clampThinkingLevelForModel(
+            variantConfig.thinkingLevel as ThinkingTier,
+            effectiveModel,
+          );
           tierThinkingBudget = undefined;
         } else if (variantConfig?.thinkingBudget) {
           if (isGemini3) {
@@ -2325,9 +2333,9 @@ export function prepareAntigravityRequest(
 
   if (headerStyle === "antigravity") {
     // The official Antigravity CLI User-Agent. The backend gates newer models
-    // (e.g. gemini-3.8-flash) on it; IDE-style fingerprint UAs like
-    // "antigravity/2.0.6 win32/x64" are rejected with 404 "Requested entity
-    // was not found" on those models.
+    // (e.g. gemini-3.8-flash, gemini-4-argon, gemini-4-hydrogen) on it;
+    // IDE-style fingerprint UAs like "antigravity/2.0.6 win32/x64" are rejected
+    // with 404 "Requested entity was not found" on those models.
     headers.set("User-Agent", ANTIGRAVITY_CLI_USER_AGENT);
     // agy sends no Accept header; OpenCode adds `Accept: */*`.
     headers.delete("Accept");

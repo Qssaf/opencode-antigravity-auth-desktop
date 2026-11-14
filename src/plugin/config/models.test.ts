@@ -21,6 +21,7 @@ describe("OPENCODE_MODEL_DEFINITIONS", () => {
     expect(modelNames).toEqual([
       "antigravity-gemini-3.8-flash",
       "antigravity-gemini-4-argon",
+      "antigravity-gemini-4-hydrogen",
     ]);
   });
 
@@ -44,6 +45,19 @@ describe("OPENCODE_MODEL_DEFINITIONS", () => {
     // Paid Pro accounts get it too, so the name no longer says Ultra.
     expect(argon.name).toBe("Gemini 4 Argon (Antigravity)");
     expect(argon.limit).toEqual({ context: 1048576, output: 65536 });
+  });
+
+  it("offers Gemini 4 Hydrogen with low, medium, high and xhigh thinking and no temperature", () => {
+    const hydrogen = getModel("antigravity-gemini-4-hydrogen");
+    expect(hydrogen.variants).toEqual({
+      low: { thinkingLevel: "low" },
+      medium: { thinkingLevel: "medium" },
+      high: { thinkingLevel: "high" },
+      xhigh: { thinkingLevel: "xhigh" },
+    });
+    expect(hydrogen.temperature).toBe(false);
+    expect(hydrogen.name).toBe("Gemini 4 Hydrogen (Antigravity)");
+    expect(hydrogen.limit).toEqual({ context: 1048576, output: 65536 });
   });
 });
 
@@ -127,6 +141,11 @@ describe("dynamic model discovery helpers", () => {
         modelName: "gemini-3.8-pro",
         supportsThinking: true,
       },
+      "gemini-4-hydrogen-high": {
+        displayName: "Gemini 4 Hydrogen (High)",
+        modelName: "gemini-4-hydrogen-high",
+        supportsThinking: true,
+      },
       "claude-sonnet-4-6": {
         displayName: "Claude Sonnet 4.6",
       },
@@ -146,6 +165,12 @@ describe("dynamic model discovery helpers", () => {
     expect(models["antigravity-gemini-3.8-pro"]?.variants).toEqual({
       low: { thinkingLevel: "low" },
       high: { thinkingLevel: "high" },
+    });
+    expect(models["antigravity-gemini-4-hydrogen-high"]?.variants).toEqual({
+      low: { thinkingLevel: "low" },
+      medium: { thinkingLevel: "medium" },
+      high: { thinkingLevel: "high" },
+      xhigh: { thinkingLevel: "xhigh" },
     });
     expect(models["antigravity-claude-sonnet-4-6"]).toMatchObject({
       name: "Claude Sonnet 4.6 (Antigravity)",

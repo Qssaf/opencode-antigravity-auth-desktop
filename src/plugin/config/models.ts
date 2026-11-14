@@ -2,11 +2,12 @@ import type { ProviderModel } from "../types";
 import {
   isGemini2Model,
   isGemini3OrLaterModel,
+  isGemini4HydrogenModel,
   remapRetiredAntigravityGeminiModel,
   toAntigravityWireModel,
 } from "../transform/model-resolver";
 
-export type ModelThinkingLevel = "minimal" | "low" | "medium" | "high";
+export type ModelThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh";
 
 export interface ModelThinkingConfig {
   thinkingBudget: number;
@@ -63,6 +64,17 @@ const DEFAULT_MODALITIES: ModelModalities = {
   output: ["text"],
 };
 
+/**
+ * Gemini 4 Hydrogen's variants. One shared, frozen object so the static
+ * definition and discovered ids cannot drift apart or mutate each other.
+ */
+const GEMINI_4_HYDROGEN_VARIANTS: Record<string, ModelVariant> = Object.freeze({
+  low: { thinkingLevel: "low" },
+  medium: { thinkingLevel: "medium" },
+  high: { thinkingLevel: "high" },
+  xhigh: { thinkingLevel: "xhigh" },
+});
+
 export const OPENCODE_MODEL_DEFINITIONS: OpencodeModelDefinitions = {
   "antigravity-gemini-3.8-flash": {
     name: "Gemini 3.8 Flash (Antigravity)",
@@ -88,6 +100,16 @@ export const OPENCODE_MODEL_DEFINITIONS: OpencodeModelDefinitions = {
       medium: { thinkingLevel: "medium" },
       high: { thinkingLevel: "high" },
     },
+  },
+  // Paid Google AI Pro or Ultra, like Argon. Antigravity serves it as
+  // gemini-4-hydrogen-{low,medium,high,xhigh} (see
+  // resolveAntigravityGemini4HydrogenBackendModel), with a 1M context.
+  "antigravity-gemini-4-hydrogen": {
+    name: "Gemini 4 Hydrogen (Antigravity)",
+    temperature: false,
+    limit: { context: 1048576, output: 65536 },
+    modalities: DEFAULT_MODALITIES,
+    variants: GEMINI_4_HYDROGEN_VARIANTS,
   },
 };
 
@@ -144,6 +166,9 @@ function defaultVariantsForModel(modelId: string): Record<string, ModelVariant> 
       low: { thinkingConfig: { thinkingBudget: 8192 } },
       max: { thinkingConfig: { thinkingBudget: 32768 } },
     };
+  }
+  if (isGemini4HydrogenModel(normalized)) {
+    return GEMINI_4_HYDROGEN_VARIANTS;
   }
   if (isGemini3OrLaterModel(normalized)) {
     if (normalized.includes("pro")) {

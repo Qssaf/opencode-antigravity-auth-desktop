@@ -201,6 +201,10 @@ describe("createAntigravityPlugin provider models", () => {
         temperature: false,
         reasoning: true,
       });
+      expect(models?.["antigravity-gemini-4-hydrogen"]?.capabilities).toMatchObject({
+        temperature: false,
+        reasoning: true,
+      });
       // Gemini CLI models are gone.
       expect(models?.["gemini-3.8-flash"]).toBeUndefined();
       expect(models?.["antigravity-gemini-3.7-flash"]).toBeUndefined();
@@ -981,11 +985,13 @@ describe("createAntigravityPlugin auth.loader 404→agy-sdk fallback", () => {
   });
 });
 
-describe("Gemini 4 Argon (Ultra-only)", () => {
+describe("Gemini 4 Argon and Hydrogen (Ultra-only)", () => {
   let tmpConfigHome: string;
   const savedEnv: Record<string, string | undefined> = {};
   const ARGON_URL =
     "https://generativelanguage.googleapis.com/v1beta/models/antigravity-gemini-4-argon:streamGenerateContent?alt=sse";
+  const HYDROGEN_URL =
+    "https://generativelanguage.googleapis.com/v1beta/models/antigravity-gemini-4-hydrogen:streamGenerateContent?alt=sse";
   const SSE_BODY =
     'data: {"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"},"finishReason":"STOP","index":0}]}\n\n';
 
@@ -1124,6 +1130,24 @@ describe("Gemini 4 Argon (Ultra-only)", () => {
     const before = argonRequests.length;
     expect(await (await fetchFn(ARGON_URL, argonRequest())).text()).toContain("Google AI Ultra");
     expect(argonRequests.length).toBe(before);
+  });
+
+  it("says Ultra is required for Gemini 4 Hydrogen by name once every account is refused", async () => {
+    vi.mocked(storageModule.loadAccounts).mockResolvedValue({
+      version: 4,
+      accounts: [account("free", "p-free"), account("pro", "p-pro")],
+      activeIndex: 0,
+    });
+    const { fetchMock, argonRequests } = buildArgonFetchMock([]);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const fetchFn = await loaderFetch();
+    const res = await fetchFn(HYDROGEN_URL, argonRequest());
+    const text = await res.text();
+
+    expect(text).toContain("Gemini 4 Hydrogen needs a paid Google AI Pro or Google AI Ultra subscription");
+    expect(text).not.toContain("Gemini 4 Argon");
+    expect(argonRequests.map((r) => r.model).at(-1)).toBe("gemini-4-hydrogen-high");
   });
 
   it("does not blame the subscription for a 403 that is a credential or access problem", async () => {

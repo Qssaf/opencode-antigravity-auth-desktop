@@ -53,7 +53,8 @@ export const ANTIGRAVITY_DEFAULT_PROJECT_ID = "default-cli-project";
  * User-Agent of the official Antigravity CLI (agy 1.5.3, captured from its
  * own requests), sent on every request to the Antigravity backend: models,
  * project lookup, quota and search alike, as agy does. The backend gates newer
- * models (Gemini 3.8 Flash, Gemini 4 Argon) on the client version it sees.
+ * models (Gemini 3.8 Flash, Gemini 4 Argon, Gemini 4 Hydrogen) on the client
+ * version it sees.
  */
 export const ANTIGRAVITY_CLI_USER_AGENT =
   "antigravity/cli/1.5.3 (aidev_client; os_type=linux; arch=amd64; cl=1016078699; auth_method=consumer)";

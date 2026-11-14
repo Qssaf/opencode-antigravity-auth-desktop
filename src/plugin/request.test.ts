@@ -619,6 +619,8 @@ describe("request.ts", () => {
       );
       expect(userAgentFor("antigravity-gemini-4-argon")).toBe(ANTIGRAVITY_CLI_USER_AGENT);
       expect(userAgentFor("antigravity-gemini-4-argon-low")).toBe(ANTIGRAVITY_CLI_USER_AGENT);
+      expect(userAgentFor("antigravity-gemini-4-hydrogen")).toBe(ANTIGRAVITY_CLI_USER_AGENT);
+      expect(userAgentFor("antigravity-gemini-4-hydrogen-xhigh")).toBe(ANTIGRAVITY_CLI_USER_AGENT);
       expect(userAgentFor("antigravity-gemini-3.8-flash")).toBe(ANTIGRAVITY_CLI_USER_AGENT);
     });
 
