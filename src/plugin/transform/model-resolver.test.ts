@@ -3,6 +3,7 @@ import {
   resolveModelWithTier,
   resolveModelWithVariant,
   resolveModelForHeaderStyle,
+  isDisabledRegistryModelId,
   isGemini2Model,
 } from "./model-resolver";
 
@@ -104,6 +105,15 @@ describe("resolveModelWithTier", () => {
       expect(isGemini2Model("gemini-2.5-flash-image")).toBe(true);
       expect(isGemini2Model("gemini-3.8-flash")).toBe(false);
       expect(isGemini2Model("gemini-20-flash")).toBe(false);
+    });
+  });
+
+  describe("disabled registry ids", () => {
+    it("recognizes ids whose backend id ends in -disabled, with or without the quota prefix", () => {
+      expect(isDisabledRegistryModelId("gemini-4-carbon-disabled")).toBe(true);
+      expect(isDisabledRegistryModelId("antigravity-gemini-4-carbon-disabled")).toBe(true);
+      expect(isDisabledRegistryModelId("gemini-4-carbon")).toBe(false);
+      expect(isDisabledRegistryModelId("gemini-3.8-flash-low")).toBe(false);
     });
   });
 

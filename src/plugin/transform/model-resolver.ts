@@ -226,6 +226,16 @@ export function toAntigravityWireModel(model: string): string {
 }
 
 /**
+ * True for a registry id whose backend id ends in `-disabled`, with or without
+ * the `antigravity-` quota prefix. Antigravity lists these for models the
+ * account may not use (a Google AI Pro account's registry carries
+ * `gemini-4-carbon-disabled`), so a request for one can only fail.
+ */
+export function isDisabledRegistryModelId(model: string): boolean {
+  return /-disabled$/i.test(model.replace(QUOTA_PREFIX_REGEX, ""));
+}
+
+/**
  * Antigravity serves Gemini 3.1 Pro as a low and a high backend id; the low one
  * caps thinking near 1k tokens (registry thinkingBudget 1001). High is the
  * default, and only an explicit low (or minimal, which Pro rejects) selects low.

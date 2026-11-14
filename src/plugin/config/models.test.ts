@@ -150,4 +150,20 @@ describe("dynamic model discovery helpers", () => {
       limit: { context: 200000, output: 64000 },
     });
   });
+
+  it("skips registry ids ending in -disabled, which name models the account cannot use", () => {
+    const models = modelsFromAntigravityAvailableModels({
+      "gemini-4-carbon-disabled": {
+        displayName: "Gemini 4 Carbon",
+        modelName: "gemini-4-carbon-disabled",
+      },
+      "gemini-3.8-flash": {
+        displayName: "Gemini 3.8 Flash",
+        modelName: "gemini-3.8-flash",
+      },
+    });
+
+    expect(models["antigravity-gemini-4-carbon-disabled"]).toBeUndefined();
+    expect(models["antigravity-gemini-3.8-flash"]).toBeDefined();
+  });
 });
