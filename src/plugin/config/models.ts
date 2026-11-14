@@ -1,5 +1,6 @@
 import type { ProviderModel } from "../types";
 import {
+  isDisabledRegistryModelId,
   isGemini2Model,
   isGemini3OrLaterModel,
   remapRetiredAntigravityGeminiModel,
@@ -231,9 +232,11 @@ export function modelsFromAntigravityAvailableModels(
     if (!entry.displayName) continue;
     const modelId = antigravityModelIdFromEntry(sourceId, entry);
     if (!modelId) continue;
-    // Retired and renamed ids are served under their successor's catalog entry.
+    // Retired, renamed and disabled ids are served under their successor's
+    // catalog entry, or not at all.
     const backendId = modelId.replace(/^antigravity-/, "");
     if (
+      isDisabledRegistryModelId(backendId) ||
       isGemini2Model(backendId) ||
       remapRetiredAntigravityGeminiModel(backendId) !== backendId ||
       toAntigravityWireModel(backendId) !== backendId

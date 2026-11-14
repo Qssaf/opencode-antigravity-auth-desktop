@@ -11,6 +11,7 @@ import { ensureProjectContext } from "./project";
 import { refreshAccessToken } from "./token";
 import {
   getModelFamily,
+  isDisabledRegistryModelId,
   isGemini2Model,
   isGemini3OrLaterModel,
   remapRetiredAntigravityGeminiModel,
@@ -107,6 +108,7 @@ export interface FetchAvailableModelEntry {
   };
   displayName?: string;
   modelName?: string;
+  disabled?: boolean;
 }
 
 function buildAuthFromAccount(account: AccountMetadataV3): OAuthAuthDetails {
@@ -142,6 +144,12 @@ function parseResetTime(resetTime?: string): number | null {
 }
 
 function classifyQuotaGroup(modelName: string, displayName?: string): QuotaGroup | null {
+  // Ids ending in `-disabled` name models the account cannot use at all, so
+  // their quota must not count for any group — Claude included.
+  const id = modelName.toLowerCase().replace(/^antigravity-/, "");
+  if (isDisabledRegistryModelId(id)) {
+    return null;
+  }
   const combined = `${modelName} ${displayName ?? ""}`.toLowerCase();
   if (combined.includes("claude")) {
     return "claude";
@@ -149,8 +157,10 @@ function classifyQuotaGroup(modelName: string, displayName?: string): QuotaGroup
   // A model Antigravity no longer serves can still be listed with its own,
   // untouched quota. Counting it would make the group look available while the
   // model that replaced it (Gemini 3.8 Flash) is used up.
-  const id = modelName.toLowerCase().replace(/^antigravity-/, "");
-  if (isGemini2Model(id) || remapRetiredAntigravityGeminiModel(id) !== id) {
+  if (
+    isGemini2Model(id) ||
+    remapRetiredAntigravityGeminiModel(id) !== id
+  ) {
     return null;
   }
   const isGemini3 = isGemini3OrLaterModel(combined) || /gemini (?:[3-9]|[1-9]\d+)\b/.test(combined);
@@ -169,7 +179,12 @@ function aggregateQuota(models?: Record<string, FetchAvailableModelEntry>): Quot
 
   let totalCount = 0;
   for (const [modelName, entry] of Object.entries(models)) {
-    const group = classifyQuotaGroup(modelName, entry.displayName ?? entry.modelName);
+    if (entry.disabled) {
+      continue;
+    }
+    // Discovery names an entry by `modelName` when it has one, falling back to
+    // the map key; classify the same way so both paths agree on the id.
+    const group = classifyQuotaGroup(entry.modelName || modelName, entry.displayName ?? entry.modelName);
     if (!group) {
       continue;
     }

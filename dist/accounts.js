@@ -2236,6 +2236,9 @@ var ANTIGRAVITY_WIRE_MODEL_IDS = {
 function toAntigravityWireModel(model) {
   return ANTIGRAVITY_WIRE_MODEL_IDS[model.toLowerCase()] ?? model;
 }
+function isDisabledRegistryModelId(model) {
+  return /-disabled$/i.test(model.replace(QUOTA_PREFIX_REGEX, ""));
+}
 function resolveAntigravityGemini3ProBackendModel(model, thinkingLevel) {
   const match = model.replace(QUOTA_PREFIX_REGEX, "").match(GEMINI_3_PRO_TIER_REGEX);
   if (!match) {
@@ -2586,7 +2589,7 @@ function modelsFromAntigravityAvailableModels(models) {
     const modelId = antigravityModelIdFromEntry(sourceId, entry);
     if (!modelId) continue;
     const backendId = modelId.replace(/^antigravity-/, "");
-    if (isGemini2Model(backendId) || remapRetiredAntigravityGeminiModel(backendId) !== backendId || toAntigravityWireModel(backendId) !== backendId) {
+    if (isDisabledRegistryModelId(backendId) || isGemini2Model(backendId) || remapRetiredAntigravityGeminiModel(backendId) !== backendId || toAntigravityWireModel(backendId) !== backendId) {
       continue;
     }
     const variants = entry.supportsThinking ? defaultVariantsForModel(modelId) : void 0;
@@ -11031,11 +11034,14 @@ function parseResetTime(resetTime) {
   return timestamp;
 }
 function classifyQuotaGroup(modelName, displayName) {
+  const id = modelName.toLowerCase().replace(/^antigravity-/, "");
+  if (isDisabledRegistryModelId(id)) {
+    return null;
+  }
   const combined = `${modelName} ${displayName ?? ""}`.toLowerCase();
   if (combined.includes("claude")) {
     return "claude";
   }
-  const id = modelName.toLowerCase().replace(/^antigravity-/, "");
   if (isGemini2Model(id) || remapRetiredAntigravityGeminiModel(id) !== id) {
     return null;
   }
@@ -11053,7 +11059,10 @@ function aggregateQuota(models) {
   }
   let totalCount = 0;
   for (const [modelName, entry] of Object.entries(models)) {
-    const group = classifyQuotaGroup(modelName, entry.displayName ?? entry.modelName);
+    if (entry.disabled) {
+      continue;
+    }
+    const group = classifyQuotaGroup(entry.modelName || modelName, entry.displayName ?? entry.modelName);
     if (!group) {
       continue;
     }

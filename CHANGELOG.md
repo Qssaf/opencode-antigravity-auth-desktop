@@ -64,6 +64,8 @@
 
 - **A cancelled request stops at once** - When a request was aborted (ESC, or the chat closed) mid-flight, the plugin still tried the two remaining Antigravity endpoints and counted the abort as a failure of the account. It now stops at the abort.
 
+- **Disabled registry models counted in quota** - Antigravity's registry marks unusable models with `disabled: true` or ids ending in `-disabled` (such as `gemini-4-carbon-disabled` for a Google AI Pro account). Their quota no longer counts towards a group's availability, and discovery also skips `-disabled` ids even when `disabled` is omitted.
+
 - **Unrelated errors were reported as "needs Ultra"** - Every 403 for Argon, and every 400 that mentioned "tier" or "not available", marked the account as lacking Ultra, so a credential problem or a bad request showed the Ultra message on every account instead of the real error. Only a 404, the "permission denied on project" 403, and a 403 or 400 naming the subscription or Ultra count now. The Ultra message no longer suggests Gemini 3.1 Pro, which Antigravity serves as 3.8 Flash.
 
 - **Dropped models made 3.8 Flash quota look available** - The Gemini Flash quota shows the model with the most quota left. Google's registry can still list dropped models (Gemini 3.5 Flash-Lite, 3.7 Flash, 3 Flash Agent, 2.5) with their own unused quota, so an exhausted 3.8 Flash looked full. They are now left out of the quota summary.

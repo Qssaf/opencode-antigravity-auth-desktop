@@ -58,6 +58,91 @@ describe("Antigravity quota aggregation", () => {
     expect(summary.modelCount).toBe(1);
   });
 
+  it("leaves out -disabled registry ids, which name models the account cannot use", () => {
+    const summary = __testExports.aggregateQuota({
+      "gemini-3.8-pro": {
+        displayName: "Gemini 3.8 Pro",
+        quotaInfo: { remainingFraction: 0.25, resetTime: "2026-05-27T18:00:00Z" },
+      },
+      "gemini-4-carbon-disabled": {
+        displayName: "Gemini 4 Carbon",
+        quotaInfo: { remainingFraction: 1, resetTime: "2026-05-26T18:00:00Z" },
+      },
+    });
+
+    // The disabled id's full quota neither becomes the group's representative
+    // reading nor adds to its model count.
+    expect(summary.groups["gemini-pro"]).toEqual({
+      remainingFraction: 0.25,
+      resetTime: "2026-05-27T18:00:00Z",
+      modelCount: 1,
+    });
+    expect(summary.modelCount).toBe(1);
+  });
+
+  it("leaves out -disabled Claude ids, so they cannot mask an exhausted usable model", () => {
+    const summary = __testExports.aggregateQuota({
+      "claude-sonnet-4-6": {
+        displayName: "Claude Sonnet 4.6",
+        quotaInfo: { remainingFraction: 0.1, resetTime: "2026-05-27T18:00:00Z" },
+      },
+      "claude-opus-4-6-disabled": {
+        displayName: "Claude Opus 4.6",
+        quotaInfo: { remainingFraction: 1, resetTime: "2026-05-26T18:00:00Z" },
+      },
+    });
+
+    expect(summary.groups["claude"]).toEqual({
+      remainingFraction: 0.1,
+      resetTime: "2026-05-27T18:00:00Z",
+      modelCount: 1,
+    });
+    expect(summary.modelCount).toBe(1);
+  });
+
+  it("names an entry by modelName, like discovery, when it differs from the map key", () => {
+    const summary = __testExports.aggregateQuota({
+      "claude-sonnet-4-6": {
+        displayName: "Claude Sonnet 4.6",
+        quotaInfo: { remainingFraction: 0.1, resetTime: "2026-05-27T18:00:00Z" },
+      },
+      "claude-opus-4-6": {
+        modelName: "claude-opus-4-6-disabled",
+        displayName: "Claude Opus 4.6",
+        quotaInfo: { remainingFraction: 1 },
+      },
+    });
+
+    // A usable-looking key must not make the disabled entry count.
+    expect(summary.groups["claude"]).toEqual({
+      remainingFraction: 0.1,
+      resetTime: "2026-05-27T18:00:00Z",
+      modelCount: 1,
+    });
+    expect(summary.modelCount).toBe(1);
+  });
+
+  it("leaves out entries flagged disabled: true, even without a -disabled id suffix", () => {
+    const summary = __testExports.aggregateQuota({
+      "gemini-3.8-flash": {
+        displayName: "Gemini 3.8 Flash",
+        quotaInfo: { remainingFraction: 0.2, resetTime: "2026-05-27T18:00:00Z" },
+      },
+      "gemini-4-hydrogen": {
+        displayName: "Gemini 4 Hydrogen",
+        disabled: true,
+        quotaInfo: { remainingFraction: 1, resetTime: "2026-05-26T18:00:00Z" },
+      },
+    });
+
+    expect(summary.groups["gemini-flash"]).toEqual({
+      remainingFraction: 0.2,
+      resetTime: "2026-05-27T18:00:00Z",
+      modelCount: 1,
+    });
+    expect(summary.modelCount).toBe(1);
+  });
+
   it("keeps resetTime coupled to the model whose remainingFraction is displayed", () => {
     const summary = __testExports.aggregateQuota({
       "gemini-3.8-flash-low": {
