@@ -75,6 +75,16 @@ const GEMINI_4_ARGON_MODELS = {
   medium: "gemini-4-argon-medium",
   high: "gemini-4-argon-high",
 } as const;
+// `xhigh` is Hydrogen-only and is derived from this model-name regex, not from
+// the shared TIER_REGEX: no other model can be parsed as xhigh.
+const GEMINI_4_HYDROGEN_REGEX =
+  /^gemini-4-hydrogen(?:-(minimal|low|medium|high|xhigh))?$/i;
+const GEMINI_4_HYDROGEN_MODELS = {
+  low: "gemini-4-hydrogen-low",
+  medium: "gemini-4-hydrogen-medium",
+  high: "gemini-4-hydrogen-high",
+  xhigh: "gemini-4-hydrogen-xhigh",
+} as const;
 /**
  * Gemini generations that take a thinkingLevel string and thought signatures:
  * Gemini 3 and every later one (gemini-3.8-flash, gemini-4-argon, ...).
@@ -294,25 +304,81 @@ export function isGemini4ArgonModel(model: string): boolean {
 }
 
 /**
+ * Antigravity serves Gemini 4 Hydrogen (paid Pro or Ultra, like Argon) as
+ * tier-specific backend ids, gemini-4-hydrogen-{low,medium,high,xhigh}. High is
+ * the default; minimal is accepted as low.
+ */
+export function resolveAntigravityGemini4HydrogenBackendModel(
+  model: string,
+  thinkingLevel?: string,
+): string | undefined {
+  const match = model.replace(QUOTA_PREFIX_REGEX, "").match(GEMINI_4_HYDROGEN_REGEX);
+  if (!match) {
+    return undefined;
+  }
+  const rawLevel = (thinkingLevel ?? match[1] ?? "high").toLowerCase();
+  const level = rawLevel === "minimal" ? "low" : rawLevel;
+  if (level !== "low" && level !== "medium" && level !== "high" && level !== "xhigh") {
+    return undefined;
+  }
+  return GEMINI_4_HYDROGEN_MODELS[level];
+}
+
+/** True for Gemini 4 Hydrogen under any of its names or backend ids. */
+export function isGemini4HydrogenModel(model: string): boolean {
+  return /(?:^|[-/])gemini-4-hydrogen(?:-|$)/i.test(model);
+}
+
+/**
+ * Clamps a thinking level to what `model` accepts, on every route: `xhigh` is
+ * Hydrogen-only, and Gemini 4 (Argon and Hydrogen) rejects `minimal` with
+ * HTTP 400.
+ */
+export function clampThinkingLevelForModel(
+  level: ThinkingTier,
+  model: string,
+): ThinkingTier {
+  // Variant configs are untyped at the request layer and may still spell
+  // "minimal" even though it is not a ThinkingTier.
+  const raw = level as string;
+  if (raw === "minimal") {
+    return isGemini4ArgonModel(model) || isGemini4HydrogenModel(model)
+      ? "low"
+      : level;
+  }
+  if (raw === "xhigh" && !isGemini4HydrogenModel(model)) {
+    return "high";
+  }
+  return level;
+}
+
+/**
  * Picks the Antigravity backend id for a Gemini 3 or later model and the
- * thinking level to send with it. Gemini 3.1 Pro, 3.8 Flash and 4 Argon reject
- * thinkingLevel "minimal" with HTTP 400, so it is sent as low. Returns undefined
- * for models that go out under their own name.
+ * thinking level to send with it. Gemini 3.1 Pro, 3.8 Flash, 4 Argon and
+ * 4 Hydrogen reject thinkingLevel "minimal" with HTTP 400, so it is sent as
+ * low. Returns undefined for models that go out under their own name.
  */
 export function resolveAntigravityGeminiBackend(
   model: string,
   thinkingLevel?: string,
 ): { model: string; thinkingLevel?: string } | undefined {
+  // `xhigh` and `minimal` are clamped to what this model accepts; see
+  // clampThinkingLevelForModel.
+  const level: string | undefined =
+    thinkingLevel === undefined
+      ? undefined
+      : clampThinkingLevelForModel(thinkingLevel as ThinkingTier, model);
   const tiered =
-    resolveAntigravityGemini38FlashBackendModel(model, thinkingLevel) ??
-    resolveAntigravityGemini4ArgonBackendModel(model, thinkingLevel);
+    resolveAntigravityGemini38FlashBackendModel(model, level) ??
+    resolveAntigravityGemini4ArgonBackendModel(model, level) ??
+    resolveAntigravityGemini4HydrogenBackendModel(model, level);
   if (tiered) {
     return {
       model: tiered,
-      thinkingLevel: thinkingLevel === "minimal" ? "low" : thinkingLevel,
+      thinkingLevel: level === "minimal" ? "low" : level,
     };
   }
-  const pro = resolveAntigravityGemini3ProBackendModel(model, thinkingLevel);
+  const pro = resolveAntigravityGemini3ProBackendModel(model, level);
   if (pro) {
     return { model: pro, thinkingLevel: pro.endsWith("-low") ? "low" : "high" };
   }
@@ -324,6 +390,10 @@ export function getDefaultGemini3ThinkingLevel(model: string): string {
   const tiered = /^gemini-(?:3\.8-flash|4-argon)(?:-(low|medium|high))?$/.exec(normalized);
   if (tiered) {
     return tiered[1] ?? "high";
+  }
+  const hydrogen = /^gemini-4-hydrogen(?:-(minimal|low|medium|high|xhigh))?$/.exec(normalized);
+  if (hydrogen) {
+    return (hydrogen[1] === "minimal" ? "low" : hydrogen[1]) ?? "high";
   }
   if (isGemini3ProModel(normalized) && !IMAGE_GENERATION_MODELS.test(normalized)) {
     return /-low$/.test(normalized) ? "low" : "high";
@@ -376,8 +446,9 @@ function resolveModel(requestedModel: string, onAntigravity: boolean): ResolvedM
   const isGemini3 = isGemini3OrLaterModel(modelWithoutQuota);
   const skipAlias = isAntigravity && isGemini3;
 
-  // Antigravity API: Gemini 3.1 Pro, 3.8 Flash and 4 Argon take tier-specific backend ids
-  //                  (see the resolveAntigravityGemini*BackendModel helpers);
+  // Antigravity API: Gemini 3.1 Pro, 3.8 Flash, 4 Argon and 4 Hydrogen take
+  //                  tier-specific backend ids (see the
+  //                  resolveAntigravityGemini*BackendModel helpers);
   //                  other gemini-3-flash models use bare name + thinkingLevel param.
   // Pro defaults to the high tier unless an explicit tier is provided.
   const isGemini3Flash = isGemini3FlashModel(modelWithoutQuota);
@@ -387,7 +458,8 @@ function resolveModel(requestedModel: string, onAntigravity: boolean): ResolvedM
   if (skipAlias) {
     const tieredBackendModel =
       resolveAntigravityGemini38FlashBackendModel(modelWithoutQuota, tier) ??
-      resolveAntigravityGemini4ArgonBackendModel(modelWithoutQuota, tier);
+      resolveAntigravityGemini4ArgonBackendModel(modelWithoutQuota, tier) ??
+      resolveAntigravityGemini4HydrogenBackendModel(modelWithoutQuota, tier);
     const gemini3ProBackendModel = isImageModel
       ? undefined
       : resolveAntigravityGemini3ProBackendModel(modelWithoutQuota, effectiveTier);
@@ -475,7 +547,10 @@ function resolveModel(requestedModel: string, onAntigravity: boolean): ResolvedM
 
   const budgetFamily = getBudgetFamily(resolvedModel);
   const budgets = THINKING_TIER_BUDGETS[budgetFamily];
-  const thinkingBudget = budgets[effectiveTier];
+  // xhigh is a Gemini 4 Hydrogen level and has no numeric budget; the Gemini
+  // branch above returns before this point, so this guard only narrows the
+  // ThinkingTier union for the budget lookup.
+  const thinkingBudget = effectiveTier === "xhigh" ? undefined : budgets[effectiveTier];
 
   return {
     actualModel: resolvedModel,
@@ -497,7 +572,7 @@ export function getModelFamily(
   if (lower.includes("claude")) {
     return "claude";
   }
-  if (lower.includes("flash")) {
+  if (lower.includes("flash") || isGemini4HydrogenModel(lower)) {
     return "gemini-flash";
   }
   return "gemini-pro";
@@ -548,9 +623,9 @@ export function mapAntigravityModelToPublicApi(
   model: string,
 ): string | undefined {
   const stripped = model.toLowerCase().replace(/^antigravity-/, "");
-  // Strip tier suffixes (-minimal/-low/-medium/-high) so
+  // Strip tier suffixes (-minimal/-low/-medium/-high/-xhigh) so
   // `antigravity-gemini-3.1-pro-high` maps the same as `antigravity-gemini-3.1-pro`.
-  const base = stripped.replace(/-(minimal|low|medium|high)$/, "");
+  const base = stripped.replace(/-(minimal|low|medium|high|xhigh)$/, "");
   return ANTIGRAVITY_TO_PUBLIC_API_MODEL_MAP.get(base);
 }
 
@@ -575,14 +650,23 @@ export function resolveModelForHeaderStyle(
 
   if (headerStyle === "agy-sdk") {
     const modelWithTier = remapDroppedGeminiModel(requestedModel.replace(/^antigravity-/i, ""));
-    const stripped = modelWithTier.replace(/-(minimal|low|medium|high)$/i, "");
+    const stripped = modelWithTier.replace(/-(minimal|low|medium|high|xhigh)$/i, "");
     // Translate Antigravity-only ids (e.g. `gemini-3.1-pro`) to the public Gemini
     // API equivalent (`gemini-3.1-pro-preview`). Falls back to the bare stripped
     // name when no translation exists (covers `gemini-3.8-flash`, etc.).
     const transformedModel =
       mapAntigravityModelToPublicApi(stripped) ?? stripped;
+    const resolved = resolveModel(modelWithTier, false);
+    // Gemini 4 (Argon and Hydrogen) reject `minimal` with HTTP 400 on the public
+    // API too, so the API-key route sends it as `low`, like the Antigravity route.
+    const thinkingLevel = resolved.thinkingLevel === undefined
+      ? undefined
+      : clampThinkingLevelForModel(resolved.thinkingLevel as ThinkingTier, stripped);
     return {
-      ...resolveModel(modelWithTier, false),
+      ...resolved,
+      ...(thinkingLevel !== undefined && thinkingLevel !== resolved.thinkingLevel
+        ? { thinkingLevel, tier: thinkingLevel }
+        : {}),
       actualModel: transformedModel,
       quotaPreference: "agy-sdk",
       explicitQuota: false,

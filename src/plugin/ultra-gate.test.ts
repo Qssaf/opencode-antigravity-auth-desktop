@@ -34,8 +34,12 @@ describe("ultra-gate", () => {
     expect(isUltraEntitlementRefusal(500, "ultra")).toBe(false);
   });
 
-  it("names how many accounts were refused", () => {
+  it("names the requested model and how many accounts were refused", () => {
     expect(ultraRequiredMessage("Gemini 4 Argon", 1)).toContain("your signed-in account");
     expect(ultraRequiredMessage("Gemini 4 Argon", 3)).toContain("all 3 signed-in accounts");
+    expect(ultraRequiredMessage("Gemini 4 Hydrogen", 2)).toContain(
+      "Gemini 4 Hydrogen needs a paid Google AI Pro or Google AI Ultra subscription",
+    );
+    expect(ultraRequiredMessage("Gemini 4 Hydrogen", 2)).toContain("all 2 signed-in accounts");
   });
 });

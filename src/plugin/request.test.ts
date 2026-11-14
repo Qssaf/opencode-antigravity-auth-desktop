@@ -602,7 +602,7 @@ describe("request.ts", () => {
       expect(result.streaming).toBe(false);
     });
 
-    it("sends Gemini 4 Argon with the newer CLI User-Agent and other models with the usual one", () => {
+    it("sends Gemini 4 Argon and Hydrogen with the newer CLI User-Agent and other models with the usual one", () => {
       const userAgentFor = (model: string) => {
         const result = prepareAntigravityRequest(
           `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,
@@ -615,6 +615,8 @@ describe("request.ts", () => {
 
       expect(userAgentFor("antigravity-gemini-4-argon")).toBe(ANTIGRAVITY_ARGON_USER_AGENT);
       expect(userAgentFor("antigravity-gemini-4-argon-low")).toBe(ANTIGRAVITY_ARGON_USER_AGENT);
+      expect(userAgentFor("antigravity-gemini-4-hydrogen")).toBe(ANTIGRAVITY_ARGON_USER_AGENT);
+      expect(userAgentFor("antigravity-gemini-4-hydrogen-xhigh")).toBe(ANTIGRAVITY_ARGON_USER_AGENT);
       expect(userAgentFor("antigravity-gemini-3.8-flash")).toBe(ANTIGRAVITY_CLI_USER_AGENT);
     });
 

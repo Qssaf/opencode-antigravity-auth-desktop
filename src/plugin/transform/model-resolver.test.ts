@@ -1,10 +1,17 @@
 import { describe, it, expect } from "vitest";
 import {
+  clampThinkingLevelForModel,
+  getDefaultGemini3ThinkingLevel,
+  getModelFamily,
+  isGemini4HydrogenModel,
+  isGemini2Model,
+  resolveAntigravityGemini4HydrogenBackendModel,
+  resolveAntigravityGeminiBackend,
   resolveModelWithTier,
   resolveModelWithVariant,
   resolveModelForHeaderStyle,
-  isGemini2Model,
 } from "./model-resolver";
+import type { ThinkingTier } from "./types";
 
 describe("resolveModelWithTier", () => {
   describe("Gemini 3 flash models (Issue #109)", () => {
@@ -158,6 +165,24 @@ describe("resolveModelWithTier", () => {
       const result = resolveModelForHeaderStyle("antigravity-gemini-3.5-flash", "agy-sdk");
       expect(result.actualModel).toBe("gemini-3.8-flash");
     });
+
+    it.each([
+      ["antigravity-gemini-4-hydrogen-minimal", "gemini-4-hydrogen"],
+      ["antigravity-gemini-4-argon-minimal", "gemini-4-argon"],
+    ])("sends %s to the public API as %s with thinking level low, not minimal", (requested, actual) => {
+      // Gemini 4 rejects "minimal" with HTTP 400, like the Antigravity route.
+      const result = resolveModelForHeaderStyle(requested, "agy-sdk");
+      expect(result.actualModel).toBe(actual);
+      expect(result.thinkingLevel).toBe("low");
+      expect(result.tier).toBe("low");
+      expect(result.quotaPreference).toBe("agy-sdk");
+    });
+
+    it("keeps xhigh as the thinking level for Gemini 4 Hydrogen", () => {
+      const result = resolveModelForHeaderStyle("antigravity-gemini-4-hydrogen-xhigh", "agy-sdk");
+      expect(result.actualModel).toBe("gemini-4-hydrogen");
+      expect(result.thinkingLevel).toBe("xhigh");
+    });
   });
 
   describe("quota preference", () => {
@@ -257,6 +282,22 @@ describe("resolveModelWithTier", () => {
     });
 
     it.each([
+      ["antigravity-gemini-4-hydrogen", "gemini-4-hydrogen-high", "high"],
+      ["antigravity-gemini-4-hydrogen-minimal", "gemini-4-hydrogen-low", "low"],
+      ["antigravity-gemini-4-hydrogen-low", "gemini-4-hydrogen-low", "low"],
+      ["antigravity-gemini-4-hydrogen-medium", "gemini-4-hydrogen-medium", "medium"],
+      ["antigravity-gemini-4-hydrogen-high", "gemini-4-hydrogen-high", "high"],
+      ["antigravity-gemini-4-hydrogen-xhigh", "gemini-4-hydrogen-xhigh", "xhigh"],
+    ])("maps %s to the Antigravity backend id %s", (requested, actual, thinkingLevel) => {
+      const result = resolveModelWithTier(requested);
+      expect(result.actualModel).toBe(actual);
+      expect(result.thinkingLevel).toBe(thinkingLevel);
+      expect(result.isThinkingModel).toBe(true);
+      expect(result.quotaPreference).toBe("antigravity");
+      expect(result.explicitQuota).toBe(true);
+    });
+
+    it.each([
       ["antigravity-gemini-3.8-flash", "gemini-3.8-flash-high", "high"],
       ["antigravity-gemini-3.8-flash-low", "gemini-3.8-flash-low", "low"],
       ["antigravity-gemini-3.8-flash-medium", "gemini-3.8-flash-medium", "medium"],
@@ -266,6 +307,100 @@ describe("resolveModelWithTier", () => {
       expect(result.actualModel).toBe(actual);
       expect(result.thinkingLevel).toBe(thinkingLevel);
       expect(result.quotaPreference).toBe("antigravity");
+    });
+  });
+
+  describe("Gemini 4 Hydrogen", () => {
+    it.each([
+      [undefined, "gemini-4-hydrogen-high"],
+      ["minimal", "gemini-4-hydrogen-low"],
+      ["low", "gemini-4-hydrogen-low"],
+      ["medium", "gemini-4-hydrogen-medium"],
+      ["high", "gemini-4-hydrogen-high"],
+      ["xhigh", "gemini-4-hydrogen-xhigh"],
+    ])("resolves bare Gemini 4 Hydrogen with thinking level %s to %s", (level, backend) => {
+      expect(resolveAntigravityGemini4HydrogenBackendModel("gemini-4-hydrogen", level)).toBe(backend);
+    });
+
+    it("rejects an unknown thinking level", () => {
+      expect(resolveAntigravityGemini4HydrogenBackendModel("gemini-4-hydrogen", "turbo")).toBeUndefined();
+    });
+
+    it.each([
+      [undefined, "gemini-4-hydrogen-high", undefined],
+      ["minimal", "gemini-4-hydrogen-low", "low"],
+      ["xhigh", "gemini-4-hydrogen-xhigh", "xhigh"],
+    ])("sends the bare id with thinking level %s to %s, never the bare id", (level, backend, expectedLevel) => {
+      const resolved = resolveAntigravityGeminiBackend("gemini-4-hydrogen", level);
+      expect(resolved?.model).toBe(backend);
+      expect(resolved?.model).not.toBe("gemini-4-hydrogen");
+      expect(resolved?.thinkingLevel).toBe(expectedLevel);
+    });
+
+    it("clamps an explicit xhigh level to high on Argon and 3.8 Flash", () => {
+      // xhigh is Hydrogen-only; those backends reject it with HTTP 400.
+      expect(resolveAntigravityGeminiBackend("gemini-4-argon", "xhigh")).toEqual({
+        model: "gemini-4-argon-high",
+        thinkingLevel: "high",
+      });
+      expect(resolveAntigravityGeminiBackend("gemini-3.8-flash", "xhigh")).toEqual({
+        model: "gemini-3.8-flash-high",
+        thinkingLevel: "high",
+      });
+      // Hydrogen still gets its own tier.
+      expect(resolveAntigravityGeminiBackend("gemini-4-hydrogen", "xhigh")).toEqual({
+        model: "gemini-4-hydrogen-xhigh",
+        thinkingLevel: "xhigh",
+      });
+    });
+
+    it("defaults the bare id to high thinking", () => {
+      for (const model of ["gemini-4-hydrogen", "antigravity-gemini-4-hydrogen"]) {
+        const result = resolveModelWithTier(model);
+        expect(result.thinkingLevel).toBe("high");
+        expect(result.isThinkingModel).toBe(true);
+      }
+    });
+
+    it("keeps the -xhigh tier suffix", () => {
+      for (const model of ["gemini-4-hydrogen-xhigh", "antigravity-gemini-4-hydrogen-xhigh"]) {
+        const result = resolveModelWithTier(model);
+        expect(result.actualModel).toBe("gemini-4-hydrogen-xhigh");
+        expect(result.thinkingLevel).toBe("xhigh");
+      }
+      const antigravity = resolveModelForHeaderStyle("gemini-4-hydrogen-xhigh", "antigravity");
+      expect(antigravity.actualModel).toBe("gemini-4-hydrogen-xhigh");
+      expect(antigravity.thinkingLevel).toBe("xhigh");
+      expect(getDefaultGemini3ThinkingLevel("gemini-4-hydrogen-xhigh")).toBe("xhigh");
+    });
+
+    it("is recognised under its names and backend ids", () => {
+      expect(isGemini4HydrogenModel("gemini-4-hydrogen")).toBe(true);
+      expect(isGemini4HydrogenModel("antigravity-gemini-4-hydrogen-xhigh")).toBe(true);
+      expect(isGemini4HydrogenModel("gemini-4-argon-high")).toBe(false);
+    });
+
+    it("belongs to the Gemini Flash family, like 3.8 Flash", () => {
+      expect(getModelFamily("antigravity-gemini-4-hydrogen")).toBe("gemini-flash");
+      expect(getModelFamily("gemini-4-hydrogen-xhigh")).toBe("gemini-flash");
+      expect(getModelFamily("gemini-3.8-flash")).toBe("gemini-flash");
+    });
+  });
+
+  describe("clampThinkingLevelForModel", () => {
+    it.each([
+      ["xhigh", "gemini-4-argon", "high"],
+      ["xhigh", "antigravity-gemini-4-argon-xhigh", "high"],
+      ["xhigh", "gemini-3.8-flash", "high"],
+      ["xhigh", "gemini-4-hydrogen", "xhigh"],
+      ["xhigh", "antigravity-gemini-4-hydrogen-xhigh", "xhigh"],
+      ["minimal", "gemini-4-argon", "low"],
+      ["minimal", "antigravity-gemini-4-hydrogen", "low"],
+      ["minimal", "gemini-3.8-flash", "minimal"],
+      ["low", "gemini-4-argon", "low"],
+      ["high", "gemini-4-argon", "high"],
+    ])("clamps %s for %s to %s", (level, model, expected) => {
+      expect(clampThinkingLevelForModel(level as ThinkingTier, model)).toBe(expected);
     });
   });
 

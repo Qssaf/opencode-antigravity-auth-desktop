@@ -75,6 +75,8 @@ describe("retired and renamed Antigravity ids", () => {
     "gemini-3.8-flash-medium",
     "gemini-4-argon",
     "gemini-4-argon-low",
+    "gemini-4-hydrogen-high",
+    "gemini-4-hydrogen-xhigh",
     // Models Google may add later are not treated as retired.
     "gemini-3.9-flash",
     "gemini-3.8-pro",
@@ -191,6 +193,23 @@ describe("prepareAntigravityRequest wire model", () => {
     expect(result.effectiveModel).toBe(backend);
   });
 
+  it.each([
+    [undefined, "gemini-4-hydrogen-high", "high"],
+    ["low", "gemini-4-hydrogen-low", "low"],
+    ["medium", "gemini-4-hydrogen-medium", "medium"],
+    ["high", "gemini-4-hydrogen-high", "high"],
+    ["xhigh", "gemini-4-hydrogen-xhigh", "xhigh"],
+  ])("sends Gemini 4 Hydrogen with variant %s as %s", (level, backend, sentLevel) => {
+    const { result, body, thinking } = send(
+      "antigravity-gemini-4-hydrogen",
+      level ? { includeThoughts: true, thinkingLevel: level } : undefined,
+    );
+    expect(body.model).toBe(backend);
+    expect(thinking).toMatchObject({ thinkingLevel: sentLevel });
+    expect(thinking.thinkingBudget).toBeUndefined();
+    expect(result.effectiveModel).toBe(backend);
+  });
+
   it("sends minimal as low where the backend rejects minimal", () => {
     expect(send("gemini-3.8-flash", { includeThoughts: true, thinkingLevel: "minimal" }).thinking).toMatchObject({ thinkingLevel: "low" });
     expect(send("antigravity-gemini-4-argon", { includeThoughts: true, thinkingLevel: "minimal" }).thinking).toMatchObject({ thinkingLevel: "low" });
@@ -209,10 +228,11 @@ describe("prepareAntigravityRequest wire model", () => {
 });
 
 describe("advertised catalog", () => {
-  it("offers only Gemini 3.8 Flash and Gemini 4 Argon on Antigravity", () => {
+  it("offers only Gemini 3.8 Flash, Gemini 4 Argon and Gemini 4 Hydrogen on Antigravity", () => {
     expect(Object.keys(OPENCODE_MODEL_DEFINITIONS).filter((id) => id.startsWith("antigravity-")).sort()).toEqual([
       "antigravity-gemini-3.8-flash",
       "antigravity-gemini-4-argon",
+      "antigravity-gemini-4-hydrogen",
     ]);
     for (const id of [
       "antigravity-gemini-3-pro",
@@ -232,6 +252,12 @@ describe("advertised catalog", () => {
       "low",
       "medium",
       "high",
+    ]);
+    expect(Object.keys(OPENCODE_MODEL_DEFINITIONS["antigravity-gemini-4-hydrogen"]?.variants ?? {})).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
     ]);
   });
 
