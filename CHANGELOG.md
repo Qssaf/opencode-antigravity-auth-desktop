@@ -34,6 +34,8 @@
 
 ### Fixed
 
+- **Disabled registry models were offered** - Antigravity's registry lists ids ending in `-disabled` (such as `gemini-4-carbon-disabled` for a Google AI Pro account) for models the account cannot use. The plugin no longer offers them as models, and their quota no longer counts towards a group's availability.
+
 - **Unrelated errors were reported as "needs Ultra"** - Every 403 for Argon, and every 400 that mentioned "tier" or "not available", marked the account as lacking Ultra, so a credential problem or a bad request showed the Ultra message on every account instead of the real error. Only a 404, the "permission denied on project" 403, and a 403 or 400 naming the subscription or Ultra count now. The Ultra message no longer suggests Gemini 3.1 Pro, which Antigravity serves as 3.8 Flash.
 
 - **Dropped models made 3.8 Flash quota look available** - The Gemini Flash quota shows the model with the most quota left. Google's registry can still list dropped models (Gemini 3.5 Flash-Lite, 3.7 Flash, 3 Flash Agent, 2.5) with their own unused quota, so an exhausted 3.8 Flash looked full. They are now left out of the quota summary.
