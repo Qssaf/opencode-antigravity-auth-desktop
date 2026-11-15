@@ -2764,6 +2764,11 @@ export const createAntigravityRuntime = (providerId: string) => async (
             // Track capacity retries per endpoint to prevent infinite loops
             let capacityRetryCount = 0;
             let lastEndpointIndex = -1;
+            // Short same-account retries for a plain 429 that carries no reset time.
+            // Antigravity's "Resource has been exhausted" often clears in seconds;
+            // marking the whole family for failure_ttl_seconds turns a blip into a
+            // minute of refused requests.
+            let transient429Retries = 0;
             
             for (let i = 0; i < ANTIGRAVITY_ENDPOINT_FALLBACKS.length; i++) {
               // Reset capacity retry counter when switching to a new endpoint
@@ -2959,7 +2964,32 @@ export const createAntigravityRuntime = (providerId: string) => async (
 
                   // STRATEGY 2: RATE LIMIT EXCEEDED (RPM) / QUOTA EXHAUSTED / UNKNOWN
                   // Goal: Lock and Rotate (Standard Logic)
-                  
+
+                  // A plain 429 without a reset time is usually a short burst limit.
+                  // Retry the same account a few times with a short, jittered delay
+                  // before locking the family for failure_ttl_seconds.
+                  if (
+                    accountCount === 1 &&
+                    rateLimitReason !== "QUOTA_EXHAUSTED" &&
+                    !bodyInfo.quotaResetTime &&
+                    transient429Retries < 3
+                  ) {
+                    const schedule = [2000, 5000, 10000] as const;
+                    const base = headerRetryMs > 0 ? Math.max(headerRetryMs, schedule[transient429Retries] ?? 10000) : (schedule[transient429Retries] ?? 10000);
+                    const waitMs = Math.round(base * (0.8 + Math.random() * 0.4));
+                    pushDebug(
+                      `429 (no reset time) on account ${account.index}; short retry ${waitMs}ms (${transient429Retries + 1}/3)`,
+                    );
+                    await showToast(
+                      `Rate limited. Retrying in ${Math.max(1, Math.round(waitMs / 1000))}s...`,
+                      "warning",
+                    );
+                    await sleep(waitMs, abortSignal);
+                    transient429Retries += 1;
+                    i -= 1;
+                    continue;
+                  }
+
                   // Only now do we call getRateLimitBackoff, which increments the global failure tracker
                   const quotaKey = headerStyleToQuotaKey(family);
                   const { attempt, delayMs, isDuplicate } = getRateLimitBackoff(account.index, quotaKey, serverRetryMs);
@@ -3080,6 +3110,7 @@ export const createAntigravityRuntime = (providerId: string) => async (
                 }
 
                 // Success - reset rate limit backoff state for this quota
+                transient429Retries = 0;
                 const quotaKey = headerStyleToQuotaKey(family);
                 resetRateLimitState(account.index, quotaKey);
                 resetAccountFailureState(account.index);

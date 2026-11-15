@@ -14380,6 +14380,7 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                 let tokenConsumed = false;
                 let capacityRetryCount = 0;
                 let lastEndpointIndex = -1;
+                let transient429Retries = 0;
                 for (let i = 0; i < ANTIGRAVITY_ENDPOINT_FALLBACKS.length; i++) {
                   if (i !== lastEndpointIndex) {
                     capacityRetryCount = 0;
@@ -14506,6 +14507,22 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                         shouldSwitchAccount = true;
                         break;
                       }
+                      if (accountCount2 === 1 && rateLimitReason !== "QUOTA_EXHAUSTED" && !bodyInfo.quotaResetTime && transient429Retries < 3) {
+                        const schedule = [2e3, 5e3, 1e4];
+                        const base = headerRetryMs > 0 ? Math.max(headerRetryMs, schedule[transient429Retries] ?? 1e4) : schedule[transient429Retries] ?? 1e4;
+                        const waitMs = Math.round(base * (0.8 + Math.random() * 0.4));
+                        pushDebug(
+                          `429 (no reset time) on account ${account.index}; short retry ${waitMs}ms (${transient429Retries + 1}/3)`
+                        );
+                        await showToast(
+                          `Rate limited. Retrying in ${Math.max(1, Math.round(waitMs / 1e3))}s...`,
+                          "warning"
+                        );
+                        await sleep(waitMs, abortSignal);
+                        transient429Retries += 1;
+                        i -= 1;
+                        continue;
+                      }
                       const quotaKey2 = headerStyleToQuotaKey(family);
                       const { attempt, delayMs, isDuplicate } = getRateLimitBackoff(account.index, quotaKey2, serverRetryMs);
                       const smartBackoffMs = calculateBackoffMs(rateLimitReason, account.consecutiveFailures ?? 0, serverRetryMs);
@@ -14588,6 +14605,7 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                       shouldSwitchAccount = true;
                       break;
                     }
+                    transient429Retries = 0;
                     const quotaKey = headerStyleToQuotaKey(family);
                     resetRateLimitState(account.index, quotaKey);
                     resetAccountFailureState(account.index);
