@@ -60,6 +60,7 @@ import {
   needsThinkingRecovery,
 } from "./thinking-recovery";
 import { sanitizeCrossModelPayloadInPlace } from "./transform/cross-model-sanitizer";
+import { ANTIGRAVITY_SYSTEM_PROMPT } from "./system-prompt";
 import {
   isGemini3Model,
   isImageGenerationModel,
@@ -1166,6 +1167,22 @@ export function stripHostClientHeaders(headers: Headers): void {
   }
 }
 
+/** Joins the text of a system instruction, whether a string or a parts object. */
+function systemInstructionText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+  const parts = (value as Record<string, unknown>).parts;
+  if (!Array.isArray(parts)) return "";
+  return parts
+    .map((part) =>
+      part && typeof part === "object" && typeof (part as Record<string, unknown>).text === "string"
+        ? String((part as Record<string, unknown>).text)
+        : "",
+    )
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 export function prepareAntigravityRequest(
   input: string,
   init: RequestInit | undefined,
@@ -2187,48 +2204,58 @@ export function prepareAntigravityRequest(
           (headerStyle === "antigravity" ? generateSyntheticProjectId() : "");
         resolvedProjectId = effectiveProjectId;
 
-        // Inject Antigravity system instruction with role "user" (CLIProxyAPI v6.6.89 compatibility)
-        // This sets request.systemInstruction.role = "user" and request.systemInstruction.parts[0].text
+        // Antigravity answers 429 RESOURCE_EXHAUSTED when the harness
+        // instructions sit in systemInstruction; the same text is accepted in
+        // the first user turn. Send a clean base prompt and move the persona
+        // and harness instructions into the first user turn.
         if (headerStyle === "antigravity") {
-          const existingSystemInstruction = requestPayload.systemInstruction;
-          if (
-            existingSystemInstruction &&
-            typeof existingSystemInstruction === "object"
-          ) {
-            const sys = existingSystemInstruction as Record<string, unknown>;
-            sys.role = "user";
-            if (Array.isArray(sys.parts) && sys.parts.length > 0) {
-              const firstPart = sys.parts[0] as Record<string, unknown>;
-              if (firstPart && typeof firstPart.text === "string") {
-                firstPart.text =
-                  ANTIGRAVITY_SYSTEM_INSTRUCTION + "\n\n" + firstPart.text;
+          const existingText = systemInstructionText(requestPayload.systemInstruction);
+          const personaAndHarness = [
+            ANTIGRAVITY_SYSTEM_INSTRUCTION.trim(),
+            existingText.trim(),
+          ]
+            .filter(Boolean)
+            .join("\n\n");
+          let movedToUser = false;
+          if (personaAndHarness.length > 0) {
+            const contents = requestPayload.contents;
+            const firstUser = Array.isArray(contents)
+              ? (contents.find(
+                  (entry) =>
+                    entry &&
+                    typeof entry === "object" &&
+                    (entry as Record<string, unknown>).role === "user",
+                ) as Record<string, unknown> | undefined)
+              : undefined;
+            if (firstUser) {
+              const parts = Array.isArray(firstUser.parts)
+                ? (firstUser.parts as unknown[])
+                : [];
+              const textPart = parts.find(
+                (part) =>
+                  part &&
+                  typeof part === "object" &&
+                  typeof (part as Record<string, unknown>).text === "string",
+              ) as Record<string, unknown> | undefined;
+              if (textPart) {
+                textPart.text = `${personaAndHarness}\n\n${String(textPart.text)}`;
               } else {
-                sys.parts = [
-                  { text: ANTIGRAVITY_SYSTEM_INSTRUCTION },
-                  ...sys.parts,
-                ];
+                parts.unshift({ text: personaAndHarness });
               }
-            } else {
-              sys.parts = [{ text: ANTIGRAVITY_SYSTEM_INSTRUCTION }];
+              firstUser.parts = parts;
+              movedToUser = true;
             }
-          } else if (typeof existingSystemInstruction === "string") {
-            requestPayload.systemInstruction = {
-              role: "user",
-              parts: [
-                {
-                  text:
-                    ANTIGRAVITY_SYSTEM_INSTRUCTION +
-                    "\n\n" +
-                    existingSystemInstruction,
-                },
-              ],
-            };
-          } else {
-            requestPayload.systemInstruction = {
-              role: "user",
-              parts: [{ text: ANTIGRAVITY_SYSTEM_INSTRUCTION }],
-            };
           }
+          requestPayload.systemInstruction = {
+            role: "user",
+            parts: [
+              {
+                text: movedToUser
+                  ? ANTIGRAVITY_SYSTEM_PROMPT
+                  : personaAndHarness || ANTIGRAVITY_SYSTEM_PROMPT,
+              },
+            ],
+          };
         }
 
         const wrappedBody: Record<string, unknown> = {

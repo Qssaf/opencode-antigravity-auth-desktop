@@ -6942,6 +6942,12 @@ function sanitizeCrossModelPayloadInPlace(payload, options) {
   return totalStripped;
 }
 
+// src/plugin/system-prompt.ts
+var ANTIGRAVITY_SYSTEM_PROMPT = `You are Antigravity, a powerful agentic AI coding assistant.
+You are pair programming with a USER in OpenCode to solve their coding task: creating, modifying or debugging code, or answering questions about it.
+Use the tools available to you. Read before editing, keep changes focused, and verify your work before answering.
+Follow the user's instructions and the project's conventions, and respond in the language of the user.`;
+
 // src/plugin/recovery/storage.ts
 import { existsSync as existsSync5, mkdirSync as mkdirSync6, readdirSync as readdirSync2, readFileSync as readFileSync5, unlinkSync as unlinkSync4, writeFileSync as writeFileSync5 } from "node:fs";
 import { join as join8 } from "node:path";
@@ -8086,6 +8092,15 @@ function stripHostClientHeaders(headers) {
     }
   }
 }
+function systemInstructionText(value) {
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+  const parts = value.parts;
+  if (!Array.isArray(parts)) return "";
+  return parts.map(
+    (part) => part && typeof part === "object" && typeof part.text === "string" ? String(part.text) : ""
+  ).filter(Boolean).join("\n\n");
+}
 function prepareAntigravityRequest(input2, init, accessToken, projectId, endpointOverride, headerStyle = "antigravity", forceThinkingRecovery = false, options) {
   if (typeof input2 !== "string" && init?.body === void 0 && input2.body) {
     const requestInput2 = input2;
@@ -8712,38 +8727,41 @@ ${hint}`;
         const effectiveProjectId = projectId?.trim() || (headerStyle === "antigravity" ? generateSyntheticProjectId() : "");
         resolvedProjectId = effectiveProjectId;
         if (headerStyle === "antigravity") {
-          const existingSystemInstruction = requestPayload.systemInstruction;
-          if (existingSystemInstruction && typeof existingSystemInstruction === "object") {
-            const sys = existingSystemInstruction;
-            sys.role = "user";
-            if (Array.isArray(sys.parts) && sys.parts.length > 0) {
-              const firstPart = sys.parts[0];
-              if (firstPart && typeof firstPart.text === "string") {
-                firstPart.text = ANTIGRAVITY_SYSTEM_INSTRUCTION + "\n\n" + firstPart.text;
+          const existingText = systemInstructionText(requestPayload.systemInstruction);
+          const personaAndHarness = [
+            ANTIGRAVITY_SYSTEM_INSTRUCTION.trim(),
+            existingText.trim()
+          ].filter(Boolean).join("\n\n");
+          let movedToUser = false;
+          if (personaAndHarness.length > 0) {
+            const contents = requestPayload.contents;
+            const firstUser = Array.isArray(contents) ? contents.find(
+              (entry) => entry && typeof entry === "object" && entry.role === "user"
+            ) : void 0;
+            if (firstUser) {
+              const parts = Array.isArray(firstUser.parts) ? firstUser.parts : [];
+              const textPart = parts.find(
+                (part) => part && typeof part === "object" && typeof part.text === "string"
+              );
+              if (textPart) {
+                textPart.text = `${personaAndHarness}
+
+${String(textPart.text)}`;
               } else {
-                sys.parts = [
-                  { text: ANTIGRAVITY_SYSTEM_INSTRUCTION },
-                  ...sys.parts
-                ];
+                parts.unshift({ text: personaAndHarness });
               }
-            } else {
-              sys.parts = [{ text: ANTIGRAVITY_SYSTEM_INSTRUCTION }];
+              firstUser.parts = parts;
+              movedToUser = true;
             }
-          } else if (typeof existingSystemInstruction === "string") {
-            requestPayload.systemInstruction = {
-              role: "user",
-              parts: [
-                {
-                  text: ANTIGRAVITY_SYSTEM_INSTRUCTION + "\n\n" + existingSystemInstruction
-                }
-              ]
-            };
-          } else {
-            requestPayload.systemInstruction = {
-              role: "user",
-              parts: [{ text: ANTIGRAVITY_SYSTEM_INSTRUCTION }]
-            };
           }
+          requestPayload.systemInstruction = {
+            role: "user",
+            parts: [
+              {
+                text: movedToUser ? ANTIGRAVITY_SYSTEM_PROMPT : personaAndHarness || ANTIGRAVITY_SYSTEM_PROMPT
+              }
+            ]
+          };
         }
         const wrappedBody = {
           project: effectiveProjectId,
