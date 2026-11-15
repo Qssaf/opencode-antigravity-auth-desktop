@@ -1204,6 +1204,33 @@ it("removes API key headers", () => {
       expect(result.headerStyle).toBe("antigravity");
     });
 
+    it("sends the clean system prompt alone and moves persona and harness into the first user turn", () => {
+      const result = prepareAntigravityRequest(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: "hi" }] }],
+            systemInstruction: { parts: [{ text: "HARNESS-INSTRUCTIONS" }] },
+          }),
+        },
+        mockAccessToken,
+        mockProjectId,
+        undefined,
+        "antigravity"
+      );
+      const wrapped = JSON.parse(result.init.body as string);
+      const system = wrapped.request.systemInstruction.parts[0].text;
+      expect(system).toContain("You are Antigravity");
+      expect(system).not.toContain("HARNESS-INSTRUCTIONS");
+      const userText = wrapped.request.contents.find(
+        (entry: { role?: string }) => entry.role === "user"
+      ).parts[0].text;
+      expect(userText).toContain("HARNESS-INSTRUCTIONS");
+      expect(userText).toContain("supersede all above");
+    });
+
     describe("Issue #103: model name transformation during quota fallback", () => {
       it.each([
         "gemini-3-flash-preview",
