@@ -1498,7 +1498,7 @@ export function prepareAntigravityRequest(
 
         if (variantConfig?.thinkingLevel && isGemini3) {
           // Gemini 3 native format - use thinkingLevel directly, clamped to what
-          // this model accepts (xhigh is Hydrogen-only, minimal is not Gemini 4).
+          // this model accepts (xhigh is Hydrogen/Neon-only, minimal is not Gemini 4).
           tierThinkingLevel = clampThinkingLevelForModel(
             variantConfig.thinkingLevel as ThinkingTier,
             effectiveModel,
@@ -2333,7 +2333,7 @@ export function prepareAntigravityRequest(
 
   if (headerStyle === "antigravity") {
     // The official Antigravity CLI User-Agent. The backend gates newer models
-    // (e.g. gemini-3.8-flash, gemini-4-argon, gemini-4-hydrogen) on it;
+    // (e.g. gemini-3.8-flash, gemini-4-argon, hydrogen, neon) on it;
     // IDE-style fingerprint UAs like "antigravity/2.0.6 win32/x64" are rejected
     // with 404 "Requested entity was not found" on those models.
     headers.set("User-Agent", ANTIGRAVITY_CLI_USER_AGENT);

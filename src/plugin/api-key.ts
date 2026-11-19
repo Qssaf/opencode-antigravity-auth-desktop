@@ -275,7 +275,8 @@ export function extractRequestedGeminiModel(urlString: string): string | undefin
  * are the high-signal choices for the error hint.
  *
  * Source: Google's published Gemini API model documentation (the model ids below,
- * including bare `gemini-4-hydrogen`), not a probe run from this plugin.
+ * including bare `gemini-4-hydrogen` and `gemini-4-neon`), not a probe run from
+ * this plugin.
  */
 const PUBLIC_GEMINI_API_MODEL_SUGGESTIONS = [
   "gemini-3.1-pro-preview",
@@ -283,6 +284,7 @@ const PUBLIC_GEMINI_API_MODEL_SUGGESTIONS = [
   "gemini-3.8-flash",
   "gemini-4-argon",
   "gemini-4-hydrogen",
+  "gemini-4-neon",
 ] as const;
 
 /**

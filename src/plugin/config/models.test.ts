@@ -22,6 +22,7 @@ describe("OPENCODE_MODEL_DEFINITIONS", () => {
       "antigravity-gemini-3.8-flash",
       "antigravity-gemini-4-argon",
       "antigravity-gemini-4-hydrogen",
+      "antigravity-gemini-4-neon",
     ]);
   });
 
@@ -58,6 +59,19 @@ describe("OPENCODE_MODEL_DEFINITIONS", () => {
     expect(hydrogen.temperature).toBe(false);
     expect(hydrogen.name).toBe("Gemini 4 Hydrogen (Antigravity)");
     expect(hydrogen.limit).toEqual({ context: 1048576, output: 65536 });
+  });
+
+  it("offers Gemini 4 Neon with the same four thinking levels and a 256K output limit", () => {
+    const neon = getModel("antigravity-gemini-4-neon");
+    expect(neon.variants).toEqual({
+      low: { thinkingLevel: "low" },
+      medium: { thinkingLevel: "medium" },
+      high: { thinkingLevel: "high" },
+      xhigh: { thinkingLevel: "xhigh" },
+    });
+    expect(neon.temperature).toBe(false);
+    expect(neon.name).toBe("Gemini 4 Neon (Antigravity)");
+    expect(neon.limit).toEqual({ context: 1048576, output: 262144 });
   });
 });
 
@@ -146,6 +160,11 @@ describe("dynamic model discovery helpers", () => {
         modelName: "gemini-4-hydrogen-high",
         supportsThinking: true,
       },
+      "gemini-4-neon-high": {
+        displayName: "Gemini 4 Neon (High)",
+        modelName: "gemini-4-neon-high",
+        supportsThinking: true,
+      },
       "claude-sonnet-4-6": {
         displayName: "Claude Sonnet 4.6",
       },
@@ -167,6 +186,12 @@ describe("dynamic model discovery helpers", () => {
       high: { thinkingLevel: "high" },
     });
     expect(models["antigravity-gemini-4-hydrogen-high"]?.variants).toEqual({
+      low: { thinkingLevel: "low" },
+      medium: { thinkingLevel: "medium" },
+      high: { thinkingLevel: "high" },
+      xhigh: { thinkingLevel: "xhigh" },
+    });
+    expect(models["antigravity-gemini-4-neon-high"]?.variants).toEqual({
       low: { thinkingLevel: "low" },
       medium: { thinkingLevel: "medium" },
       high: { thinkingLevel: "high" },

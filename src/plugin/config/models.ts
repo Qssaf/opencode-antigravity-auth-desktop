@@ -3,6 +3,7 @@ import {
   isGemini2Model,
   isGemini3OrLaterModel,
   isGemini4HydrogenModel,
+  isGemini4NeonModel,
   remapRetiredAntigravityGeminiModel,
   toAntigravityWireModel,
 } from "../transform/model-resolver";
@@ -65,10 +66,10 @@ const DEFAULT_MODALITIES: ModelModalities = {
 };
 
 /**
- * Gemini 4 Hydrogen's variants. One shared, frozen object so the static
- * definition and discovered ids cannot drift apart or mutate each other.
+ * Gemini 4 Hydrogen and Neon variants. One shared, frozen object so the static
+ * definitions and discovered ids cannot drift apart or mutate each other.
  */
-const GEMINI_4_HYDROGEN_VARIANTS: Record<string, ModelVariant> = Object.freeze({
+const GEMINI_4_XHIGH_VARIANTS: Record<string, ModelVariant> = Object.freeze({
   low: { thinkingLevel: "low" },
   medium: { thinkingLevel: "medium" },
   high: { thinkingLevel: "high" },
@@ -109,7 +110,18 @@ export const OPENCODE_MODEL_DEFINITIONS: OpencodeModelDefinitions = {
     temperature: false,
     limit: { context: 1048576, output: 65536 },
     modalities: DEFAULT_MODALITIES,
-    variants: GEMINI_4_HYDROGEN_VARIANTS,
+    variants: GEMINI_4_XHIGH_VARIANTS,
+  },
+  // Same paid Pro or Ultra entitlement as Hydrogen. Antigravity serves it as
+  // gemini-4-neon-{low,medium,high,xhigh} (see
+  // resolveAntigravityGemini4NeonBackendModel) with the 256K output Google
+  // reports for it.
+  "antigravity-gemini-4-neon": {
+    name: "Gemini 4 Neon (Antigravity)",
+    temperature: false,
+    limit: { context: 1048576, output: 262144 },
+    modalities: DEFAULT_MODALITIES,
+    variants: GEMINI_4_XHIGH_VARIANTS,
   },
 };
 
@@ -167,8 +179,8 @@ function defaultVariantsForModel(modelId: string): Record<string, ModelVariant> 
       max: { thinkingConfig: { thinkingBudget: 32768 } },
     };
   }
-  if (isGemini4HydrogenModel(normalized)) {
-    return GEMINI_4_HYDROGEN_VARIANTS;
+  if (isGemini4HydrogenModel(normalized) || isGemini4NeonModel(normalized)) {
+    return GEMINI_4_XHIGH_VARIANTS;
   }
   if (isGemini3OrLaterModel(normalized)) {
     if (normalized.includes("pro")) {

@@ -73,6 +73,12 @@ describe("transform/gemini", () => {
       "gemini-4-hydrogen-low",
       "gemini-4-hydrogen-xhigh",
       "antigravity-gemini-4-hydrogen-high",
+      "gemini-4-neon",
+      "gemini-4-neon-low",
+      "gemini-4-neon-medium",
+      "gemini-4-neon-high",
+      "gemini-4-neon-xhigh",
+      "antigravity-gemini-4-neon-high",
     ])("removes deprecated sampling fields for %s", (model) => {
       const payload: RequestPayload = {
         generationConfig: {

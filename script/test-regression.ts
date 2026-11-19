@@ -52,9 +52,9 @@ const ERROR_PATTERNS = [
   "must remain as they were",
 ];
 
-// Antigravity serves only Gemini 3.8 Flash, plus Gemini 4 Argon and Gemini 4
-// Hydrogen (paid Pro or Ultra only), and the Gemini CLI quota is deprecated, so
-// every test runs on Gemini 3.8 Flash.
+// Antigravity serves only Gemini 3.8 Flash, plus Gemini 4 Argon, Gemini 4
+// Hydrogen and Gemini 4 Neon (paid Pro or Ultra only), and the Gemini CLI quota
+// is deprecated, so every test runs on Gemini 3.8 Flash.
 const GEMINI_FLASH = "google/antigravity-gemini-3.8-flash";
 
 const SANITY_TESTS: MultiTurnTest[] = [

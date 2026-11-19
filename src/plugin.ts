@@ -38,6 +38,7 @@ import {
 import {
   isGemini4ArgonModel,
   isGemini4HydrogenModel,
+  isGemini4NeonModel,
   resolveModelWithTier,
 } from "./plugin/transform/model-resolver";
 import { isImageGenerationModel } from "./plugin/transform/gemini";
@@ -1410,16 +1411,19 @@ export function createNoUsableCredentialsResponse(urlString: string, detail: str
 }
 
 /**
- * Answers a request for Gemini 4 Argon or Hydrogen (paid Pro or Ultra only)
- * once Google has refused it for every signed-in account. See ultra-gate.ts.
+ * Answers a request for Gemini 4 Argon, Hydrogen or Neon (paid Pro or Ultra
+ * only) once Google has refused it for every signed-in account. See
+ * ultra-gate.ts.
  */
 export function createUltraRequiredResponse(urlString: string, accountCount: number): Response {
   const requestedModel = extractRequestedGeminiModel(urlString) ?? extractModelFromUrl(urlString) ?? undefined;
   const modelLabel = isGemini4HydrogenModel(requestedModel ?? "")
     ? "Gemini 4 Hydrogen"
-    : isGemini4ArgonModel(requestedModel ?? "")
-      ? "Gemini 4 Argon"
-      : "This model";
+    : isGemini4NeonModel(requestedModel ?? "")
+      ? "Gemini 4 Neon"
+      : isGemini4ArgonModel(requestedModel ?? "")
+        ? "Gemini 4 Argon"
+        : "This model";
   return createSyntheticErrorResponse(
     ultraRequiredMessage(modelLabel, accountCount),
     requestedModel,
@@ -2191,10 +2195,13 @@ export const createAntigravityRuntime = (providerId: string) => async (
           // Empty answers retried within THIS request. Per request, so concurrent
           // requests (and ones aborted mid-retry) do not spend each other's budget.
           let emptyResponseAttempts = 0;
-          // Gemini 4 Argon and Hydrogen need paid Pro or Ultra: accounts Google
-          // refused them for are skipped, and when none is left the request gets
-          // the plan message.
-          const isUltraOnlyRequest = isGemini4ArgonModel(model ?? "") || isGemini4HydrogenModel(model ?? "");
+          // Gemini 4 Argon, Hydrogen and Neon need paid Pro or Ultra: accounts
+          // Google refused them for are skipped, and when none is left the
+          // request gets the plan message.
+          const isUltraOnlyRequest =
+            isGemini4ArgonModel(model ?? "") ||
+            isGemini4HydrogenModel(model ?? "") ||
+            isGemini4NeonModel(model ?? "");
           const allAccountsRefusedUltra = (): boolean => {
             const enabled = accountManager.getEnabledAccounts();
             return enabled.length > 0 && enabled.every((acc) => isUltraModelRefused(acc.parts.refreshToken));
@@ -3217,8 +3224,8 @@ export const createAntigravityRuntime = (providerId: string) => async (
                   continue;
                 }
 
-                // Only Antigravity serves Argon or Hydrogen, so only its answer
-                // says anything about the account's subscription.
+                // Only Antigravity serves Argon, Hydrogen or Neon, so only its
+                // answer says anything about the account's subscription.
                 if (isUltraOnlyRequest && headerStyle === "antigravity" && !response.ok) {
                   const refusalBody = response.status === 400 || response.status === 403
                     ? await response.clone().text().catch(() => "")
