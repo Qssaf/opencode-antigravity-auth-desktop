@@ -1,10 +1,11 @@
 /**
- * Gemini 4 Argon is served on Antigravity only to Google AI Ultra and paid
- * (non-trial) Google AI Pro subscribers. The plugin cannot read an account's
- * subscription, so it learns it from the backend: an account the backend
- * refuses for Argon is remembered here, skipped for later Argon requests, and
- * once no account is left the request is answered with a message saying which
- * plans include it.
+ * Gemini 4 Argon, Gemini 4 Hydrogen and Gemini 4 Neon are served on Antigravity
+ * only to paid (non-trial) Google AI Pro subscribers and Google AI Ultra
+ * subscribers. The plugin cannot read an account's subscription, so it learns
+ * it from the backend: an account the backend refuses for any of those models
+ * is remembered here, skipped for later requests of that entitlement, and once
+ * no account is left the request is answered with a message saying which plans
+ * include it.
  *
  * Refusals expire, so an account that upgrades is tried again without
  * restarting OpenCode.
@@ -15,7 +16,15 @@ export const ULTRA_REFUSAL_TTL_MS = 60 * 60 * 1000;
 
 const refusedUntil = new Map<string, number>();
 
-/** Records that the backend refused an Ultra-only model for this account. */
+/**
+ * Records that the backend refused an Ultra-only model for this account.
+ *
+ * The store is deliberately keyed per account only, with no model dimension: it
+ * covers all three Ultra models, Gemini 4 Argon, Gemini 4 Hydrogen and Gemini 4
+ * Neon, because they share the same paid Pro/Ultra entitlement, so a refusal of
+ * one is a refusal of all three. Call sites pass only the refresh token, so
+ * there is no per-model branch here to keep in sync.
+ */
 export function markUltraModelRefused(refreshToken: string, now = Date.now()): void {
   if (!refreshToken) return;
   refusedUntil.set(refreshToken, now + ULTRA_REFUSAL_TTL_MS);

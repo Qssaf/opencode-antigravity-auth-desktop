@@ -1936,6 +1936,21 @@ var GEMINI_4_ARGON_MODELS = {
   medium: "gemini-4-argon-medium",
   high: "gemini-4-argon-high"
 };
+var GEMINI_4_TIER_REGEX = /^gemini-4-(hydrogen|neon)(?:-(minimal|low|medium|high|xhigh))?$/i;
+var GEMINI_4_TIER_MODELS = {
+  hydrogen: {
+    low: "gemini-4-hydrogen-low",
+    medium: "gemini-4-hydrogen-medium",
+    high: "gemini-4-hydrogen-high",
+    xhigh: "gemini-4-hydrogen-xhigh"
+  },
+  neon: {
+    low: "gemini-4-neon-low",
+    medium: "gemini-4-neon-medium",
+    high: "gemini-4-neon-high",
+    xhigh: "gemini-4-neon-xhigh"
+  }
+};
 var GEMINI_3_OR_LATER_REGEX = /gemini-(?:[3-9]|[1-9]\d+)(?=[.-]|$)/i;
 var IMAGE_GENERATION_MODELS = /image|imagen/i;
 function supportsThinkingTiers(model) {
@@ -2032,15 +2047,50 @@ function resolveAntigravityGemini4ArgonBackendModel(model, thinkingLevel) {
 function isGemini4ArgonModel(model) {
   return /(?:^|[-/])gemini-4-argon(?:-|$)/i.test(model);
 }
+function resolveAntigravityGemini4TierBackendModel(family, model, thinkingLevel) {
+  const match = model.replace(QUOTA_PREFIX_REGEX, "").match(GEMINI_4_TIER_REGEX);
+  if (!match || match[1].toLowerCase() !== family) {
+    return void 0;
+  }
+  const rawLevel = (thinkingLevel ?? match[2] ?? "high").toLowerCase();
+  const level = rawLevel === "minimal" ? "low" : rawLevel;
+  if (level !== "low" && level !== "medium" && level !== "high" && level !== "xhigh") {
+    return void 0;
+  }
+  return GEMINI_4_TIER_MODELS[family][level];
+}
+function resolveAntigravityGemini4HydrogenBackendModel(model, thinkingLevel) {
+  return resolveAntigravityGemini4TierBackendModel("hydrogen", model, thinkingLevel);
+}
+function isGemini4HydrogenModel(model) {
+  return /(?:^|[-/])gemini-4-hydrogen(?:-|$)/i.test(model);
+}
+function resolveAntigravityGemini4NeonBackendModel(model, thinkingLevel) {
+  return resolveAntigravityGemini4TierBackendModel("neon", model, thinkingLevel);
+}
+function isGemini4NeonModel(model) {
+  return /(?:^|[-/])gemini-4-neon(?:-|$)/i.test(model);
+}
+function clampThinkingLevelForModel(level, model) {
+  const raw = level;
+  if (raw === "minimal") {
+    return isGemini4ArgonModel(model) || isGemini4HydrogenModel(model) || isGemini4NeonModel(model) ? "low" : level;
+  }
+  if (raw === "xhigh" && !isGemini4HydrogenModel(model) && !isGemini4NeonModel(model)) {
+    return "high";
+  }
+  return level;
+}
 function resolveAntigravityGeminiBackend(model, thinkingLevel) {
-  const tiered = resolveAntigravityGemini38FlashBackendModel(model, thinkingLevel) ?? resolveAntigravityGemini4ArgonBackendModel(model, thinkingLevel);
+  const level = thinkingLevel === void 0 ? void 0 : clampThinkingLevelForModel(thinkingLevel, model);
+  const tiered = resolveAntigravityGemini38FlashBackendModel(model, level) ?? resolveAntigravityGemini4ArgonBackendModel(model, level) ?? resolveAntigravityGemini4HydrogenBackendModel(model, level) ?? resolveAntigravityGemini4NeonBackendModel(model, level);
   if (tiered) {
     return {
       model: tiered,
-      thinkingLevel: thinkingLevel === "minimal" ? "low" : thinkingLevel
+      thinkingLevel: level === "minimal" ? "low" : level
     };
   }
-  const pro = resolveAntigravityGemini3ProBackendModel(model, thinkingLevel);
+  const pro = resolveAntigravityGemini3ProBackendModel(model, level);
   if (pro) {
     return { model: pro, thinkingLevel: pro.endsWith("-low") ? "low" : "high" };
   }
@@ -2051,6 +2101,10 @@ function getDefaultGemini3ThinkingLevel(model) {
   const tiered = /^gemini-(?:3\.8-flash|4-argon)(?:-(low|medium|high))?$/.exec(normalized);
   if (tiered) {
     return tiered[1] ?? "high";
+  }
+  const gemini4Tier = /^gemini-4-(?:hydrogen|neon)(?:-(minimal|low|medium|high|xhigh))?$/.exec(normalized);
+  if (gemini4Tier) {
+    return (gemini4Tier[1] === "minimal" ? "low" : gemini4Tier[1]) ?? "high";
   }
   if (isGemini3ProModel(normalized) && !IMAGE_GENERATION_MODELS.test(normalized)) {
     return /-low$/.test(normalized) ? "low" : "high";
@@ -2076,7 +2130,7 @@ function resolveModel(requestedModel, onAntigravity) {
   let effectiveTier = tier;
   let antigravityModel = modelWithoutQuota;
   if (skipAlias) {
-    const tieredBackendModel = resolveAntigravityGemini38FlashBackendModel(modelWithoutQuota, tier) ?? resolveAntigravityGemini4ArgonBackendModel(modelWithoutQuota, tier);
+    const tieredBackendModel = resolveAntigravityGemini38FlashBackendModel(modelWithoutQuota, tier) ?? resolveAntigravityGemini4ArgonBackendModel(modelWithoutQuota, tier) ?? resolveAntigravityGemini4HydrogenBackendModel(modelWithoutQuota, tier) ?? resolveAntigravityGemini4NeonBackendModel(modelWithoutQuota, tier);
     const gemini3ProBackendModel = isImageModel ? void 0 : resolveAntigravityGemini3ProBackendModel(modelWithoutQuota, effectiveTier);
     if (tieredBackendModel) {
       antigravityModel = tieredBackendModel;
@@ -2144,7 +2198,7 @@ function resolveModel(requestedModel, onAntigravity) {
   }
   const budgetFamily = getBudgetFamily(resolvedModel);
   const budgets = THINKING_TIER_BUDGETS[budgetFamily];
-  const thinkingBudget = budgets[effectiveTier];
+  const thinkingBudget = effectiveTier === "xhigh" ? void 0 : budgets[effectiveTier];
   return {
     actualModel: resolvedModel,
     thinkingBudget,
@@ -2159,7 +2213,7 @@ function getModelFamily(model) {
   if (lower.includes("claude")) {
     return "claude";
   }
-  if (lower.includes("flash")) {
+  if (lower.includes("flash") || isGemini4HydrogenModel(lower) || isGemini4NeonModel(lower)) {
     return "gemini-flash";
   }
   return "gemini-pro";
@@ -2172,7 +2226,7 @@ var ANTIGRAVITY_TO_PUBLIC_API_MODEL_MAP = /* @__PURE__ */ new Map([
 ]);
 function mapAntigravityModelToPublicApi(model) {
   const stripped = model.toLowerCase().replace(/^antigravity-/, "");
-  const base = stripped.replace(/-(minimal|low|medium|high)$/, "");
+  const base = stripped.replace(/-(minimal|low|medium|high|xhigh)$/, "");
   return ANTIGRAVITY_TO_PUBLIC_API_MODEL_MAP.get(base);
 }
 function resolveModelForHeaderStyle(requestedModel, headerStyle) {
@@ -2184,10 +2238,13 @@ function resolveModelForHeaderStyle(requestedModel, headerStyle) {
   const isGemini3 = isGemini3OrLaterModel(requestedModel);
   if (headerStyle === "agy-sdk") {
     const modelWithTier = remapDroppedGeminiModel(requestedModel.replace(/^antigravity-/i, ""));
-    const stripped = modelWithTier.replace(/-(minimal|low|medium|high)$/i, "");
+    const stripped = modelWithTier.replace(/-(minimal|low|medium|high|xhigh)$/i, "");
     const transformedModel = mapAntigravityModelToPublicApi(stripped) ?? stripped;
+    const resolved = resolveModel(modelWithTier, false);
+    const thinkingLevel = resolved.thinkingLevel === void 0 ? void 0 : clampThinkingLevelForModel(resolved.thinkingLevel, stripped);
     return {
-      ...resolveModel(modelWithTier, false),
+      ...resolved,
+      ...thinkingLevel !== void 0 && thinkingLevel !== resolved.thinkingLevel ? { thinkingLevel, tier: thinkingLevel } : {},
       actualModel: transformedModel,
       quotaPreference: "agy-sdk",
       explicitQuota: false
@@ -2209,6 +2266,12 @@ var DEFAULT_MODALITIES = {
   input: ["text", "image", "pdf"],
   output: ["text"]
 };
+var GEMINI_4_XHIGH_VARIANTS = Object.freeze({
+  low: { thinkingLevel: "low" },
+  medium: { thinkingLevel: "medium" },
+  high: { thinkingLevel: "high" },
+  xhigh: { thinkingLevel: "xhigh" }
+});
 var OPENCODE_MODEL_DEFINITIONS = {
   "antigravity-gemini-3.8-flash": {
     name: "Gemini 3.8 Flash (Antigravity)",
@@ -2234,6 +2297,27 @@ var OPENCODE_MODEL_DEFINITIONS = {
       medium: { thinkingLevel: "medium" },
       high: { thinkingLevel: "high" }
     }
+  },
+  // Paid Google AI Pro or Ultra, like Argon. Antigravity serves it as
+  // gemini-4-hydrogen-{low,medium,high,xhigh} (see
+  // resolveAntigravityGemini4HydrogenBackendModel), with a 1M context.
+  "antigravity-gemini-4-hydrogen": {
+    name: "Gemini 4 Hydrogen (Antigravity)",
+    temperature: false,
+    limit: { context: 1048576, output: 65536 },
+    modalities: DEFAULT_MODALITIES,
+    variants: GEMINI_4_XHIGH_VARIANTS
+  },
+  // Same paid Pro or Ultra entitlement as Hydrogen. Antigravity serves it as
+  // gemini-4-neon-{low,medium,high,xhigh} (see
+  // resolveAntigravityGemini4NeonBackendModel) with the 256K output Google
+  // reports for it.
+  "antigravity-gemini-4-neon": {
+    name: "Gemini 4 Neon (Antigravity)",
+    temperature: false,
+    limit: { context: 1048576, output: 262144 },
+    modalities: DEFAULT_MODALITIES,
+    variants: GEMINI_4_XHIGH_VARIANTS
   }
 };
 function modelIdFromGeminiName(name) {
@@ -2261,6 +2345,9 @@ function defaultVariantsForModel(modelId) {
       low: { thinkingConfig: { thinkingBudget: 8192 } },
       max: { thinkingConfig: { thinkingBudget: 32768 } }
     };
+  }
+  if (isGemini4HydrogenModel(normalized) || isGemini4NeonModel(normalized)) {
+    return GEMINI_4_XHIGH_VARIANTS;
   }
   if (isGemini3OrLaterModel(normalized)) {
     if (normalized.includes("pro")) {
@@ -6515,7 +6602,7 @@ function isGeminiModel(model) {
 function isGemini3Model(model) {
   return isGemini3OrLaterModel(model);
 }
-var STRICT_SAMPLING_MODEL_REGEX = /^gemini-(?:3\.8-flash(?:-(?:low|medium|high|tiered))?|4-argon(?:-(?:low|medium|high))?)$/i;
+var STRICT_SAMPLING_MODEL_REGEX = /^gemini-(?:3\.8-flash(?:-(?:low|medium|high|tiered))?|4-argon(?:-(?:low|medium|high))?|4-(?:hydrogen|neon)(?:-(?:low|medium|high|xhigh))?)$/i;
 var DEPRECATED_SAMPLING_FIELDS = [
   "temperature",
   "topP",
@@ -8198,7 +8285,10 @@ function prepareAntigravityRequest(input3, init, accessToken, projectId, endpoin
               req.generationConfig
             );
             if (variantConfig?.thinkingLevel) {
-              tierThinkingLevel = variantConfig.thinkingLevel;
+              tierThinkingLevel = clampThinkingLevelForModel(
+                variantConfig.thinkingLevel,
+                effectiveModel
+              );
               tierThinkingBudget = void 0;
               break;
             }
@@ -8224,7 +8314,7 @@ function prepareAntigravityRequest(input3, init, accessToken, projectId, endpoin
         }
         const conversationKey = resolveConversationKeyFromRequests(requestObjects);
         const modelForCacheKey = effectiveModel.replace(
-          /-(minimal|low|medium|high)$/i,
+          /-(minimal|low|medium|high|xhigh)$/i,
           ""
         );
         signatureSessionKey = buildSignatureSessionKey(
@@ -8292,7 +8382,10 @@ function prepareAntigravityRequest(input3, init, accessToken, projectId, endpoin
           `[ThinkingResolution] rawModel=${rawModel} resolvedModel=${effectiveModel} resolvedTier=${tierThinkingLevel ?? "none"} variantLevel=${variantConfig?.thinkingLevel ?? "none"} variantBudget=${variantConfig?.thinkingBudget ?? "none"} providerOptions.google=${JSON.stringify(requestPayload.providerOptions?.google ?? null)} generationConfig.thinkingConfig=${JSON.stringify(rawGenerationConfig?.thinkingConfig ?? null)}`
         );
         if (variantConfig?.thinkingLevel && isGemini3) {
-          tierThinkingLevel = variantConfig.thinkingLevel;
+          tierThinkingLevel = clampThinkingLevelForModel(
+            variantConfig.thinkingLevel,
+            effectiveModel
+          );
           tierThinkingBudget = void 0;
         } else if (variantConfig?.thinkingBudget) {
           if (isGemini3) {
@@ -8787,7 +8880,7 @@ ${hint}`;
   if (headerStyle === "antigravity") {
     headers.set(
       "User-Agent",
-      isGemini4ArgonModel(effectiveModel) ? ANTIGRAVITY_ARGON_USER_AGENT : ANTIGRAVITY_CLI_USER_AGENT
+      isGemini4ArgonModel(effectiveModel) || isGemini4HydrogenModel(effectiveModel) || isGemini4NeonModel(effectiveModel) ? ANTIGRAVITY_ARGON_USER_AGENT : ANTIGRAVITY_CLI_USER_AGENT
     );
     headers.delete("X-Goog-Api-Client");
     headers.delete("Client-Metadata");
@@ -12218,7 +12311,7 @@ function canRouteAsPublicGeminiApiModel(model) {
   const m = model.toLowerCase();
   if (m.includes("claude")) return false;
   const isAntigravityPrefixed = m.startsWith("antigravity-");
-  const stripped = m.replace(/^antigravity-/, "").replace(/-(minimal|low|medium|high)$/, "");
+  const stripped = m.replace(/^antigravity-/, "").replace(/-(minimal|low|medium|high|xhigh)$/, "");
   if (mapAntigravityModelToPublicApi(stripped)) return true;
   if (getPublicGeminiApiModelIds()?.has(stripped)) return true;
   if (isAntigravityPrefixed) {
@@ -12257,7 +12350,9 @@ var PUBLIC_GEMINI_API_MODEL_SUGGESTIONS = [
   "gemini-3.1-pro-preview",
   "gemini-3.1-flash-lite",
   "gemini-3.8-flash",
-  "gemini-4-argon"
+  "gemini-4-argon",
+  "gemini-4-hydrogen",
+  "gemini-4-neon"
 ];
 var ANTIGRAVITY_ONLY_BARE_GEMINI_IDS = /* @__PURE__ */ new Set([
   "gemini-3-pro",
@@ -12355,7 +12450,7 @@ function isRecord(value) {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 function toThinkingTier(value) {
-  if (value === "low" || value === "medium" || value === "high") return value;
+  if (value === "low" || value === "medium" || value === "high" || value === "xhigh") return value;
   return void 0;
 }
 function mergeExtraBody(payload) {
@@ -12389,7 +12484,10 @@ function applyAgySdkGeminiBodyTransforms(payload, model, thinkingLevel) {
   const existingThinkingConfig = isRecord(generationConfig.thinkingConfig) ? generationConfig.thinkingConfig : extraThinkingConfig ? { ...extraThinkingConfig } : {};
   if (isGemini3Model(model)) {
     const resolvedLevel = variantConfig?.thinkingLevel ?? (typeof existingThinkingConfig.thinkingLevel === "string" ? existingThinkingConfig.thinkingLevel : void 0) ?? (variantConfig?.thinkingBudget !== void 0 ? thinkingLevelFromBudget(variantConfig.thinkingBudget) : void 0) ?? thinkingLevel ?? "low";
-    existingThinkingConfig.thinkingLevel = resolvedLevel;
+    existingThinkingConfig.thinkingLevel = clampThinkingLevelForModel(
+      resolvedLevel,
+      model
+    );
     if (variantConfig?.includeThoughts !== void 0) {
       existingThinkingConfig.includeThoughts = variantConfig.includeThoughts;
     } else if (typeof existingThinkingConfig.includeThoughts !== "boolean") {
@@ -13509,8 +13607,9 @@ function createNoUsableCredentialsResponse(urlString, detail) {
 }
 function createUltraRequiredResponse(urlString, accountCount2) {
   const requestedModel = extractRequestedGeminiModel(urlString) ?? extractModelFromUrl(urlString) ?? void 0;
+  const modelLabel = isGemini4HydrogenModel(requestedModel ?? "") ? "Gemini 4 Hydrogen" : isGemini4NeonModel(requestedModel ?? "") ? "Gemini 4 Neon" : isGemini4ArgonModel(requestedModel ?? "") ? "Gemini 4 Argon" : "This model";
   return createSyntheticErrorResponse(
-    ultraRequiredMessage("Gemini 4 Argon", accountCount2),
+    ultraRequiredMessage(modelLabel, accountCount2),
     requestedModel,
     "gemini"
   );
@@ -13962,7 +14061,7 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
             const abortSignal = init?.signal ?? void 0;
             const triedSwitchIndices = /* @__PURE__ */ new Set();
             let emptyResponseAttempts = 0;
-            const isUltraOnlyRequest = isGemini4ArgonModel(model ?? "");
+            const isUltraOnlyRequest = isGemini4ArgonModel(model ?? "") || isGemini4HydrogenModel(model ?? "") || isGemini4NeonModel(model ?? "");
             const allAccountsRefusedUltra = () => {
               const enabled = accountManager.getEnabledAccounts();
               return enabled.length > 0 && enabled.every((acc) => isUltraModelRefused(acc.parts.refreshToken));

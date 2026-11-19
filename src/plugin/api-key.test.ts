@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  __testExports,
   createAntigravityOnlyModelErrorResponse,
   enhanceAgySdkErrorResponse,
   extractRequestedGeminiModel,
@@ -247,6 +248,12 @@ describe("api-key agy sdk support", () => {
     ["antigravity-gemini-3.6-flash", "gemini-3.8-flash", "high"],
     ["antigravity-gemini-3.8-flash-medium", "gemini-3.8-flash", "medium"],
     ["antigravity-gemini-4-argon", "gemini-4-argon", "high"],
+    ["antigravity-gemini-4-hydrogen", "gemini-4-hydrogen", "high"],
+    ["antigravity-gemini-4-hydrogen-minimal", "gemini-4-hydrogen", "low"],
+    ["antigravity-gemini-4-hydrogen-xhigh", "gemini-4-hydrogen", "xhigh"],
+    ["antigravity-gemini-4-neon", "gemini-4-neon", "high"],
+    ["antigravity-gemini-4-neon-minimal", "gemini-4-neon", "low"],
+    ["antigravity-gemini-4-neon-xhigh", "gemini-4-neon", "xhigh"],
   ])("routes %s through the public API as %s with strict sampling controls", async (requested, actual, thinkingLevel) => {
     const prepared = await prepareAgySdkGeminiRequest(
       `https://generativelanguage.googleapis.com/v1beta/models/${requested}:generateContent`,
@@ -277,6 +284,29 @@ describe("api-key agy sdk support", () => {
         },
       },
     });
+  });
+
+  it.each([
+    ["antigravity-gemini-4-argon", "xhigh", "high"],
+    ["antigravity-gemini-4-hydrogen", "minimal", "low"],
+    ["antigravity-gemini-4-hydrogen", "xhigh", "xhigh"],
+    ["antigravity-gemini-4-neon", "xhigh", "xhigh"],
+  ])("clamps a hand-written %s variant thinking level %s to %s on the public API", async (requested, requestedLevel, thinkingLevel) => {
+    const prepared = await prepareAgySdkGeminiRequest(
+      `https://generativelanguage.googleapis.com/v1beta/models/${requested}:generateContent`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          contents: [],
+          providerOptions: { google: { thinkingLevel: requestedLevel } },
+        }),
+      },
+      { label: "env", apiKey: "test-key" },
+    );
+    const body = (await readPreparedBody(prepared.init.body)) as {
+      generationConfig?: { thinkingConfig?: { thinkingLevel?: string } };
+    };
+    expect(body.generationConfig?.thinkingConfig?.thinkingLevel).toBe(thinkingLevel);
   });
 
   it("routes dropped antigravity-gemini-3.7-flash through the public API as gemini-3.8-flash", async () => {
@@ -698,6 +728,8 @@ describe("createAntigravityOnlyModelErrorResponse", () => {
     expect(message).toContain("opencode auth login");
     expect(message).toContain("api_key_fallback");
     expect(message).toContain("Public-API models known to work");
+    expect(message).toContain("gemini-4-hydrogen");
+    expect(message).toContain("gemini-4-neon");
   });
 
   it("does NOT include the '(Underlying Gemini API error: ...)' line — there's no upstream cause", async () => {
@@ -714,5 +746,17 @@ describe("createAntigravityOnlyModelErrorResponse", () => {
     expect(message).toContain("gemini-nonexistent-v9");
     expect(message).toContain("forwarded to the public Gemini API verbatim");
     expect(message).not.toContain("Antigravity Code Assist");
+  });
+});
+
+describe("toThinkingTier", () => {
+  it("accepts xhigh, the Gemini 4 Hydrogen level", () => {
+    expect(__testExports.toThinkingTier("xhigh")).toBe("xhigh");
+  });
+
+  it("still rejects levels the backends do not take", () => {
+    expect(__testExports.toThinkingTier("minimal")).toBeUndefined();
+    expect(__testExports.toThinkingTier("turbo")).toBeUndefined();
+    expect(__testExports.toThinkingTier(undefined)).toBeUndefined();
   });
 });
