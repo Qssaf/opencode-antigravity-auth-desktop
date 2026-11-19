@@ -80,6 +80,7 @@ Accept: text/event-stream
 |------------|----------|------|--------|
 | Gemini 4 Argon Low / Medium / High | `gemini-4-argon-low` / `-medium` / `-high` | Google | ⚠️ Paid Google AI Pro or Ultra only; served only to a new enough client User-Agent (`antigravity/cli/1.3.4 ...`); the bare `gemini-4-argon` id is not served |
 | Gemini 4 Hydrogen Low / Medium / High / XHigh | `gemini-4-hydrogen-low` / `-medium` / `-high` / `-xhigh` | Google | ⚠️ Paid Google AI Pro or Ultra only; served only to a new enough client User-Agent (`antigravity/cli/1.3.4 ...`); the bare `gemini-4-hydrogen` id is not served |
+| Gemini 4 Neon Low / Medium / High / XHigh | `gemini-4-neon-low` / `-medium` / `-high` / `-xhigh` | Google | ⚠️ Paid Google AI Pro or Ultra only; served only to a new enough client User-Agent (`antigravity/cli/1.3.4 ...`); the bare `gemini-4-neon` id is not served |
 | Gemini 3.8 Flash Low / Medium / High | `gemini-3.8-flash-low` / `-medium` / `-high` | Google | ✅ Verified |
 | Gemini 3.1 Pro High / Low | `gemini-pro-agent` / `gemini-3.1-pro-low` | Google | ❌ No longer served |
 | Gemini 3 Flash, 3.1 Flash-Lite, 2.5 | `gemini-3-flash`, `gemini-3.1-flash-lite`, ... | Google | ❌ No longer served |

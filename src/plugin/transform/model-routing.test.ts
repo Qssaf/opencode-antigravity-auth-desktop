@@ -77,6 +77,9 @@ describe("retired and renamed Antigravity ids", () => {
     "gemini-4-argon-low",
     "gemini-4-hydrogen-high",
     "gemini-4-hydrogen-xhigh",
+    "gemini-4-neon",
+    "gemini-4-neon-high",
+    "gemini-4-neon-xhigh",
     // Models Google may add later are not treated as retired.
     "gemini-3.9-flash",
     "gemini-3.8-pro",
@@ -117,6 +120,9 @@ describe("resolveAntigravityGeminiBackend", () => {
     ["gemini-3.8-flash-medium", "minimal", "gemini-3.8-flash-low", "low"],
     ["gemini-4-argon-medium", "minimal", "gemini-4-argon-low", "low"],
     ["gemini-4-argon", "high", "gemini-4-argon-high", "high"],
+    ["gemini-4-neon", "minimal", "gemini-4-neon-low", "low"],
+    ["gemini-4-neon", "xhigh", "gemini-4-neon-xhigh", "xhigh"],
+    ["gemini-4-neon", "medium", "gemini-4-neon-medium", "medium"],
   ])("%s with %s -> %s / %s", (model, level, backend, sentLevel) => {
     expect(resolveAntigravityGeminiBackend(model, level)).toEqual({ model: backend, thinkingLevel: sentLevel });
   });
@@ -210,9 +216,36 @@ describe("prepareAntigravityRequest wire model", () => {
     expect(result.effectiveModel).toBe(backend);
   });
 
+  it.each([
+    [undefined, "gemini-4-neon-high", "high"],
+    ["minimal", "gemini-4-neon-low", "low"],
+    ["low", "gemini-4-neon-low", "low"],
+    ["medium", "gemini-4-neon-medium", "medium"],
+    ["high", "gemini-4-neon-high", "high"],
+    ["xhigh", "gemini-4-neon-xhigh", "xhigh"],
+  ])("sends Gemini 4 Neon with variant %s as %s", (level, backend, sentLevel) => {
+    const { result, body, thinking } = send(
+      "antigravity-gemini-4-neon",
+      level ? { includeThoughts: true, thinkingLevel: level } : undefined,
+    );
+    expect(body.model).toBe(backend);
+    expect(thinking).toMatchObject({ thinkingLevel: sentLevel });
+    expect(thinking.thinkingBudget).toBeUndefined();
+    expect(result.effectiveModel).toBe(backend);
+  });
+
+  it.each([
+    ["gemini-4-neon", "gemini-4-neon-high"],
+    ["gemini-4-neon-xhigh", "gemini-4-neon-xhigh"],
+    ["antigravity-gemini-4-neon-medium", "gemini-4-neon-medium"],
+  ])("never sends the bare %s id, which answers HTTP 404", (model, backend) => {
+    expect(send(model, undefined).body.model).toBe(backend);
+  });
+
   it("sends minimal as low where the backend rejects minimal", () => {
     expect(send("gemini-3.8-flash", { includeThoughts: true, thinkingLevel: "minimal" }).thinking).toMatchObject({ thinkingLevel: "low" });
     expect(send("antigravity-gemini-4-argon", { includeThoughts: true, thinkingLevel: "minimal" }).thinking).toMatchObject({ thinkingLevel: "low" });
+    expect(send("antigravity-gemini-4-neon", { includeThoughts: true, thinkingLevel: "minimal" }).thinking).toMatchObject({ thinkingLevel: "low" });
   });
 
   it("never sends a retired or renamed backend id for any advertised model and variant", () => {
@@ -228,11 +261,12 @@ describe("prepareAntigravityRequest wire model", () => {
 });
 
 describe("advertised catalog", () => {
-  it("offers only Gemini 3.8 Flash, Gemini 4 Argon and Gemini 4 Hydrogen on Antigravity", () => {
+  it("offers only Gemini 3.8 Flash, Gemini 4 Argon, Hydrogen and Neon on Antigravity", () => {
     expect(Object.keys(OPENCODE_MODEL_DEFINITIONS).filter((id) => id.startsWith("antigravity-")).sort()).toEqual([
       "antigravity-gemini-3.8-flash",
       "antigravity-gemini-4-argon",
       "antigravity-gemini-4-hydrogen",
+      "antigravity-gemini-4-neon",
     ]);
     for (const id of [
       "antigravity-gemini-3-pro",
@@ -254,6 +288,12 @@ describe("advertised catalog", () => {
       "high",
     ]);
     expect(Object.keys(OPENCODE_MODEL_DEFINITIONS["antigravity-gemini-4-hydrogen"]?.variants ?? {})).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(Object.keys(OPENCODE_MODEL_DEFINITIONS["antigravity-gemini-4-neon"]?.variants ?? {})).toEqual([
       "low",
       "medium",
       "high",

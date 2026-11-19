@@ -104,7 +104,7 @@ export interface ResolvedModel {
   thinkingBudget?: number;
   /**
    * The tier suffix that was extracted. Intentionally never "xhigh": that level
-   * is Hydrogen-only and comes from its own model-name regex in the resolver.
+   * is Hydrogen/Neon-only and comes from its own model-name regex in the resolver.
    */
   tier?: ThinkingTier;
   /** Whether this is a thinking-capable model */

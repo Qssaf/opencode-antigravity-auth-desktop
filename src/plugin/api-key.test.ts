@@ -251,6 +251,9 @@ describe("api-key agy sdk support", () => {
     ["antigravity-gemini-4-hydrogen", "gemini-4-hydrogen", "high"],
     ["antigravity-gemini-4-hydrogen-minimal", "gemini-4-hydrogen", "low"],
     ["antigravity-gemini-4-hydrogen-xhigh", "gemini-4-hydrogen", "xhigh"],
+    ["antigravity-gemini-4-neon", "gemini-4-neon", "high"],
+    ["antigravity-gemini-4-neon-minimal", "gemini-4-neon", "low"],
+    ["antigravity-gemini-4-neon-xhigh", "gemini-4-neon", "xhigh"],
   ])("routes %s through the public API as %s with strict sampling controls", async (requested, actual, thinkingLevel) => {
     const prepared = await prepareAgySdkGeminiRequest(
       `https://generativelanguage.googleapis.com/v1beta/models/${requested}:generateContent`,
@@ -287,6 +290,7 @@ describe("api-key agy sdk support", () => {
     ["antigravity-gemini-4-argon", "xhigh", "high"],
     ["antigravity-gemini-4-hydrogen", "minimal", "low"],
     ["antigravity-gemini-4-hydrogen", "xhigh", "xhigh"],
+    ["antigravity-gemini-4-neon", "xhigh", "xhigh"],
   ])("clamps a hand-written %s variant thinking level %s to %s on the public API", async (requested, requestedLevel, thinkingLevel) => {
     const prepared = await prepareAgySdkGeminiRequest(
       `https://generativelanguage.googleapis.com/v1beta/models/${requested}:generateContent`,
@@ -725,6 +729,7 @@ describe("createAntigravityOnlyModelErrorResponse", () => {
     expect(message).toContain("api_key_fallback");
     expect(message).toContain("Public-API models known to work");
     expect(message).toContain("gemini-4-hydrogen");
+    expect(message).toContain("gemini-4-neon");
   });
 
   it("does NOT include the '(Underlying Gemini API error: ...)' line — there's no upstream cause", async () => {

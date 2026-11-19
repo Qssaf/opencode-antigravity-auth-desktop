@@ -72,13 +72,13 @@ export const ANTIGRAVITY_CLI_USER_AGENT =
   "antigravity/cli/1.1.13 (aidev_client; os_type=linux; arch=amd64; cl=964361259; auth_method=consumer)";
 
 /**
- * User-Agent of a newer Antigravity CLI, sent for Gemini 4 Argon and Hydrogen
- * requests only.
+ * User-Agent of a newer Antigravity CLI, sent for Gemini 4 Argon, Hydrogen and
+ * Neon requests only.
  * The backend serves those models only to new enough clients: other Antigravity
  * clients report 404 "Requested entity was not found" for every
- * gemini-4-argon-* and gemini-4-hydrogen-* id from older client versions, on
- * Ultra and paid Pro accounts alike, and 200 with this one. Other models keep
- * the CLI UA above, which is known to serve them.
+ * gemini-4-argon-*, gemini-4-hydrogen-* and gemini-4-neon-* id from older client
+ * versions, on Ultra and paid Pro accounts alike, and 200 with this one. Other
+ * models keep the CLI UA above, which is known to serve them.
  */
 export const ANTIGRAVITY_ARGON_USER_AGENT =
   "antigravity/cli/1.3.4 (os_type=linux; arch=amd64; aidev_client; auth_method=oauth)";

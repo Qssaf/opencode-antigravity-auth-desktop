@@ -13,6 +13,8 @@ const MODELS: ModelTest[] = [
   { model: "google/antigravity-gemini-4-argon", category: "antigravity-gemini" },
   // Paid Google AI Pro or Ultra; other accounts get the plan message.
   { model: "google/antigravity-gemini-4-hydrogen", category: "antigravity-gemini" },
+  // Paid Google AI Pro or Ultra: the newest Gemini 4 model, high by default.
+  { model: "google/antigravity-gemini-4-neon", category: "antigravity-gemini" },
 ];
 
 const TEST_PROMPT = "Reply with exactly one word: WORKING";

@@ -175,6 +175,27 @@ describe("Antigravity quota aggregation", () => {
     });
     expect(summary.groups["gemini-pro"]).toBeUndefined();
   });
+
+  it("puts Gemini 4 Neon in the shared Gemini Flash group with 3.8 Flash and Hydrogen", () => {
+    const summary = __testExports.aggregateQuota({
+      "gemini-3.8-flash-low": {
+        displayName: "Gemini 3.8 Flash Low",
+        quotaInfo: { remainingFraction: 1, resetTime: "2026-05-26T18:00:00Z" },
+      },
+      "gemini-4-hydrogen-high": {
+        displayName: "Gemini 4 Hydrogen High",
+        quotaInfo: { remainingFraction: 0.4, resetTime: "2026-05-27T18:00:00Z" },
+      },
+      "gemini-4-neon-xhigh": {
+        displayName: "Gemini 4 Neon Xhigh",
+        quotaInfo: { remainingFraction: 0.4, resetTime: "2026-05-27T18:00:00Z" },
+      },
+    });
+
+    expect(summary.groups["gemini-flash"]?.modelCount).toBe(3);
+    expect(summary.groups["gemini-pro"]).toBeUndefined();
+    expect(summary.modelCount).toBe(3);
+  });
 });
 
 describe("mapWithConcurrency", () => {
