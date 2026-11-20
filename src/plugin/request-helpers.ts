@@ -3153,3 +3153,40 @@ data: ${JSON.stringify({ type: "message_stop" })}
     },
   });
 }
+
+/**
+ * Text Google refuses on Antigravity: a prompt containing it gets an immediate
+ * bare 429 "Resource has been exhausted" on every account, quota or not
+ * (verified 2026-11-20 against OpenCode 2.2.5's prompt; every other
+ * `tools.opencode.*` name passes).
+ */
+const REFUSED_SYSTEM_TEXT = "tools.opencode.session_move";
+// A Code Mode catalog entry: its header line through the line that ends with
+// its "// description", never past the next "- " list item.
+const REFUSED_CATALOG_ENTRY = /^[ \t]*- tools\.opencode\.session_move\([^\n]*?(?:\n(?![ \t]*- )[^\n]*?)*? \/\/ [^\n]*(?:\n|$)/gm;
+
+/**
+ * Removes refused text from a system prompt: OpenCode's Code Mode catalog
+ * entry for the tool, then any other line naming it. The model loses that one
+ * tool; the request goes through.
+ */
+export function stripRefusedSystemText(text: string): string {
+  if (!text.includes(REFUSED_SYSTEM_TEXT)) return text;
+  return text
+    .replace(REFUSED_CATALOG_ENTRY, "")
+    .split("\n")
+    .filter((line) => !line.includes(REFUSED_SYSTEM_TEXT))
+    .join("\n");
+}
+
+/** `stripRefusedSystemText` over system prompt parts; a part left empty is dropped. */
+export function stripRefusedSystemParts(parts: unknown[]): unknown[] {
+  return parts.flatMap((part) => {
+    if (!part || typeof part !== "object") return [part];
+    const text = (part as { text?: unknown }).text;
+    if (typeof text !== "string") return [part];
+    const stripped = stripRefusedSystemText(text);
+    if (stripped === text) return [part];
+    return stripped.trim() ? [{ ...part, text: stripped }] : [];
+  });
+}

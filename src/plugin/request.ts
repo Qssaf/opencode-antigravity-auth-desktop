@@ -45,6 +45,8 @@ import {
   resolveThinkingConfig,
   readHostSessionKey,
   rewriteAntigravityPreviewAccessError,
+  stripRefusedSystemParts,
+  stripRefusedSystemText,
   transformThinkingParts,
   type AntigravityApiBody,
 } from "./request-helpers";
@@ -2211,6 +2213,7 @@ export function prepareAntigravityRequest(
           ) {
             const sys = existingSystemInstruction as Record<string, unknown>;
             sys.role = "user";
+            if (Array.isArray(sys.parts)) sys.parts = stripRefusedSystemParts(sys.parts);
             if (Array.isArray(sys.parts) && sys.parts.length > 0) {
               const firstPart = sys.parts[0] as Record<string, unknown>;
               if (firstPart && typeof firstPart.text === "string") {
@@ -2233,7 +2236,7 @@ export function prepareAntigravityRequest(
                   text:
                     ANTIGRAVITY_SYSTEM_INSTRUCTION +
                     "\n\n" +
-                    existingSystemInstruction,
+                    stripRefusedSystemText(existingSystemInstruction),
                 },
               ],
             };

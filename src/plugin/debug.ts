@@ -383,23 +383,34 @@ export function logRateLimitEvent(
   });
 }
 
+/**
+ * One entry per account: the longest wait among its rate-limit marks for the
+ * family. Marks are keyed per quota and model ("gemini-antigravity:<model>"),
+ * so a lookup of the bare family key alone showed every account as ready.
+ */
+export function formatRateLimitSnapshot(
+  family: string,
+  accounts: Array<{ index: number; email?: string; rateLimitResetTimes?: Record<string, number | undefined> }>,
+  now = Date.now(),
+): string {
+  return accounts
+    .map((account) => {
+      const label = formatAccountLabel(account.email, account.index);
+      const resets = Object.entries(account.rateLimitResetTimes ?? {})
+        .filter(([key, reset]) => (key === family || key.startsWith(`${family}-`)) && typeof reset === "number")
+        .map(([, reset]) => reset as number);
+      const remaining = Math.max(0, ...resets.map((reset) => reset - now));
+      return remaining > 0 ? `${label}=wait ${Math.ceil(remaining / 1000)}s` : `${label}=ready`;
+    })
+    .join(" | ");
+}
+
 export function logRateLimitSnapshot(
   family: string,
-  accounts: Array<{ index: number; email?: string; rateLimitResetTimes?: { claude?: number; gemini?: number } }>,
+  accounts: Array<{ index: number; email?: string; rateLimitResetTimes?: Record<string, number | undefined> }>,
 ): void {
   runWithDebugEnabled(() => {
-    const now = Date.now();
-    const entries = accounts.map((account) => {
-      const label = formatAccountLabel(account.email, account.index);
-      const reset = account.rateLimitResetTimes?.[family as "claude" | "gemini"];
-      if (typeof reset !== "number") {
-        return `${label}=ready`;
-      }
-      const remaining = Math.max(0, reset - now);
-      const seconds = Math.ceil(remaining / 1000);
-      return `${label}=wait ${seconds}s`;
-    });
-    logDebug(`[RateLimit] snapshot family=${family} ${entries.join(" | ")}`);
+    logDebug(`[RateLimit] snapshot family=${family} ${formatRateLimitSnapshot(family, accounts)}`);
   });
 }
 

@@ -281,10 +281,14 @@ async function performRefresh(
     if (error instanceof AntigravityTokenRefreshError) {
       throw error;
     }
-    log.error("Unexpected token refresh error", {
-      error: controller.signal.aborted ? `timed out after ${TOKEN_REFRESH_TIMEOUT_MS}ms` : String(error),
+    const cause = controller.signal.aborted ? `timed out after ${TOKEN_REFRESH_TIMEOUT_MS}ms` : String(error);
+    log.error("Unexpected token refresh error", { error: cause });
+    // Thrown, not returned as undefined: callers then report the cause instead of a bare "refresh failed".
+    throw new AntigravityTokenRefreshError({
+      message: `Antigravity token refresh failed: ${cause}`,
+      status: 0,
+      statusText: "",
     });
-    return undefined;
   } finally {
     clearTimeout(timeout);
   }

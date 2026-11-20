@@ -120,10 +120,12 @@ describe("dynamic model discovery helpers", () => {
       "gemini-3.8-flash": {
         displayName: "Gemini 3.8 Flash Preview",
         modelName: "gemini-3.8-flash",
+        supportsThinking: true,
       },
       "gemini-3.8-pro": {
         displayName: "Gemini 3.8 Pro Preview",
         modelName: "gemini-3.8-pro",
+        supportsThinking: true,
       },
       "claude-sonnet-4-6": {
         displayName: "Claude Sonnet 4.6",
@@ -149,5 +151,44 @@ describe("dynamic model discovery helpers", () => {
       name: "Claude Sonnet 4.6 (Antigravity)",
       limit: { context: 200000, output: 64000 },
     });
+  });
+
+  it("leaves out models Google marks disabled for the account", () => {
+    const models = modelsFromAntigravityAvailableModels({
+      "gemini-4-hydrogen-disabled": { displayName: "Gemini 4 Hydrogen", disabled: true },
+      "gemini-3.9-flash": { displayName: "Gemini 3.9 Flash" },
+    });
+
+    expect(Object.keys(models)).toEqual(["antigravity-gemini-3.9-flash"]);
+  });
+
+  it("offers Gemini 4 Hydrogen Sonar when an account is served it, though Google leaves it unlabeled", () => {
+    const models = modelsFromAntigravityAvailableModels({
+      "gemini-4-hydrogen-sonar": {},
+      "gemini-3.8-flash-tiered": {},
+      tab_flash_lite_preview: {},
+    });
+
+    expect(Object.keys(models)).toEqual(["antigravity-gemini-4-hydrogen-sonar"]);
+    expect(models["antigravity-gemini-4-hydrogen-sonar"]).toMatchObject({
+      name: "Gemini 4 Hydrogen Sonar (Antigravity)",
+      limit: { context: 1048576, output: 65536 },
+      variants: {
+        low: { thinkingLevel: "low" },
+        medium: { thinkingLevel: "medium" },
+        high: { thinkingLevel: "high" },
+      },
+    });
+  });
+
+  it("gives thinking variants only to models Google says think", () => {
+    const models = modelsFromAntigravityAvailableModels({
+      "gemini-3.1-flash-image": { displayName: "Gemini 3.1 Flash Image" },
+      "gemini-3.9-flash": { displayName: "Gemini 3.9 Flash", supportsThinking: true },
+    });
+
+    expect(Object.keys(models)).toEqual(["antigravity-gemini-3.1-flash-image", "antigravity-gemini-3.9-flash"]);
+    expect(models["antigravity-gemini-3.1-flash-image"]?.variants).toBeUndefined();
+    expect(Object.keys(models["antigravity-gemini-3.9-flash"]?.variants ?? {})).toEqual(["minimal", "low", "medium", "high"]);
   });
 });

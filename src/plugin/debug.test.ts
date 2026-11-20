@@ -97,4 +97,15 @@ describe("debug sink policy", () => {
       "https://generativelanguage.googleapis.com/v1beta/models?key=%5Bredacted%5D&alt=sse",
     )
   })
+
+  it("shows an account rate-limited for any model of the family in the rate-limit snapshot", async () => {
+    const { formatRateLimitSnapshot } = await import("./debug")
+    const now = 1_000_000
+
+    expect(formatRateLimitSnapshot("gemini", [
+      { index: 0, email: "a@example.com", rateLimitResetTimes: { "gemini-antigravity:antigravity-gemini-3.8-flash": now + 60_000, claude: now + 999_000 } },
+      { index: 1, email: "b@example.com", rateLimitResetTimes: { "gemini-antigravity:antigravity-gemini-3.8-flash": now - 1 } },
+      { index: 2, email: "c@example.com", rateLimitResetTimes: {} },
+    ], now)).toBe("a@example.com=wait 60s | b@example.com=ready | c@example.com=ready")
+  })
 })

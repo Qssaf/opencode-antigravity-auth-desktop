@@ -51,6 +51,9 @@ export interface GeminiApiModel {
 export interface AntigravityAvailableModel {
   displayName?: string;
   modelName?: string;
+  /** Listed but not served to this account (a paid-plan model on a free one). */
+  disabled?: boolean;
+  supportsThinking?: boolean;
 }
 
 export type AntigravityAvailableModels = Record<string, AntigravityAvailableModel>;
@@ -77,6 +80,26 @@ export const OPENCODE_MODEL_DEFINITIONS: OpencodeModelDefinitions = {
   // resolveAntigravityGemini4ArgonBackendModel), with a 1M context like the API.
   "antigravity-gemini-4-argon": {
     name: "Gemini 4 Argon (Antigravity)",
+    temperature: false,
+    limit: { context: 1048576, output: 65536 },
+    modalities: DEFAULT_MODALITIES,
+    variants: {
+      low: { thinkingLevel: "low" },
+      medium: { thinkingLevel: "medium" },
+      high: { thinkingLevel: "high" },
+    },
+  },
+};
+
+/**
+ * Chat models Antigravity serves under an id it leaves unlabeled, offered only
+ * when an account's `fetchAvailableModels` lists them. Gemini 4 Hydrogen Sonar
+ * is served to free accounts (with quota) while the labeled Gemini 4 Hydrogen
+ * is disabled there (seen 2026-11-20); it takes low, medium and high thinking.
+ */
+const UNLABELED_ANTIGRAVITY_MODELS: Readonly<Record<string, OpencodeModelDefinition>> = {
+  "gemini-4-hydrogen-sonar": {
+    name: "Gemini 4 Hydrogen Sonar (Antigravity)",
     temperature: false,
     limit: { context: 1048576, output: 65536 },
     modalities: DEFAULT_MODALITIES,
@@ -197,8 +220,14 @@ export function modelsFromAntigravityAvailableModels(
   const definitions: OpencodeModelDefinitions = {};
 
   for (const [sourceId, entry] of Object.entries(models)) {
-    // Unlabeled entries are tab-completion, internal chat and "-tiered" routing
-    // ids, not models the Antigravity IDE offers for chat.
+    if (entry.disabled) continue;
+    const unlabeled = UNLABELED_ANTIGRAVITY_MODELS[sourceId];
+    if (unlabeled) {
+      definitions[`antigravity-${sourceId}`] = unlabeled;
+      continue;
+    }
+    // Other unlabeled entries are tab-completion, internal chat and "-tiered"
+    // routing ids, not models the Antigravity IDE offers for chat.
     if (!entry.displayName) continue;
     const modelId = antigravityModelIdFromEntry(sourceId, entry);
     if (!modelId) continue;
@@ -212,7 +241,7 @@ export function modelsFromAntigravityAvailableModels(
       continue;
     }
 
-    const variants = defaultVariantsForModel(modelId);
+    const variants = entry.supportsThinking ? defaultVariantsForModel(modelId) : undefined;
     const discovered: OpencodeModelDefinition = {
       name: entry.displayName ? `${entry.displayName} (Antigravity)` : `${titleFromModelId(modelId)} (Antigravity)`,
       limit: defaultLimitForModel(modelId),

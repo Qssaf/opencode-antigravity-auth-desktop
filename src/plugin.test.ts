@@ -108,6 +108,35 @@ describe("Gemini Flash-Lite routing", () => {
 });
 
 describe("createAntigravityPlugin provider models", () => {
+  it("keeps the last discovered Antigravity models when a token refresh cannot reach Google", async () => {
+    let googleReachable = true;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo) => {
+      const url = String(input);
+      if (url.includes("oauth2.googleapis.com")) {
+        if (!googleReachable) throw new Error("ECONNRESET");
+        return new Response(JSON.stringify({ access_token: "access", expires_in: 3600 }), { status: 200 });
+      }
+      if (url.includes("fetchAvailableModels")) {
+        return new Response(JSON.stringify({ models: { "gemini-4-hydrogen-sonar": {} } }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ models: [] }), { status: 200 });
+    }));
+
+    try {
+      const plugin = await createAntigravityPlugin("google")({ client, directory: process.cwd() });
+      const discover = () => plugin.provider?.models?.(
+        { id: "google", api: "https://generativelanguage.googleapis.com/v1beta", npm: "@ai-sdk/google", models: {} },
+        { auth: { type: "oauth", refresh: formatRefreshParts({ refreshToken: "discovery-token", projectId: "p" }), access: "", expires: 0 } },
+      );
+
+      expect((await discover())?.["antigravity-gemini-4-hydrogen-sonar"]).toBeDefined();
+      googleReachable = false;
+      expect((await discover())?.["antigravity-gemini-4-hydrogen-sonar"]).toBeDefined();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("returns runtime-shaped discovered models with static fallback", async () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo) => {
       const url = String(input);
@@ -197,6 +226,7 @@ describe("createAntigravityPlugin provider models", () => {
             "gemini-3.9-flash": {
               displayName: "Gemini 3.9 Flash (Registry)",
               modelName: "gemini-3.9-flash",
+              supportsThinking: true,
             },
           },
         }));
@@ -2144,6 +2174,141 @@ describe("retries like the Antigravity CLI", () => {
 
     expect(statuses).toEqual([503]);
     expect(calls).toHaveLength(2);
+  });
+});
+
+describe("a request Google refuses on every account", () => {
+  let tmpConfigDir: string;
+  const savedEnv: Record<string, string | undefined> = {};
+  const SSE_OK =
+    'data: {"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"},"finishReason":"STOP","index":0}]}\n\n';
+  // What Google answers a prompt it refuses (2026-11-20): no reason, no retry delay.
+  const BARE_429 = JSON.stringify({
+    error: { code: 429, message: "Resource has been exhausted (e.g. check quota).", status: "RESOURCE_EXHAUSTED" },
+  });
+
+  beforeEach(() => {
+    tmpConfigDir = join(tmpdir(), `opencode-antigravity-refused-${process.pid}-${Date.now()}`);
+    mkdirSync(tmpConfigDir, { recursive: true });
+    for (const key of ["OPENCODE_CONFIG_DIR", "OPENCODE_ANTIGRAVITY_API_KEYS", "GEMINI_API_KEY", "GOOGLE_API_KEY"]) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+    process.env.OPENCODE_CONFIG_DIR = tmpConfigDir;
+    vi.mocked(storageModule.loadAccounts).mockReset();
+    vi.mocked(storageModule.saveAccounts).mockReset();
+  });
+
+  afterEach(() => {
+    for (const [key, val] of Object.entries(savedEnv)) {
+      if (val === undefined) delete process.env[key];
+      else process.env[key] = val;
+    }
+    vi.unstubAllGlobals();
+    rmSync(tmpConfigDir, { recursive: true, force: true });
+  });
+
+  /** Accounts `ids` (three by default); `refuses(project, call)` says which answer the bare 429. */
+  async function run(refuses: (project: string, call: number) => boolean, requests = 1, ids = ["a", "b", "c"]) {
+    writeFileSync(join(tmpConfigDir, "antigravity.json"), JSON.stringify({}));
+    vi.mocked(storageModule.loadAccounts).mockResolvedValue({
+      version: 4,
+      accounts: ids.map((id) => ({
+        email: `${id}@example.com`, refreshToken: id, projectId: `p-${id}`, managedProjectId: `p-${id}`, addedAt: 0, lastUsed: 0, enabled: true,
+      })),
+      activeIndex: 0,
+    });
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      if (url.includes("GenerateContent")) {
+        const project = (JSON.parse(String(init?.body)) as { project: string }).project;
+        calls.push(project);
+        if (refuses(project, calls.length)) return new Response(BARE_429, { status: 429, headers: { "content-type": "application/json" } });
+        return new Response(SSE_OK, { status: 200, headers: { "content-type": "text/event-stream" } });
+      }
+      if (url.includes("oauth2.googleapis.com")) {
+        return new Response(JSON.stringify({ access_token: "access", expires_in: 3600 }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ models: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+
+    const plugin = await createAntigravityPlugin("google")({ client, directory: tmpConfigDir });
+    const loader = await plugin.auth.loader(async () => ({
+      type: "oauth" as const,
+      refresh: formatRefreshParts({ refreshToken: "a", projectId: "p-a", managedProjectId: "p-a" }),
+      access: "valid-access-token",
+      expires: Date.now() + 3_600_000,
+    }), { id: "google", api: "https://generativelanguage.googleapis.com/v1beta", npm: "@ai-sdk/google", models: {} });
+    const texts: string[] = [];
+    for (let n = 0; n < requests; n++) {
+      const res = await (loader as { fetch: typeof fetch }).fetch(
+        "https://generativelanguage.googleapis.com/v1beta/models/antigravity-gemini-3.8-flash:streamGenerateContent?alt=sse",
+        {
+          method: "POST",
+          headers: { "x-opencode-session": `ses_refused_${n}` },
+          body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "hi" }] }] }),
+        },
+      );
+      texts.push(await res.text());
+    }
+    return { texts, calls };
+  }
+
+  it("says Google refused the request after two accounts refuse it, and marks no account rate-limited", async () => {
+    const marked = vi.spyOn(AccountManager.prototype, "markRateLimitedWithReason");
+    const { texts, calls } = await run(() => true, 2);
+
+    expect(marked).not.toHaveBeenCalled();
+    marked.mockRestore();
+
+    for (const text of texts) {
+      expect(text).toContain("Google refused this request");
+      expect(text).not.toContain("rate-limited");
+    }
+    // Two accounts are enough to tell, and neither is held back for the next request.
+    expect(calls).toHaveLength(4);
+    expect(new Set(calls).size).toBeGreaterThanOrEqual(2);
+  });
+
+  it("says Google refused the request when the only account refuses it twice, without waiting for a reset", async () => {
+    vi.mocked(agyWire.agyRetryDelayMs).mockImplementation(() => 5);
+    const marked = vi.spyOn(AccountManager.prototype, "markRateLimitedWithReason");
+    const { texts, calls } = await run(() => true, 1, ["a"]);
+
+    expect(texts[0]).toContain("Google refused this request");
+    // One retry, as agy retries a 429, then the answer.
+    expect(calls).toEqual(["p-a", "p-a"]);
+    expect(marked).not.toHaveBeenCalled();
+    marked.mockRestore();
+    vi.mocked(agyWire.agyRetryDelayMs).mockRestore();
+  });
+
+  it("leaves the only account unmarked when its retry after a bare 429 succeeds", async () => {
+    vi.mocked(agyWire.agyRetryDelayMs).mockImplementation(() => 5);
+    const marked = vi.spyOn(AccountManager.prototype, "markRateLimitedWithReason");
+    const { texts, calls } = await run((_project, call) => call === 1, 1, ["a"]);
+
+    expect(texts[0]).toContain('"hi"');
+    expect(calls).toEqual(["p-a", "p-a"]);
+    expect(marked).not.toHaveBeenCalled();
+    marked.mockRestore();
+    vi.mocked(agyWire.agyRetryDelayMs).mockRestore();
+  });
+
+  it("marks the refusing account when another account answers the same request", async () => {
+    const marked = vi.spyOn(AccountManager.prototype, "markRateLimitedWithReason");
+    const { texts, calls } = await run((project) => project === "p-a", 3);
+
+    // Account a is marked once, for the default 60 s wait, after b answered.
+    expect(marked.mock.calls.map(([account, , , , reason, retryMs]) => [account.parts.refreshToken, reason, retryMs])).toEqual([
+      ["a", "QUOTA_EXHAUSTED", 60_000],
+    ]);
+    marked.mockRestore();
+
+    expect(texts.every((text) => text.includes('"hi"'))).toBe(true);
+    // Rotation would come back to the first account on the third request; it refused, so it is skipped.
+    expect(calls).toEqual(["p-a", "p-b", "p-c", "p-b"]);
   });
 });
 

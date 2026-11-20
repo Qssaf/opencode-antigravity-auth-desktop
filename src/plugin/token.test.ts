@@ -45,14 +45,29 @@ describe("refreshAccessToken", () => {
       ) as unknown as typeof fetch;
 
       const pending = refreshAccessToken(baseAuth, createClient(), ANTIGRAVITY_PROVIDER_ID);
+      const outcome = expect(pending).rejects.toMatchObject({
+        name: "AntigravityTokenRefreshError",
+        message: expect.stringContaining(`timed out after ${TOKEN_REFRESH_TIMEOUT_MS}ms`),
+      });
       await vi.advanceTimersByTimeAsync(TOKEN_REFRESH_TIMEOUT_MS);
-
-      await expect(pending).resolves.toBeUndefined();
+      await outcome;
       // Not an invalid_grant: the account must not be counted as revoked.
       expect(getInvalidGrantStrikes("refresh-token")).toBe(0);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("says why a refresh failed when Google could not be reached", async () => {
+    global.fetch = vi.fn(async () => {
+      throw new Error("ECONNRESET");
+    }) as unknown as typeof fetch;
+
+    await expect(refreshAccessToken(baseAuth, createClient(), ANTIGRAVITY_PROVIDER_ID)).rejects.toMatchObject({
+      name: "AntigravityTokenRefreshError",
+      message: expect.stringContaining("ECONNRESET"),
+    });
+    expect(getInvalidGrantStrikes("refresh-token")).toBe(0);
   });
 
   it("updates the caller when refresh token is unchanged", async () => {

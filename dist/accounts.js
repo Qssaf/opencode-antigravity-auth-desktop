@@ -1457,20 +1457,17 @@ function logRateLimitEvent(accountIndex, email, family, status, retryAfterMs, bo
     }
   });
 }
+function formatRateLimitSnapshot(family, accounts, now = Date.now()) {
+  return accounts.map((account) => {
+    const label = formatAccountLabel(account.email, account.index);
+    const resets = Object.entries(account.rateLimitResetTimes ?? {}).filter(([key, reset]) => (key === family || key.startsWith(`${family}-`)) && typeof reset === "number").map(([, reset]) => reset);
+    const remaining = Math.max(0, ...resets.map((reset) => reset - now));
+    return remaining > 0 ? `${label}=wait ${Math.ceil(remaining / 1e3)}s` : `${label}=ready`;
+  }).join(" | ");
+}
 function logRateLimitSnapshot(family, accounts) {
   runWithDebugEnabled(() => {
-    const now = Date.now();
-    const entries = accounts.map((account) => {
-      const label = formatAccountLabel(account.email, account.index);
-      const reset = account.rateLimitResetTimes?.[family];
-      if (typeof reset !== "number") {
-        return `${label}=ready`;
-      }
-      const remaining = Math.max(0, reset - now);
-      const seconds = Math.ceil(remaining / 1e3);
-      return `${label}=wait ${seconds}s`;
-    });
-    logDebug(`[RateLimit] snapshot family=${family} ${entries.join(" | ")}`);
+    logDebug(`[RateLimit] snapshot family=${family} ${formatRateLimitSnapshot(family, accounts)}`);
   });
 }
 async function logResponseBody(context, response, status) {
@@ -2480,6 +2477,19 @@ var OPENCODE_MODEL_DEFINITIONS = {
     }
   }
 };
+var UNLABELED_ANTIGRAVITY_MODELS = {
+  "gemini-4-hydrogen-sonar": {
+    name: "Gemini 4 Hydrogen Sonar (Antigravity)",
+    temperature: false,
+    limit: { context: 1048576, output: 65536 },
+    modalities: DEFAULT_MODALITIES,
+    variants: {
+      low: { thinkingLevel: "low" },
+      medium: { thinkingLevel: "medium" },
+      high: { thinkingLevel: "high" }
+    }
+  }
+};
 function modelIdFromGeminiName(name) {
   if (!name) return null;
   const id = name.replace(/^models\//, "").trim();
@@ -2566,6 +2576,12 @@ function modelsFromGeminiApi(models) {
 function modelsFromAntigravityAvailableModels(models) {
   const definitions = {};
   for (const [sourceId, entry] of Object.entries(models)) {
+    if (entry.disabled) continue;
+    const unlabeled = UNLABELED_ANTIGRAVITY_MODELS[sourceId];
+    if (unlabeled) {
+      definitions[`antigravity-${sourceId}`] = unlabeled;
+      continue;
+    }
     if (!entry.displayName) continue;
     const modelId = antigravityModelIdFromEntry(sourceId, entry);
     if (!modelId) continue;
@@ -2573,7 +2589,7 @@ function modelsFromAntigravityAvailableModels(models) {
     if (isGemini2Model(backendId) || remapRetiredAntigravityGeminiModel(backendId) !== backendId || toAntigravityWireModel(backendId) !== backendId) {
       continue;
     }
-    const variants = defaultVariantsForModel(modelId);
+    const variants = entry.supportsThinking ? defaultVariantsForModel(modelId) : void 0;
     const discovered = {
       name: entry.displayName ? `${entry.displayName} (Antigravity)` : `${titleFromModelId(modelId)} (Antigravity)`,
       limit: defaultLimitForModel(modelId),
@@ -6296,6 +6312,22 @@ data: ${JSON.stringify({ type: "message_stop" })}
     }
   });
 }
+var REFUSED_SYSTEM_TEXT = "tools.opencode.session_move";
+var REFUSED_CATALOG_ENTRY = /^[ \t]*- tools\.opencode\.session_move\([^\n]*?(?:\n(?![ \t]*- )[^\n]*?)*? \/\/ [^\n]*(?:\n|$)/gm;
+function stripRefusedSystemText(text) {
+  if (!text.includes(REFUSED_SYSTEM_TEXT)) return text;
+  return text.replace(REFUSED_CATALOG_ENTRY, "").split("\n").filter((line) => !line.includes(REFUSED_SYSTEM_TEXT)).join("\n");
+}
+function stripRefusedSystemParts(parts) {
+  return parts.flatMap((part) => {
+    if (!part || typeof part !== "object") return [part];
+    const text = part.text;
+    if (typeof text !== "string") return [part];
+    const stripped = stripRefusedSystemText(text);
+    if (stripped === text) return [part];
+    return stripped.trim() ? [{ ...part, text: stripped }] : [];
+  });
+}
 
 // src/v2/request-kind.ts
 var TITLE_REQUEST_HEADER = "x-opencode-antigravity-title";
@@ -8927,6 +8959,7 @@ ${hint}`;
           if (existingSystemInstruction && typeof existingSystemInstruction === "object") {
             const sys = existingSystemInstruction;
             sys.role = "user";
+            if (Array.isArray(sys.parts)) sys.parts = stripRefusedSystemParts(sys.parts);
             if (Array.isArray(sys.parts) && sys.parts.length > 0) {
               const firstPart = sys.parts[0];
               if (firstPart && typeof firstPart.text === "string") {
@@ -8945,7 +8978,7 @@ ${hint}`;
               role: "user",
               parts: [
                 {
-                  text: ANTIGRAVITY_SYSTEM_INSTRUCTION + "\n\n" + existingSystemInstruction
+                  text: ANTIGRAVITY_SYSTEM_INSTRUCTION + "\n\n" + stripRefusedSystemText(existingSystemInstruction)
                 }
               ]
             };
@@ -9506,10 +9539,13 @@ async function performRefresh(auth, refreshTokenValue) {
     if (error instanceof AntigravityTokenRefreshError) {
       throw error;
     }
-    log8.error("Unexpected token refresh error", {
-      error: controller.signal.aborted ? `timed out after ${TOKEN_REFRESH_TIMEOUT_MS}ms` : String(error)
+    const cause = controller.signal.aborted ? `timed out after ${TOKEN_REFRESH_TIMEOUT_MS}ms` : String(error);
+    log8.error("Unexpected token refresh error", { error: cause });
+    throw new AntigravityTokenRefreshError({
+      message: `Antigravity token refresh failed: ${cause}`,
+      status: 0,
+      statusText: ""
     });
-    return void 0;
   } finally {
     clearTimeout(timeout);
   }
@@ -12903,8 +12939,13 @@ async function modelsFromOAuthAuth(config, auth, client2, providerId) {
   }
   let accessToken = effectiveAuth.access;
   if (!accessToken || accessTokenExpired(effectiveAuth)) {
-    const refreshed = await refreshAccessToken(effectiveAuth, client2, providerId);
-    accessToken = refreshed?.access;
+    try {
+      const refreshed = await refreshAccessToken(effectiveAuth, client2, providerId);
+      accessToken = refreshed?.access;
+    } catch (error) {
+      log11.debug("model-discovery-refresh-failed", { error: String(error) });
+      accessToken = void 0;
+    }
   }
   if (!accessToken) {
     const cached = getCachedAntigravityAvailableModels();
@@ -13755,6 +13796,17 @@ function createUltraRequiredResponse(urlString, accountCount2) {
     "gemini"
   );
 }
+function createRequestRefusedResponse(urlString, accountCount2) {
+  const requestedModel = extractRequestedGeminiModel(urlString) ?? extractModelFromUrl(urlString) ?? void 0;
+  const family = requestedModel?.toLowerCase().includes("claude") ? "claude" : "gemini";
+  const errorMessage = [
+    `[Antigravity Error] Google refused this request on ${accountCount2 === 1 ? "your account" : `${accountCount2} accounts`} with a bare`,
+    '"Resource has been exhausted" (no rate-limit reason or retry time). Google answers',
+    "this way to prompt text it blocks, so another account or waiting is unlikely to help.",
+    "Start a new chat, or remove recently added text, tools or plugins from the conversation."
+  ].join("\n");
+  return createSyntheticErrorResponse(errorMessage, requestedModel, family);
+}
 function createSoftQuotaBlockedResponse(input3) {
   const waitTimeFormatted = input3.waitMs ? formatWaitTime(input3.waitMs) : "unknown";
   const errorMessage = [
@@ -14197,6 +14249,7 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
             let lastError = null;
             const abortSignal = init?.signal ?? void 0;
             const triedSwitchIndices = /* @__PURE__ */ new Set();
+            const bareRefusals = /* @__PURE__ */ new Map();
             let emptyResponseAttempts = 0;
             const isUltraOnlyRequest = isGemini4ArgonModel(model ?? "");
             const allAccountsRefusedUltra = () => {
@@ -14800,6 +14853,40 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                         shouldSwitchAccount = true;
                         break;
                       }
+                      const bare429 = response.status === 429 && !bodyInfo.reason && bodyInfo.retryDelayMs === null && !bodyInfo.quotaResetTime;
+                      if (bare429) {
+                        await logResponseBody(debugContext, response, 429);
+                        if (bareRefusals.size > 0) {
+                          pushDebug(`bare 429 again (${bareRefusals.size + 1} refusals): Google refuses the request`);
+                          const refusedFallback = await tryAgySdkFallbackForRequest(input3, init, config, agySdkCredentials, urlString);
+                          if (refusedFallback && !isRetryableAgySdkCredentialStatus(refusedFallback.status)) {
+                            return refusedFallback;
+                          }
+                          return createRequestRefusedResponse(urlString, (/* @__PURE__ */ new Set([...bareRefusals.keys(), account.parts.refreshToken])).size);
+                        }
+                        bareRefusals.set(account.parts.refreshToken, serverRetryMs);
+                        lastError = new Error(`Bare 429 on account ${account.index}`);
+                        lastFailure = createFailureContext(response);
+                        const other = accountManager.peekOtherAccountForFamily(
+                          family,
+                          model,
+                          headerStyle,
+                          config.soft_quota_threshold_percent,
+                          softQuotaCacheTtlMs,
+                          /* @__PURE__ */ new Set([...triedSwitchIndices, account.index])
+                        );
+                        if (other) {
+                          pushDebug(`bare 429 on account ${account.index}; trying another account before marking it`);
+                          shouldSwitchAccount = true;
+                          break;
+                        }
+                        if (await retryLikeAgy(response.status, null)) {
+                          pushDebug(`bare 429 on account ${account.index}, the only usable one; retrying it`);
+                          i -= 1;
+                          continue;
+                        }
+                        return createRequestRefusedResponse(urlString, 1);
+                      }
                       const quotaKey2 = headerStyleToQuotaKey(family);
                       const { attempt: attempt2, delayMs } = getRateLimitBackoff(account.index, quotaKey2, serverRetryMs);
                       const smartBackoffMs = calculateBackoffMs(rateLimitReason, account.consecutiveFailures ?? 0, serverRetryMs);
@@ -14864,6 +14951,18 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                       lastFailure = createFailureContext(response);
                       shouldSwitchAccount = true;
                       break;
+                    }
+                    if (response.ok && bareRefusals.size > 0) {
+                      bareRefusals.delete(account.parts.refreshToken);
+                      for (const [token, retryMs] of bareRefusals) {
+                        const refused = accountManager.getAccounts().find((a) => a.parts.refreshToken === token);
+                        if (!refused) continue;
+                        getRateLimitBackoff(refused.index, headerStyleToQuotaKey(family), retryMs);
+                        getHealthTracker().recordRateLimit(refused.index);
+                        accountManager.markRateLimitedWithReason(refused, family, headerStyle, model, "QUOTA_EXHAUSTED", retryMs, config.failure_ttl_seconds * 1e3);
+                      }
+                      accountManager.requestSaveToDisk();
+                      bareRefusals.clear();
                     }
                     const quotaKey = headerStyleToQuotaKey(family);
                     resetRateLimitState(account.index, quotaKey);

@@ -7,6 +7,7 @@ import {
   __testExports,
 } from "./request";
 import { DEFAULT_CONFIG } from "./config";
+import { stripRefusedSystemText } from "./request-helpers";
 import { initializeDebug } from "./debug";
 import { ANTIGRAVITY_CLI_USER_AGENT, SKIP_THOUGHT_SIGNATURE } from "../constants";
 import { cacheSignature, getCachedSignature, clearSignatureCache } from "./cache";
@@ -1194,6 +1195,102 @@ it("removes API key headers", () => {
       const systemParts = wrapped.request.systemInstruction.parts as Array<{ text?: string } | null>;
       expect(systemParts).toHaveLength(1);
       expect(systemParts[0]?.text).toContain("You are Antigravity");
+    });
+
+    it("removes tools.opencode.session_move, which Google refuses with a 429, from the system prompt", () => {
+      // Shapes from OpenCode 2.2.5's prompt: a Code Mode catalog entry and a standalone hint part.
+      const catalog = [
+        "## Code Mode tools (call only inside `execute`)",
+        "",
+        "- opencode (3 tools)",
+        "  - tools.opencode.read_mcp_resource({",
+        "  uri: string,",
+        "}): Promise<{ uri: string }> // Read one MCP resource.",
+        "  - tools.opencode.session_move({",
+        "  /** Omit to move the current session. @pattern ^ses */",
+        "  sessionID?: string,",
+        "  directory: string,",
+        "}): Promise<{",
+        "  sessionID: string,",
+        "}> // Move a session to another directory.",
+        "  - tools.opencode.session_rename({",
+        "  title: string,",
+        "}): Promise<{ title: string }> // Rename a session.",
+        "",
+        "<env>",
+        "</env>",
+      ].join("\n");
+      const hint =
+        "When you create a worktree outside the current working directory and intend to use it as your primary working directory, consider using `execute` to call `tools.opencode.session_move` and make the worktree the session's working directory.";
+      const result = prepareAntigravityRequest(
+        "https://generativelanguage.googleapis.com/v1beta/models/antigravity-gemini-3.8-flash:streamGenerateContent?alt=sse",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: "hi" }] }],
+            systemInstruction: { parts: [{ text: "You are an AI agent running in OpenCode." }, { text: catalog }, { text: hint }] },
+          }),
+        },
+        mockAccessToken,
+        mockProjectId,
+        undefined,
+        "antigravity",
+      );
+
+      const wrapped = JSON.parse(result.init.body as string);
+      expect(JSON.stringify(wrapped)).not.toContain("session_move");
+      const texts = (wrapped.request.systemInstruction.parts as Array<{ text: string }>).map((part) => part.text);
+      expect(texts).toHaveLength(2);
+      expect(texts[1]).toBe([
+        "## Code Mode tools (call only inside `execute`)",
+        "",
+        "- opencode (3 tools)",
+        "  - tools.opencode.read_mcp_resource({",
+        "  uri: string,",
+        "}): Promise<{ uri: string }> // Read one MCP resource.",
+        "  - tools.opencode.session_rename({",
+        "  title: string,",
+        "}): Promise<{ title: string }> // Rename a session.",
+        "",
+        "<env>",
+        "</env>",
+      ].join("\n"));
+    });
+
+    it("removes only the session_move entry when it ends a namespace or opens a part", () => {
+      const entry = ["- tools.opencode.session_move({", "  directory: string,", "}): Promise<{ directory: string }> // Move a session."];
+      // Last in its namespace, the next namespace and a heading right after it.
+      expect(stripRefusedSystemText(
+        ["- opencode (1 tools)", ...entry.map((line) => `  ${line}`), "- github (1 tools)", "  - tools.github.get({}): Promise<{}> // Get.", "## Next", "kept"].join("\n"),
+      )).toBe(["- opencode (1 tools)", "- github (1 tools)", "  - tools.github.get({}): Promise<{}> // Get.", "## Next", "kept"].join("\n"));
+      // First line of a part, unindented, and a one-line entry.
+      expect(stripRefusedSystemText([...entry, "after"].join("\n"))).toBe("after");
+      expect(stripRefusedSystemText("  - tools.opencode.session_move(): Promise<void> // Move.\nafter")).toBe("after");
+    });
+
+    it("sends Gemini 4 Hydrogen Sonar under its own id with the variant's thinking level", () => {
+      const send = (thinkingLevel?: string) => {
+        const result = prepareAntigravityRequest(
+          "https://generativelanguage.googleapis.com/v1beta/models/antigravity-gemini-4-hydrogen-sonar:streamGenerateContent?alt=sse",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              contents: [{ role: "user", parts: [{ text: "hi" }] }],
+              ...(thinkingLevel ? { generationConfig: { thinkingConfig: { thinkingLevel } } } : {}),
+            }),
+          },
+          mockAccessToken,
+          mockProjectId,
+          undefined,
+          "antigravity",
+        );
+        return JSON.parse(result.init.body as string);
+      };
+
+      expect(send("high").model).toBe("gemini-4-hydrogen-sonar");
+      expect(send("high").request.generationConfig.thinkingConfig.thinkingLevel).toBe("HIGH");
+      // "minimal" is refused by Hydrogen; nothing chosen means low.
+      expect(send().request.generationConfig.thinkingConfig.thinkingLevel).toBe("LOW");
     });
 
     it("preserves headerStyle in response", () => {

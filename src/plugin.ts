@@ -273,8 +273,13 @@ async function modelsFromOAuthAuth(
 
   let accessToken = effectiveAuth.access;
   if (!accessToken || accessTokenExpired(effectiveAuth)) {
-    const refreshed = await refreshAccessToken(effectiveAuth, client, providerId);
-    accessToken = refreshed?.access;
+    try {
+      const refreshed = await refreshAccessToken(effectiveAuth, client, providerId);
+      accessToken = refreshed?.access;
+    } catch (error) {
+      log.debug("model-discovery-refresh-failed", { error: String(error) });
+      accessToken = undefined;
+    }
   }
   if (!accessToken) {
     const cached = getCachedAntigravityAvailableModels();
@@ -1416,6 +1421,23 @@ export function createUltraRequiredResponse(urlString: string, accountCount: num
   );
 }
 
+/**
+ * Answers a request refused twice with a bare 429 "Resource has been
+ * exhausted" (by two accounts, or by the only one and its retry): Google refuses the request itself (seen for prompt text it
+ * blocks, 2026-11-20), so waiting or rotating cannot help.
+ */
+function createRequestRefusedResponse(urlString: string, accountCount: number): Response {
+  const requestedModel = extractRequestedGeminiModel(urlString) ?? extractModelFromUrl(urlString) ?? undefined;
+  const family: ModelFamily = requestedModel?.toLowerCase().includes("claude") ? "claude" : "gemini";
+  const errorMessage = [
+    `[Antigravity Error] Google refused this request on ${accountCount === 1 ? "your account" : `${accountCount} accounts`} with a bare`,
+    "\"Resource has been exhausted\" (no rate-limit reason or retry time). Google answers",
+    "this way to prompt text it blocks, so another account or waiting is unlikely to help.",
+    "Start a new chat, or remove recently added text, tools or plugins from the conversation.",
+  ].join("\n");
+  return createSyntheticErrorResponse(errorMessage, requestedModel, family);
+}
+
 function createSoftQuotaBlockedResponse(input: {
   accountCount: number;
   family: ModelFamily;
@@ -2155,6 +2177,11 @@ export const createAntigravityRuntime = (providerId: string) => async (
           // progress instead of re-picking the same account forever. Cleared
           // after a rate-limit/quota wait, since resets may free accounts again.
           const triedSwitchIndices = new Set<number>();
+          // Accounts (by refresh token) that answered this request with a bare 429
+          // (no reason, no retry delay), with the wait it implied. Not marked yet: a
+          // second bare 429 for the request (another account, or the only one's
+          // retry) means Google refuses the request, not the accounts.
+          const bareRefusals = new Map<string, number>();
           // Empty answers retried within THIS request. Per request, so concurrent
           // requests (and ones aborted mid-retry) do not spend each other's budget.
           let emptyResponseAttempts = 0;
@@ -2975,6 +3002,47 @@ export const createAntigravityRuntime = (providerId: string) => async (
                      break;
                   }
 
+                  // A bare 429 (no reason, no retry delay) may be Google refusing the
+                  // request rather than the account. Handled before any penalty, so
+                  // accounts that refused a request carry no rate-limit or health mark.
+                  const bare429 =
+                    response.status === 429 &&
+                    !bodyInfo.reason &&
+                    bodyInfo.retryDelayMs === null &&
+                    !bodyInfo.quotaResetTime;
+                  if (bare429) {
+                    await logResponseBody(debugContext, response, 429);
+                    // A second bare 429 for this request, from any account: Google refuses the request.
+                    if (bareRefusals.size > 0) {
+                      pushDebug(`bare 429 again (${bareRefusals.size + 1} refusals): Google refuses the request`);
+                      const refusedFallback = await tryAgySdkFallbackForRequest(input, init, config, agySdkCredentials, urlString);
+                      if (refusedFallback && !isRetryableAgySdkCredentialStatus(refusedFallback.status)) {
+                        return refusedFallback;
+                      }
+                      return createRequestRefusedResponse(urlString, new Set([...bareRefusals.keys(), account.parts.refreshToken]).size);
+                    }
+                    bareRefusals.set(account.parts.refreshToken, serverRetryMs);
+                    lastError = new Error(`Bare 429 on account ${account.index}`);
+                    lastFailure = createFailureContext(response);
+                    const other = accountManager.peekOtherAccountForFamily(
+                      family, model, headerStyle,
+                      config.soft_quota_threshold_percent, softQuotaCacheTtlMs,
+                      new Set([...triedSwitchIndices, account.index]),
+                    );
+                    if (other) {
+                      pushDebug(`bare 429 on account ${account.index}; trying another account before marking it`);
+                      shouldSwitchAccount = true;
+                      break;
+                    }
+                    // No other account: retry here once, as agy retries a 429.
+                    if (await retryLikeAgy(response.status, null)) {
+                      pushDebug(`bare 429 on account ${account.index}, the only usable one; retrying it`);
+                      i -= 1;
+                      continue;
+                    }
+                    return createRequestRefusedResponse(urlString, 1);
+                  }
+
                   // STRATEGY 2: RATE LIMIT EXCEEDED (RPM) / QUOTA EXHAUSTED / UNKNOWN
                   // Goal: Lock and Rotate (Standard Logic)
                   
@@ -3071,6 +3139,21 @@ export const createAntigravityRuntime = (providerId: string) => async (
                   lastFailure = createFailureContext(response);
                   shouldSwitchAccount = true;
                   break;
+                }
+
+                // Another account took the request, so those that refused it were limited.
+                if (response.ok && bareRefusals.size > 0) {
+                  // The account that answered was not limited after all.
+                  bareRefusals.delete(account.parts.refreshToken);
+                  for (const [token, retryMs] of bareRefusals) {
+                    const refused = accountManager.getAccounts().find((a) => a.parts.refreshToken === token);
+                    if (!refused) continue;
+                    getRateLimitBackoff(refused.index, headerStyleToQuotaKey(family), retryMs);
+                    getHealthTracker().recordRateLimit(refused.index);
+                    accountManager.markRateLimitedWithReason(refused, family, headerStyle, model, "QUOTA_EXHAUSTED", retryMs, config.failure_ttl_seconds * 1000);
+                  }
+                  accountManager.requestSaveToDisk();
+                  bareRefusals.clear();
                 }
 
                 // Success - reset rate limit backoff state for this quota
