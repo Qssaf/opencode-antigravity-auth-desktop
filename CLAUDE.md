@@ -82,6 +82,8 @@ Do not spend time rediscovering these:
 - Sign-in and token traffic mirror agy 1.5.3, captured from agy itself (2026-11-07): redirect `https://antigravity.google/oauth-callback` (its page shows a code to paste; no localhost listener), alphabetical query and form fields, 16-byte random `state`, 32-byte PKCE verifier kept in-process (`pendingAuthorizations` on globalThis), and token exchange / refresh / userinfo over `node:http2` as `Go-http-client/2.0`. Every request to Google goes through `googleFetch` (`src/antigravity/google-http.ts`): HTTP/2, one pooled connection per origin and `Authorization` (accounts never share one), no request gzip, `Content-Length` on everything except `:streamGenerateContent` (agy streams that body). `fetch` cannot send that (HTTP/1.1, adds `Accept` and `Connection`); `src/test-setup.ts` routes the helpers through `fetch` so tests can stub it. Model-call identifiers (`requestId`, `labels`, per-account numeric `sessionId`, capitalised `thinkingLevel`, field order) and the tool-call layout (one function per `tools` entry, UUID call ids, camelCase `thoughtSignature` only, Gemini tool results as a `model` turn of `{ output }`) come from agy's captured requests: `src/plugin/agy-wire.ts`. To capture what real OpenCode sends, run it under `unshare -rnm` with `HOME`/`XDG_*`/`OPENCODE_CONFIG_DIR` in a scratch dir, `OPENCODE_MODELS_PATH` pointing at a saved models.dev `api.json`, a dummy `GOOGLE_GENERATIVE_AI_API_KEY` (or the google provider is missing) and `< /dev/null` (`opencode run` otherwise waits on stdin). agy never leaves the daily endpoint, and retries a 503/429 there with the same `request_id` after 4 s, then 50-100% of 8/16/30 s (`agyRetryDelayMs`); the plugin does the same when no other account can take the request, and only marks an account rate-limited once it gives up (a mark left behind after a successful retry stalls the chat's next step). To re-capture agy's requests: run it under `unshare -rnm` (no network, keyring hidden by a tmpfs on `/run/user/1000`) with `/etc/hosts` pointing Google hosts at a local Go HTTPS server and `SSL_CERT_FILE` naming its CA.
 - Token refresh is **single-flight per refresh token** (`src/plugin/token.ts`). Concurrent refreshes of one token make Google answer `invalid_grant`, which used to look like revocation. An account is dropped only after `INVALID_GRANT_STRIKES_BEFORE_REMOVAL` confirmed failures.
 - Changing the plugin list (adding or reordering a plugin, replacing a config file) makes OpenCode dispose and re-run `setup` in every location at once. Between the old registrations' disposal and the new ones, the provider has no Antigravity models, and a session step that starts then fails with "Model unavailable". That is why `acquireRuntime` keeps the runtime for `RUNTIME_LINGER_MS` after the last release (building one took ~0.5 s until a startup version lookup was removed on 2026-11-07; now ~2 ms after a ~70 ms module import). Keep `setup` fast on the reuse path, and never await slow work (such as a save that may wait on the file lock) in cleanup.
+- Google answers an instant bare 429 "Resource has been exhausted" (no reason, no retry delay, quota untouched) to any prompt containing `tools.opencode.session_move`, on every account (verified 2026-11-20, OpenCode 2.2.5; every other `tools.opencode.*` name passes). `stripRefusedSystemText` removes it from the system prompt. A bare 429 is not proof of a rate limit: the request loop marks an account only once another account answered the same request, and a second bare 429 for one request returns a "Google refused this request" error instead of waiting. To find another such string, capture the body and replay it with parts removed.
+- Discovery offers Gemini 4 Hydrogen Sonar (`gemini-4-hydrogen-sonar`, unlabeled in `fetchAvailableModels`) to accounts that are served it, and skips entries marked `disabled`. Discovery runs in the background after `setup`, so a one-shot `opencode run --standalone` sees only the static models.
 - Never let a request fall through to the public Gemini API when no credential is usable: the provider is registered with an empty `apiKey`, so Google answers "API key not valid" and blames a key the user never configured. Return a synthetic error instead.
 
 ## Testing notes
@@ -90,6 +92,10 @@ Do not spend time rediscovering these:
 - Isolate anything touching the pool with a temp `OPENCODE_CONFIG_DIR` in `beforeEach` (see `src/plugin/account-admin.test.ts`).
 - Config comes from files only (`<config dir>/antigravity.json`, then `<project>/.opencode/antigravity.json`). The only environment switches read are `OPENCODE_ANTIGRAVITY_DEBUG` and `OPENCODE_ANTIGRAVITY_DEBUG_TUI`, so a test that needs a config value writes a project config file into a temp directory and passes it as `directory`.
 - `npm run test:e2e:models` / `test:e2e:regression` and the shell scripts in `script/` hit the live backend with real accounts; they are not part of `npm test`.
+
+## Problems found along the way
+
+The global rule applies: fix bugs found outside the request without asking. In this repo, "outward-facing" (ask first) also means: anything that changes what goes to Google on the wire or could put the accounts at risk, deleting or migrating the account file, and OAuth scopes.
 
 ## This is a fork
 
@@ -152,7 +158,7 @@ When your changes create orphans:
 - Remove imports/variables/functions that YOUR changes made unused.
 - Don't remove pre-existing dead code unless asked.
 
-The test: Every changed line should trace directly to the user's request.
+The test: Every changed line should trace directly to the user's request, or to a bug fixed under "Problems found along the way".
 
 ## 4. Goal-Driven Execution
 
@@ -174,12 +180,10 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ## Skill plan
 Stack: TypeScript (Bun/Node) OpenCode plugin, vitest
-Always: verification-before-completion, karpathy-guidelines
+Always: verification-before-completion
 Stack skills: none in index for plain TS
 Chains: feature=brainstorming → writing-plans → test-driven-development → verification-before-completion → requesting-code-review; bug=systematic-debugging → test-driven-development → verification-before-completion → requesting-code-review; perf=systematic-debugging (measure) → fix → verification-before-completion (re-measure) → requesting-code-review
-Sizes: every size runs the full chain; size sets depth only
 Overlays: security-checklist (OAuth tokens, account file); search-first (new integrations)
-Agents: tester / code-reviewer not installed → inline
 Not for this project: UI, motion, video, docs, C++, Python, MySQL skills
 Missing: none
 
