@@ -2,6 +2,8 @@ import type { ProviderModel } from "../types";
 import {
   isGemini2Model,
   isGemini3OrLaterModel,
+  isGemini4ArgonModel,
+  isGemini4CarbonModel,
   isGemini4HydrogenModel,
   isGemini4NeonModel,
   remapRetiredAntigravityGeminiModel,
@@ -102,6 +104,21 @@ export const OPENCODE_MODEL_DEFINITIONS: OpencodeModelDefinitions = {
       high: { thinkingLevel: "high" },
     },
   },
+  // Same paid Pro or Ultra entitlement as Argon. Antigravity serves it as
+  // gemini-4-carbon-{low,medium,high} (see
+  // resolveAntigravityGemini4CarbonBackendModel) with the 256K output Google
+  // reports for it; there is no xhigh tier.
+  "antigravity-gemini-4-carbon": {
+    name: "Gemini 4 Carbon (Antigravity)",
+    temperature: false,
+    limit: { context: 1048576, output: 262144 },
+    modalities: DEFAULT_MODALITIES,
+    variants: {
+      low: { thinkingLevel: "low" },
+      medium: { thinkingLevel: "medium" },
+      high: { thinkingLevel: "high" },
+    },
+  },
   // Paid Google AI Pro or Ultra, like Argon. Antigravity serves it as
   // gemini-4-hydrogen-{low,medium,high,xhigh} (see
   // resolveAntigravityGemini4HydrogenBackendModel), with a 1M context.
@@ -181,6 +198,13 @@ function defaultVariantsForModel(modelId: string): Record<string, ModelVariant> 
   }
   if (isGemini4HydrogenModel(normalized) || isGemini4NeonModel(normalized)) {
     return GEMINI_4_XHIGH_VARIANTS;
+  }
+  if (isGemini4ArgonModel(normalized) || isGemini4CarbonModel(normalized)) {
+    return {
+      low: { thinkingLevel: "low" },
+      medium: { thinkingLevel: "medium" },
+      high: { thinkingLevel: "high" },
+    };
   }
   if (isGemini3OrLaterModel(normalized)) {
     if (normalized.includes("pro")) {

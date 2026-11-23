@@ -37,6 +37,7 @@ import {
 } from "./plugin/request";
 import {
   isGemini4ArgonModel,
+  isGemini4CarbonModel,
   isGemini4HydrogenModel,
   isGemini4NeonModel,
   resolveModelWithTier,
@@ -1411,8 +1412,8 @@ export function createNoUsableCredentialsResponse(urlString: string, detail: str
 }
 
 /**
- * Answers a request for Gemini 4 Argon, Hydrogen or Neon (paid Pro or Ultra
- * only) once Google has refused it for every signed-in account. See
+ * Answers a request for Gemini 4 Argon, Carbon, Hydrogen or Neon (paid Pro or
+ * Ultra only) once Google has refused it for every signed-in account. See
  * ultra-gate.ts.
  */
 export function createUltraRequiredResponse(urlString: string, accountCount: number): Response {
@@ -1423,7 +1424,9 @@ export function createUltraRequiredResponse(urlString: string, accountCount: num
       ? "Gemini 4 Neon"
       : isGemini4ArgonModel(requestedModel ?? "")
         ? "Gemini 4 Argon"
-        : "This model";
+        : isGemini4CarbonModel(requestedModel ?? "")
+          ? "Gemini 4 Carbon"
+          : "This model";
   return createSyntheticErrorResponse(
     ultraRequiredMessage(modelLabel, accountCount),
     requestedModel,
@@ -2195,11 +2198,12 @@ export const createAntigravityRuntime = (providerId: string) => async (
           // Empty answers retried within THIS request. Per request, so concurrent
           // requests (and ones aborted mid-retry) do not spend each other's budget.
           let emptyResponseAttempts = 0;
-          // Gemini 4 Argon, Hydrogen and Neon need paid Pro or Ultra: accounts
-          // Google refused them for are skipped, and when none is left the
-          // request gets the plan message.
+          // Gemini 4 Argon, Carbon, Hydrogen and Neon need paid Pro or Ultra:
+          // accounts Google refused them for are skipped, and when none is left
+          // the request gets the plan message.
           const isUltraOnlyRequest =
             isGemini4ArgonModel(model ?? "") ||
+            isGemini4CarbonModel(model ?? "") ||
             isGemini4HydrogenModel(model ?? "") ||
             isGemini4NeonModel(model ?? "");
           const allAccountsRefusedUltra = (): boolean => {

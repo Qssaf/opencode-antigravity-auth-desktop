@@ -75,6 +75,8 @@ describe("retired and renamed Antigravity ids", () => {
     "gemini-3.8-flash-medium",
     "gemini-4-argon",
     "gemini-4-argon-low",
+    "gemini-4-carbon",
+    "gemini-4-carbon-low",
     "gemini-4-hydrogen-high",
     "gemini-4-hydrogen-xhigh",
     "gemini-4-neon",
@@ -119,6 +121,8 @@ describe("resolveAntigravityGeminiBackend", () => {
   it.each([
     ["gemini-3.8-flash-medium", "minimal", "gemini-3.8-flash-low", "low"],
     ["gemini-4-argon-medium", "minimal", "gemini-4-argon-low", "low"],
+    ["gemini-4-carbon", "minimal", "gemini-4-carbon-low", "low"],
+    ["gemini-4-carbon", "xhigh", "gemini-4-carbon-high", "high"],
     ["gemini-4-argon", "high", "gemini-4-argon-high", "high"],
     ["gemini-4-neon", "minimal", "gemini-4-neon-low", "low"],
     ["gemini-4-neon", "xhigh", "gemini-4-neon-xhigh", "xhigh"],
@@ -261,10 +265,11 @@ describe("prepareAntigravityRequest wire model", () => {
 });
 
 describe("advertised catalog", () => {
-  it("offers only Gemini 3.8 Flash, Gemini 4 Argon, Hydrogen and Neon on Antigravity", () => {
+  it("offers only Gemini 3.8 Flash, Gemini 4 Argon, Carbon, Hydrogen and Neon on Antigravity", () => {
     expect(Object.keys(OPENCODE_MODEL_DEFINITIONS).filter((id) => id.startsWith("antigravity-")).sort()).toEqual([
       "antigravity-gemini-3.8-flash",
       "antigravity-gemini-4-argon",
+      "antigravity-gemini-4-carbon",
       "antigravity-gemini-4-hydrogen",
       "antigravity-gemini-4-neon",
     ]);
@@ -283,6 +288,11 @@ describe("advertised catalog", () => {
       expect(OPENCODE_MODEL_DEFINITIONS[id], id).toBeUndefined();
     }
     expect(Object.keys(OPENCODE_MODEL_DEFINITIONS["antigravity-gemini-4-argon"]?.variants ?? {})).toEqual([
+      "low",
+      "medium",
+      "high",
+    ]);
+    expect(Object.keys(OPENCODE_MODEL_DEFINITIONS["antigravity-gemini-4-carbon"]?.variants ?? {})).toEqual([
       "low",
       "medium",
       "high",

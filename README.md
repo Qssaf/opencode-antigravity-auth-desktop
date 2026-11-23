@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Fork of pieliesdie/opencode-antigravity-auth](https://img.shields.io/badge/fork%20of-pieliesdie%2Fopencode--antigravity--auth-blue)](https://github.com/pieliesdie/opencode-antigravity-auth)
 
-Enable Opencode to authenticate against **Antigravity** (Google's IDE) via OAuth so you can use Antigravity rate limits and access models like `gemini-3.1-pro`, `gemini-3.8-flash`, `gemini-4-argon`, `gemini-4-hydrogen` and `gemini-4-neon` with your Google credentials.
+Enable Opencode to authenticate against **Antigravity** (Google's IDE) via OAuth so you can use Antigravity rate limits and access models like `gemini-3.1-pro`, `gemini-3.8-flash`, `gemini-4-argon`, `gemini-4-carbon`, `gemini-4-hydrogen` and `gemini-4-neon` with your Google credentials.
 
 > **This is [Qssaf](https://github.com/Qssaf)'s fork** of
 > [pieliesdie/opencode-antigravity-auth](https://github.com/pieliesdie/opencode-antigravity-auth),
@@ -19,7 +19,7 @@ Enable Opencode to authenticate against **Antigravity** (Google's IDE) via OAuth
 
 ## What You Get
 
-- **Gemini 4 Argon, Gemini 4 Hydrogen and Gemini 4 Neon** (paid Google AI Pro or Ultra) and **Gemini 3.8 Flash** via Google OAuth (Antigravity)
+- **Gemini 4 Argon, Gemini 4 Carbon, Gemini 4 Hydrogen and Gemini 4 Neon** (paid Google AI Pro or Ultra) and **Gemini 3.8 Flash** via Google OAuth (Antigravity)
 - **Multi-account support** — add multiple Google accounts, auto-rotates when rate-limited
 - **Modern Gemini API support** — use Antigravity SDK-style API keys / Cloud Projects as Gemini backups or opt-in primary routing
 - **Thinking models** — extended thinking for Claude and Gemini 3 with configurable budgets
@@ -142,15 +142,16 @@ opencode run "Hello" --model=google/antigravity-gemini-3.8-flash --variant=high
 |-------|----------|-------|
 | `antigravity-gemini-3.8-flash` | low, medium, high | Gemini 3.8 Flash with thinking (high default) |
 | `antigravity-gemini-4-argon` | low, medium, high | **Paid Google AI Pro or Ultra only.** Gemini 4 Argon with thinking (high default, 1M context) |
+| `antigravity-gemini-4-carbon` | low, medium, high | **Paid Google AI Pro or Ultra only.** Gemini 4 Carbon with thinking (high default, 1M context, 256K output) |
 | `antigravity-gemini-4-hydrogen` | low, medium, high, xhigh | **Paid Google AI Pro or Ultra only.** Gemini 4 Hydrogen with thinking (high default, 1M context) |
 | `antigravity-gemini-4-neon` | low, medium, high, xhigh | **Newest. Paid Google AI Pro or Ultra only.** Gemini 4 Neon with thinking (high default, 1M context) |
 | `antigravity-gemini-4-hydrogen-sonar` | low, medium, high | Gemini 4 Hydrogen Sonar (low default, 1M context). Offered only when Google serves it to one of your accounts; it appears a moment after OpenCode starts |
 
 > **Gemini 4 Hydrogen Sonar does not stream.** Google sends nothing, not even its thinking, until the whole step is done, so a chat looks frozen while it works. How long depends on how busy Google is, not on the account: with `high`, steps averaged 10–20 s on 2026-11-20 and 20–45 s the next morning, with single steps up to 3 minutes, on every account alike. On one test prompt, `low` and `medium` used 30–40% of `high`'s thinking. Use them when the wait matters.
 
-> **Gemini 4 Argon, Gemini 4 Hydrogen and Gemini 4 Neon need a paid Google AI Pro or Google AI Ultra subscription.** Free plans, Google AI Plus and Pro free trials do not include them. The plugin cannot read your subscription, so it learns it from Google: an account Google refuses any of them for is skipped for an hour and the next account is tried. When no signed-in account may use it, the request is answered with a message saying so instead of an error. With an API key configured (`agy_sdk`), the model is tried through the public Gemini API before that message.
+> **Gemini 4 Argon, Gemini 4 Carbon, Gemini 4 Hydrogen and Gemini 4 Neon need a paid Google AI Pro or Google AI Ultra subscription.** Free plans, Google AI Plus and Pro free trials do not include them. The plugin cannot read your subscription, so it learns it from Google: an account Google refuses any of them for is skipped for an hour and the next account is tried. When no signed-in account may use it, the request is answered with a message saying so instead of an error. With an API key configured (`agy_sdk`), the model is tried through the public Gemini API before that message.
 
-> Antigravity now serves only Gemini 3.8 Flash, Gemini 4 Argon, Gemini 4 Hydrogen, Gemini 4 Neon and Gemini 4 Hydrogen Sonar. Google dropped Gemini 3.5, 3.6 and 3.7 Flash, Claude Sonnet 4.6, Claude Opus 4.6 and GPT-OSS from it, and no longer serves Gemini 3 Pro, 3.1 Pro, 3 Flash, 3.1 Flash-Lite or 2.5 there either. An `antigravity-` request for any of those (with or without a tier suffix) goes to Gemini 3.8 Flash at the same tier, so sessions still set to an old model keep working. Gemini 2 is gone from every route: a request for any Gemini 2 model is sent as Gemini 3.8 Flash.
+> Antigravity now serves only Gemini 3.8 Flash, Gemini 4 Argon, Gemini 4 Carbon, Gemini 4 Hydrogen, Gemini 4 Neon and Gemini 4 Hydrogen Sonar. Google dropped Gemini 3.5, 3.6 and 3.7 Flash, Claude Sonnet 4.6, Claude Opus 4.6 and GPT-OSS from it, and no longer serves Gemini 3 Pro, 3.1 Pro, 3 Flash, 3.1 Flash-Lite or 2.5 there either. An `antigravity-` request for any of those (with or without a tier suffix) goes to Gemini 3.8 Flash at the same tier, so sessions still set to an old model keep working. Gemini 2 is gone from every route: a request for any Gemini 2 model is sent as Gemini 3.8 Flash.
 
 > **The Gemini CLI quota is gone.** Google deprecated it in favour of Antigravity and the Antigravity CLI, which share the Antigravity quota. The former Gemini CLI models (`gemini-3.8-flash`, `gemini-3.1-pro`, `gemini-3-pro-preview`, `gemini-3-flash-preview`, `gemini-3.1-pro-preview-customtools`) are no longer listed, and a request for one is served on Antigravity as Gemini 3.8 Flash. `cli_first` is ignored.
 
@@ -162,7 +163,7 @@ The official Antigravity SDK uses `GEMINI_API_KEY` for local Gemini access. This
 > - **OAuth Antigravity-first (default):** Gemini models use Antigravity quota across OAuth accounts.
 > - **Antigravity SDK / Gemini API:** API-key auth, `GEMINI_API_KEY`, or configured `agy_sdk.cloud_projects` route Gemini requests through the public Gemini API.
 > - When the OAuth Antigravity quota is exhausted on every account, configured `agy_sdk.cloud_projects` are used as backup capacity before failing if `agy_sdk.enabled: true`, `agy_sdk.api_key_fallback: true`, and usable API-key credentials are present.
-> - Gemini 4 Argon, Gemini 4 Hydrogen, Gemini 4 Neon and image models always use Antigravity.
+> - Gemini 4 Argon, Gemini 4 Carbon, Gemini 4 Hydrogen, Gemini 4 Neon and image models always use Antigravity.
 
 **Using variants:**
 ```bash
@@ -196,6 +197,16 @@ Add this to your `~/.config/opencode/opencode.json`:
         "antigravity-gemini-4-argon": {
           "name": "Gemini 4 Argon (Antigravity)",
           "limit": { "context": 1048576, "output": 65536 },
+          "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
+          "variants": {
+            "low": { "thinkingLevel": "low" },
+            "medium": { "thinkingLevel": "medium" },
+            "high": { "thinkingLevel": "high" }
+          }
+        },
+        "antigravity-gemini-4-carbon": {
+          "name": "Gemini 4 Carbon (Antigravity)",
+          "limit": { "context": 1048576, "output": 262144 },
           "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
           "variants": {
             "low": { "thinkingLevel": "low" },

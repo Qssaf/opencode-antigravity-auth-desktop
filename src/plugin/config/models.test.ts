@@ -21,6 +21,7 @@ describe("OPENCODE_MODEL_DEFINITIONS", () => {
     expect(modelNames).toEqual([
       "antigravity-gemini-3.8-flash",
       "antigravity-gemini-4-argon",
+      "antigravity-gemini-4-carbon",
       "antigravity-gemini-4-hydrogen",
       "antigravity-gemini-4-neon",
     ]);
@@ -46,6 +47,18 @@ describe("OPENCODE_MODEL_DEFINITIONS", () => {
     // Paid Pro accounts get it too, so the name no longer says Ultra.
     expect(argon.name).toBe("Gemini 4 Argon (Antigravity)");
     expect(argon.limit).toEqual({ context: 1048576, output: 65536 });
+  });
+
+  it("offers Gemini 4 Carbon with low, medium and high thinking and a 256K output limit", () => {
+    const carbon = getModel("antigravity-gemini-4-carbon");
+    expect(carbon.variants).toEqual({
+      low: { thinkingLevel: "low" },
+      medium: { thinkingLevel: "medium" },
+      high: { thinkingLevel: "high" },
+    });
+    expect(carbon.temperature).toBe(false);
+    expect(carbon.name).toBe("Gemini 4 Carbon (Antigravity)");
+    expect(carbon.limit).toEqual({ context: 1048576, output: 262144 });
   });
 
   it("offers Gemini 4 Hydrogen with low, medium, high and xhigh thinking and no temperature", () => {
@@ -155,6 +168,16 @@ describe("dynamic model discovery helpers", () => {
         modelName: "gemini-3.8-pro",
         supportsThinking: true,
       },
+      "gemini-4-argon-high": {
+        displayName: "Gemini 4 Argon (High)",
+        modelName: "gemini-4-argon-high",
+        supportsThinking: true,
+      },
+      "gemini-4-carbon-high": {
+        displayName: "Gemini 4 Carbon (High)",
+        modelName: "gemini-4-carbon-high",
+        supportsThinking: true,
+      },
       "gemini-4-hydrogen-high": {
         displayName: "Gemini 4 Hydrogen (High)",
         modelName: "gemini-4-hydrogen-high",
@@ -190,6 +213,16 @@ describe("dynamic model discovery helpers", () => {
       medium: { thinkingLevel: "medium" },
       high: { thinkingLevel: "high" },
       xhigh: { thinkingLevel: "xhigh" },
+    });
+    expect(models["antigravity-gemini-4-argon-high"]?.variants).toEqual({
+      low: { thinkingLevel: "low" },
+      medium: { thinkingLevel: "medium" },
+      high: { thinkingLevel: "high" },
+    });
+    expect(models["antigravity-gemini-4-carbon-high"]?.variants).toEqual({
+      low: { thinkingLevel: "low" },
+      medium: { thinkingLevel: "medium" },
+      high: { thinkingLevel: "high" },
     });
     expect(models["antigravity-gemini-4-neon-high"]?.variants).toEqual({
       low: { thinkingLevel: "low" },

@@ -21,13 +21,13 @@ describe("ultra-gate", () => {
     expect(isUltraModelRefused("token-a", 1_000)).toBe(false);
   });
 
-  it("records one account-wide refusal for Argon, Hydrogen and Neon alike", () => {
-    // Gemini 4 Argon, Hydrogen and Neon share a single paid Pro/Ultra
+  it("records one account-wide refusal for Argon, Carbon, Hydrogen and Neon alike", () => {
+    // Gemini 4 Argon, Carbon, Hydrogen and Neon share a single paid Pro/Ultra
     // entitlement on the account, so the store is deliberately keyed per
     // account with no model dimension: a refusal recorded after any one of the
-    // three is reported for the account as a whole. The three triggers are
+    // four is reported for the account as a whole. The four triggers are
     // listed to pin that accepted design, not because the store takes a model.
-    for (const trigger of ["gemini-4-argon", "gemini-4-hydrogen", "gemini-4-neon"]) {
+    for (const trigger of ["gemini-4-argon", "gemini-4-carbon", "gemini-4-hydrogen", "gemini-4-neon"]) {
       resetUltraModelRefusals();
       markUltraModelRefused("token-a", 1_000);
       expect(isUltraModelRefused("token-a", 1_000), `after a ${trigger} refusal`).toBe(true);
@@ -56,6 +56,9 @@ describe("ultra-gate", () => {
       "Gemini 4 Hydrogen needs a paid Google AI Pro or Google AI Ultra subscription",
     );
     expect(ultraRequiredMessage("Gemini 4 Hydrogen", 2)).toContain("all 2 signed-in accounts");
+    expect(ultraRequiredMessage("Gemini 4 Carbon", 2)).toContain(
+      "Gemini 4 Carbon needs a paid Google AI Pro or Google AI Ultra subscription",
+    );
     expect(ultraRequiredMessage("Gemini 4 Neon", 2)).toContain(
       "Gemini 4 Neon needs a paid Google AI Pro or Google AI Ultra subscription",
     );

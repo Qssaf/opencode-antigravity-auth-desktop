@@ -75,6 +75,13 @@ const GEMINI_4_ARGON_MODELS = {
   medium: "gemini-4-argon-medium",
   high: "gemini-4-argon-high",
 } as const;
+const GEMINI_4_CARBON_REGEX =
+  /^gemini-4-carbon(?:-(minimal|low|medium|high))?$/i;
+const GEMINI_4_CARBON_MODELS = {
+  low: "gemini-4-carbon-low",
+  medium: "gemini-4-carbon-medium",
+  high: "gemini-4-carbon-high",
+} as const;
 // `xhigh` is a Gemini 4 Hydrogen/Neon level and is derived from this
 // model-name regex, not from the shared TIER_REGEX: no other model can be
 // parsed as xhigh.
@@ -315,6 +322,32 @@ export function isGemini4ArgonModel(model: string): boolean {
 }
 
 /**
+ * Antigravity serves Gemini 4 Carbon as tier-specific backend ids,
+ * gemini-4-carbon-{low,medium,high}, like Argon. High is the default; minimal
+ * is accepted as low. There is no xhigh tier and the bare id is not served.
+ */
+export function resolveAntigravityGemini4CarbonBackendModel(
+  model: string,
+  thinkingLevel?: string,
+): string | undefined {
+  const match = model.replace(QUOTA_PREFIX_REGEX, "").match(GEMINI_4_CARBON_REGEX);
+  if (!match) {
+    return undefined;
+  }
+  const rawLevel = (thinkingLevel ?? match[1] ?? "high").toLowerCase();
+  const level = rawLevel === "minimal" ? "low" : rawLevel;
+  if (level !== "low" && level !== "medium" && level !== "high") {
+    return undefined;
+  }
+  return GEMINI_4_CARBON_MODELS[level];
+}
+
+/** True for Gemini 4 Carbon under any of its names or backend ids (excludes disabled/xhigh). */
+export function isGemini4CarbonModel(model: string): boolean {
+  return /(?:^|[-/])gemini-4-carbon(?:-(?:minimal|low|medium|high))?$/i.test(model);
+}
+
+/**
  * Antigravity serves Gemini 4 Hydrogen and Neon (paid Pro or Ultra, like Argon)
  * as tier-specific backend ids, gemini-4-{hydrogen,neon}-{low,medium,high,xhigh}.
  * High is the default; minimal is accepted as low.
@@ -362,8 +395,8 @@ export function isGemini4NeonModel(model: string): boolean {
 
 /**
  * Clamps a thinking level to what `model` accepts, on every route: `xhigh` is
- * a Gemini 4 Hydrogen/Neon level, and Gemini 4 (Argon, Hydrogen and Neon)
- * rejects `minimal` with HTTP 400.
+ * a Gemini 4 Hydrogen/Neon level, and Gemini 4 (Argon, Carbon, Hydrogen and
+ * Neon) rejects `minimal` with HTTP 400.
  */
 export function clampThinkingLevelForModel(
   level: ThinkingTier,
@@ -374,6 +407,7 @@ export function clampThinkingLevelForModel(
   const raw = level as string;
   if (raw === "minimal") {
     return isGemini4ArgonModel(model) ||
+      isGemini4CarbonModel(model) ||
       isGemini4HydrogenModel(model) ||
       isGemini4NeonModel(model)
       ? "low"
@@ -392,8 +426,9 @@ export function clampThinkingLevelForModel(
 /**
  * Picks the Antigravity backend id for a Gemini 3 or later model and the
  * thinking level to send with it. Gemini 3.1 Pro, 3.8 Flash, 4 Argon,
- * 4 Hydrogen and 4 Neon reject thinkingLevel "minimal" with HTTP 400, so it is
- * sent as low. Returns undefined for models that go out under their own name.
+ * 4 Carbon, 4 Hydrogen and 4 Neon reject thinkingLevel "minimal" with HTTP 400,
+ * so it is sent as low. Returns undefined for models that go out under their
+ * own name.
  */
 export function resolveAntigravityGeminiBackend(
   model: string,
@@ -408,6 +443,7 @@ export function resolveAntigravityGeminiBackend(
   const tiered =
     resolveAntigravityGemini38FlashBackendModel(model, level) ??
     resolveAntigravityGemini4ArgonBackendModel(model, level) ??
+    resolveAntigravityGemini4CarbonBackendModel(model, level) ??
     resolveAntigravityGemini4HydrogenBackendModel(model, level) ??
     resolveAntigravityGemini4NeonBackendModel(model, level);
   if (tiered) {
@@ -432,6 +468,10 @@ export function getDefaultGemini3ThinkingLevel(model: string): string {
   const gemini4Tier = /^gemini-4-(?:hydrogen|neon)(?:-(minimal|low|medium|high|xhigh))?$/.exec(normalized);
   if (gemini4Tier) {
     return (gemini4Tier[1] === "minimal" ? "low" : gemini4Tier[1]) ?? "high";
+  }
+  const gemini4Carbon = GEMINI_4_CARBON_REGEX.exec(normalized);
+  if (gemini4Carbon) {
+    return gemini4Carbon[1] === "minimal" ? "low" : (gemini4Carbon[1] ?? "high");
   }
   if (isGemini3ProModel(normalized) && !IMAGE_GENERATION_MODELS.test(normalized)) {
     return /-low$/.test(normalized) ? "low" : "high";
@@ -484,8 +524,8 @@ function resolveModel(requestedModel: string, onAntigravity: boolean): ResolvedM
   const isGemini3 = isGemini3OrLaterModel(modelWithoutQuota);
   const skipAlias = isAntigravity && isGemini3;
 
-  // Antigravity API: Gemini 3.1 Pro, 3.8 Flash, 4 Argon, 4 Hydrogen and 4 Neon
-  //                  take tier-specific backend ids (see the
+  // Antigravity API: Gemini 3.1 Pro, 3.8 Flash, 4 Argon, 4 Carbon, 4 Hydrogen
+  //                  and 4 Neon take tier-specific backend ids (see the
   //                  resolveAntigravityGemini*BackendModel helpers);
   //                  other gemini-3-flash models use bare name + thinkingLevel param.
   // Pro defaults to the high tier unless an explicit tier is provided.
@@ -497,6 +537,7 @@ function resolveModel(requestedModel: string, onAntigravity: boolean): ResolvedM
     const tieredBackendModel =
       resolveAntigravityGemini38FlashBackendModel(modelWithoutQuota, tier) ??
       resolveAntigravityGemini4ArgonBackendModel(modelWithoutQuota, tier) ??
+      resolveAntigravityGemini4CarbonBackendModel(modelWithoutQuota, tier) ??
       resolveAntigravityGemini4HydrogenBackendModel(modelWithoutQuota, tier) ??
       resolveAntigravityGemini4NeonBackendModel(modelWithoutQuota, tier);
     const gemini3ProBackendModel = isImageModel
@@ -700,7 +741,7 @@ export function resolveModelForHeaderStyle(
     const transformedModel =
       mapAntigravityModelToPublicApi(stripped) ?? stripped;
     const resolved = resolveModel(modelWithTier, false);
-    // Gemini 4 (Argon, Hydrogen and Neon) reject `minimal` with HTTP 400 on the public
+    // Gemini 4 (Argon, Carbon, Hydrogen and Neon) reject `minimal` with HTTP 400 on the public
     // API too, so the API-key route sends it as `low`, like the Antigravity route.
     const thinkingLevel = resolved.thinkingLevel === undefined
       ? undefined

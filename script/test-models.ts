@@ -11,6 +11,8 @@ const MODELS: ModelTest[] = [
   { model: "google/antigravity-gemini-3.8-flash", category: "antigravity-gemini" },
   // Google AI Ultra only: other accounts get the "needs Ultra" message.
   { model: "google/antigravity-gemini-4-argon", category: "antigravity-gemini" },
+  // Paid Google AI Pro or Ultra; 256K output, no xhigh tier.
+  { model: "google/antigravity-gemini-4-carbon", category: "antigravity-gemini" },
   // Paid Google AI Pro or Ultra; other accounts get the plan message.
   { model: "google/antigravity-gemini-4-hydrogen", category: "antigravity-gemini" },
   // Paid Google AI Pro or Ultra: the newest Gemini 4 model, high by default.

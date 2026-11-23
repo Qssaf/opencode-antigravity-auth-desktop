@@ -3,9 +3,11 @@ import {
   clampThinkingLevelForModel,
   getDefaultGemini3ThinkingLevel,
   getModelFamily,
+  isGemini4CarbonModel,
   isGemini4HydrogenModel,
   isGemini4NeonModel,
   isGemini2Model,
+  resolveAntigravityGemini4CarbonBackendModel,
   resolveAntigravityGemini4HydrogenBackendModel,
   resolveAntigravityGemini4NeonBackendModel,
   resolveAntigravityGeminiBackend,
@@ -171,6 +173,7 @@ describe("resolveModelWithTier", () => {
     it.each([
       ["antigravity-gemini-4-hydrogen-minimal", "gemini-4-hydrogen"],
       ["antigravity-gemini-4-argon-minimal", "gemini-4-argon"],
+      ["antigravity-gemini-4-carbon-minimal", "gemini-4-carbon"],
       ["antigravity-gemini-4-neon-minimal", "gemini-4-neon"],
     ])("sends %s to the public API as %s with thinking level low, not minimal", (requested, actual) => {
       // Gemini 4 rejects "minimal" with HTTP 400, like the Antigravity route.
@@ -277,6 +280,21 @@ describe("resolveModelWithTier", () => {
       ["antigravity-gemini-4-argon-low", "gemini-4-argon-low", "low"],
       ["antigravity-gemini-4-argon-medium", "gemini-4-argon-medium", "medium"],
       ["antigravity-gemini-4-argon-high", "gemini-4-argon-high", "high"],
+    ])("maps %s to the Antigravity backend id %s", (requested, actual, thinkingLevel) => {
+      const result = resolveModelWithTier(requested);
+      expect(result.actualModel).toBe(actual);
+      expect(result.thinkingLevel).toBe(thinkingLevel);
+      expect(result.isThinkingModel).toBe(true);
+      expect(result.quotaPreference).toBe("antigravity");
+      expect(result.explicitQuota).toBe(true);
+    });
+
+    it.each([
+      ["antigravity-gemini-4-carbon", "gemini-4-carbon-high", "high"],
+      ["antigravity-gemini-4-carbon-minimal", "gemini-4-carbon-low", "low"],
+      ["antigravity-gemini-4-carbon-low", "gemini-4-carbon-low", "low"],
+      ["antigravity-gemini-4-carbon-medium", "gemini-4-carbon-medium", "medium"],
+      ["antigravity-gemini-4-carbon-high", "gemini-4-carbon-high", "high"],
     ])("maps %s to the Antigravity backend id %s", (requested, actual, thinkingLevel) => {
       const result = resolveModelWithTier(requested);
       expect(result.actualModel).toBe(actual);
@@ -488,11 +506,66 @@ describe("resolveModelWithTier", () => {
     });
   });
 
+  describe("Gemini 4 Carbon", () => {
+    it.each([
+      [undefined, "gemini-4-carbon-high"],
+      ["minimal", "gemini-4-carbon-low"],
+      ["low", "gemini-4-carbon-low"],
+      ["medium", "gemini-4-carbon-medium"],
+      ["high", "gemini-4-carbon-high"],
+    ])("resolves bare Gemini 4 Carbon with thinking level %s to %s", (level, backend) => {
+      expect(resolveAntigravityGemini4CarbonBackendModel("gemini-4-carbon", level)).toBe(backend);
+    });
+
+    it("rejects unknown levels, including the nonexistent xhigh tier", () => {
+      expect(resolveAntigravityGemini4CarbonBackendModel("gemini-4-carbon", "turbo")).toBeUndefined();
+      expect(resolveAntigravityGemini4CarbonBackendModel("gemini-4-carbon", "xhigh")).toBeUndefined();
+    });
+
+    it("defaults the bare id to high thinking and never sends the bare id", () => {
+      for (const model of ["gemini-4-carbon", "antigravity-gemini-4-carbon"]) {
+        const result = resolveModelForHeaderStyle(model, "antigravity");
+        expect(result.actualModel).toBe("gemini-4-carbon-high");
+        expect(result.thinkingLevel).toBe("high");
+        expect(result.isThinkingModel).toBe(true);
+      }
+      const resolved = resolveAntigravityGeminiBackend("gemini-4-carbon");
+      expect(resolved?.model).toBe("gemini-4-carbon-high");
+      expect(resolved?.model).not.toBe("gemini-4-carbon");
+    });
+
+    it("sends minimal as low and clamps xhigh to high", () => {
+      expect(resolveAntigravityGeminiBackend("gemini-4-carbon", "minimal")).toEqual({
+        model: "gemini-4-carbon-low",
+        thinkingLevel: "low",
+      });
+      expect(resolveAntigravityGeminiBackend("gemini-4-carbon", "xhigh")).toEqual({
+        model: "gemini-4-carbon-high",
+        thinkingLevel: "high",
+      });
+      expect(clampThinkingLevelForModel("minimal" as ThinkingTier, "gemini-4-carbon")).toBe("low");
+      expect(clampThinkingLevelForModel("xhigh" as ThinkingTier, "gemini-4-carbon")).toBe("high");
+      expect(getDefaultGemini3ThinkingLevel("gemini-4-carbon-minimal")).toBe("low");
+      expect(getDefaultGemini3ThinkingLevel("gemini-4-carbon")).toBe("high");
+    });
+
+    it("is recognised under its names and backend ids only", () => {
+      expect(isGemini4CarbonModel("gemini-4-carbon")).toBe(true);
+      expect(isGemini4CarbonModel("antigravity-gemini-4-carbon-high")).toBe(true);
+      expect(isGemini4CarbonModel("gemini-4-carbon-low")).toBe(true);
+      expect(isGemini4CarbonModel("gemini-4-carbon-disabled")).toBe(false);
+      expect(isGemini4CarbonModel("gemini-4-carbon-xhigh")).toBe(false);
+      expect(isGemini4CarbonModel("gemini-4-carbon-sonar")).toBe(false);
+    });
+  });
+
   describe("clampThinkingLevelForModel", () => {
     it.each([
       ["xhigh", "gemini-4-argon", "high"],
       ["xhigh", "antigravity-gemini-4-argon-xhigh", "high"],
       ["xhigh", "gemini-3.8-flash", "high"],
+      ["xhigh", "gemini-4-carbon", "high"],
+      ["xhigh", "antigravity-gemini-4-carbon-xhigh", "high"],
       ["xhigh", "gemini-4-hydrogen-sonar", "high"],
       ["xhigh", "gemini-4-hydrogen", "xhigh"],
       ["xhigh", "antigravity-gemini-4-hydrogen-xhigh", "xhigh"],
@@ -500,7 +573,7 @@ describe("resolveModelWithTier", () => {
       ["xhigh", "antigravity-gemini-4-neon-xhigh", "xhigh"],
       ["minimal", "gemini-4-argon", "low"],
       ["minimal", "antigravity-gemini-4-hydrogen", "low"],
-      ["minimal", "gemini-4-neon", "low"],
+      ["minimal", "gemini-4-carbon", "low"],
       ["minimal", "antigravity-gemini-4-neon", "low"],
       ["minimal", "gemini-3.8-flash", "minimal"],
       ["low", "gemini-4-argon", "low"],
