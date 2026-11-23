@@ -216,7 +216,7 @@ Add this to your `~/.config/opencode/opencode.json`:
         },
         "antigravity-gemini-4-hydrogen": {
           "name": "Gemini 4 Hydrogen (Antigravity)",
-          "limit": { "context": 1048576, "output": 65536 },
+          "limit": { "context": 1048576, "output": 262144 },
           "modalities": { "input": ["text", "image", "pdf"], "output": ["text"] },
           "variants": {
             "low": { "thinkingLevel": "low" },

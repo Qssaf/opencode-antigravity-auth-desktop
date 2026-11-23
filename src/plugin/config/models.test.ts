@@ -61,7 +61,7 @@ describe("OPENCODE_MODEL_DEFINITIONS", () => {
     expect(carbon.limit).toEqual({ context: 1048576, output: 262144 });
   });
 
-  it("offers Gemini 4 Hydrogen with low, medium, high and xhigh thinking and no temperature", () => {
+  it("offers Gemini 4 Hydrogen with low, medium, high and xhigh thinking and a 256K output limit", () => {
     const hydrogen = getModel("antigravity-gemini-4-hydrogen");
     expect(hydrogen.variants).toEqual({
       low: { thinkingLevel: "low" },
@@ -71,7 +71,7 @@ describe("OPENCODE_MODEL_DEFINITIONS", () => {
     });
     expect(hydrogen.temperature).toBe(false);
     expect(hydrogen.name).toBe("Gemini 4 Hydrogen (Antigravity)");
-    expect(hydrogen.limit).toEqual({ context: 1048576, output: 65536 });
+    expect(hydrogen.limit).toEqual({ context: 1048576, output: 262144 });
   });
 
   it("offers Gemini 4 Neon with the same four thinking levels and a 256K output limit", () => {

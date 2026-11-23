@@ -2581,11 +2581,12 @@ var OPENCODE_MODEL_DEFINITIONS = {
   },
   // Paid Google AI Pro or Ultra, like Argon. Antigravity serves it as
   // gemini-4-hydrogen-{low,medium,high,xhigh} (see
-  // resolveAntigravityGemini4HydrogenBackendModel), with a 1M context.
+  // resolveAntigravityGemini4HydrogenBackendModel) with the 256K output Google
+  // reports for it.
   "antigravity-gemini-4-hydrogen": {
     name: "Gemini 4 Hydrogen (Antigravity)",
     temperature: false,
-    limit: { context: 1048576, output: 65536 },
+    limit: { context: 1048576, output: 262144 },
     modalities: DEFAULT_MODALITIES,
     variants: GEMINI_4_XHIGH_VARIANTS
   },
