@@ -1396,7 +1396,7 @@ function isModelGenerationRequest(urlString: string): boolean {
  */
 export function createNoUsableCredentialsResponse(urlString: string, detail: string): Response {
   const requestedModel = extractRequestedGeminiModel(urlString) ?? extractModelFromUrl(urlString) ?? undefined;
-  const family: ModelFamily = requestedModel?.toLowerCase().includes("claude") ? "claude" : "gemini";
+  const family: ModelFamily = requestedModel && isClaudeOrGptModel(requestedModel) ? "claude" : "gemini";
   const errorMessage = [
     "[Antigravity Error] No usable Google credential for this request.",
     detail,
@@ -1428,7 +1428,7 @@ export function createUltraRequiredResponse(urlString: string, accountCount: num
  */
 function createRequestRefusedResponse(urlString: string, accountCount: number): Response {
   const requestedModel = extractRequestedGeminiModel(urlString) ?? extractModelFromUrl(urlString) ?? undefined;
-  const family: ModelFamily = requestedModel?.toLowerCase().includes("claude") ? "claude" : "gemini";
+  const family: ModelFamily = requestedModel && isClaudeOrGptModel(requestedModel) ? "claude" : "gemini";
   const errorMessage = [
     `[Antigravity Error] Google refused this request on ${accountCount === 1 ? "your account" : `${accountCount} accounts`} with a bare`,
     "\"Resource has been exhausted\" (no rate-limit reason or retry time). Google answers",

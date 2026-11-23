@@ -44,6 +44,22 @@ describe("Antigravity quota aggregation", () => {
     expect(summary.groups.gemini).toBeUndefined();
   });
 
+  it("puts a GPT-OSS model in the Claude/GPT pool on its own", () => {
+    const summary = __testExports.aggregateQuota({
+      "gpt-oss-120b-medium": {
+        displayName: "GPT-OSS 120B (Medium)",
+        quotaInfo: { remainingFraction: 0.3, resetTime: "2026-05-28T18:00:00Z" },
+      },
+    });
+
+    expect(summary.groups.claude).toEqual({
+      remainingFraction: 0.3,
+      resetTime: "2026-05-28T18:00:00Z",
+      modelCount: 1,
+    });
+    expect(summary.groups.gemini).toBeUndefined();
+  });
+
   it("reports every Gemini 3+ model as one unified pool", () => {
     const summary = __testExports.aggregateQuota({
       "gemini-4-neon-high": {

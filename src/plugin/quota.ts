@@ -145,6 +145,10 @@ function parseResetTime(resetTime?: string): number | null {
 /**
  * Claude and the third-party models Antigravity serves (GPT-OSS, anything from
  * OpenAI) draw from one pool, so they must report into one bucket.
+ *
+ * `openai` covers the live OpenAI provider family (`MODEL_PROVIDER_OPENAI`,
+ * currently `gpt-oss-120b-medium`). A third-party model from any other
+ * non-Google provider must be added here before it can be grouped correctly.
  */
 export function isClaudeOrGptModel(model: string): boolean {
   const lower = model.toLowerCase();
