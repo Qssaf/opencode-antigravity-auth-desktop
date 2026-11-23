@@ -53,11 +53,9 @@ export {
   ensureClaudeMaxOutputTokens,
   appendClaudeThinkingHint,
   normalizeClaudeTools,
-  applyClaudeTransforms,
   CLAUDE_THINKING_MAX_OUTPUT_TOKENS,
   CLAUDE_INTERLEAVED_THINKING_HINT,
 } from "./claude";
-export type { ClaudeTransformOptions, ClaudeTransformResult } from "./claude";
 
 // Gemini transforms
 export {

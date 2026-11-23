@@ -58,9 +58,6 @@ export interface AntigravityAvailableModel {
   maxTokens?: number;
   /** Output limit Google reports for this backend id. */
   maxOutputTokens?: number;
-  supportsAdaptiveThinking?: boolean;
-  /** `MODEL_PROVIDER_GOOGLE` / `MODEL_PROVIDER_OPENAI`, ... */
-  modelProvider?: string;
 }
 
 export type AntigravityAvailableModels = Record<string, AntigravityAvailableModel>;
@@ -150,6 +147,17 @@ function titleFromModelId(modelId: string): string {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+/**
+ * Appends the Antigravity suffix, dropping a trailing parenthetical Google
+ * already used for the thinking tier ("GPT-OSS 120B (Medium)") so the name does
+ * not stack two of them.
+ */
+function antigravityDisplayName(displayName: string | undefined, modelId: string): string {
+  const fallback = titleFromModelId(modelId);
+  const base = (displayName ?? fallback).replace(/\s*\([^()]*\)\s*$/, "").trim();
+  return `${base || fallback} (Antigravity)`;
 }
 
 function defaultLimitForModel(modelId: string): ModelLimit {
@@ -245,9 +253,19 @@ function isRetiredOrRenamedAntigravityModel(backendId: string): boolean {
   );
 }
 
-/** Thinking levels an OpenCode variant can carry; `xhigh` arrives with Gemini 4 Hydrogen. */
+/**
+ * Thinking levels an OpenCode variant can carry. `xhigh` is accepted ahead of
+ * the Gemini 4 Hydrogen variant type so a grouped family that declares it still
+ * exposes the tier.
+ */
 function isModelThinkingLevel(value: string): value is ModelThinkingLevel {
-  return value === "minimal" || value === "low" || value === "medium" || value === "high";
+  return (
+    value === "minimal" ||
+    value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "xhigh"
+  );
 }
 
 /**
@@ -281,8 +299,9 @@ function groupedModelDefinition(
     if (!suffix) continue;
     const childId = `${groupId}-${suffix}`;
     const entry = models[childId];
-    // A group is only offered when Google actually serves at least one child.
-    if (!entry || entry.disabled || childId.endsWith("-disabled")) continue;
+    // A group is only offered when Google actually serves at least one child;
+    // display-less ids are internal routing entries, as in the registry pass.
+    if (!entry || !entry.displayName || entry.disabled || childId.endsWith("-disabled")) continue;
     if (isRetiredOrRenamedAntigravityModel(childId)) continue;
     childIds.push(childId);
     firstChild ??= entry;
@@ -295,9 +314,7 @@ function groupedModelDefinition(
 
   return {
     definition: {
-      name: group.displayName
-        ? `${group.displayName} (Antigravity)`
-        : `${titleFromModelId(groupId)} (Antigravity)`,
+      name: antigravityDisplayName(group.displayName, groupId),
       limit: limitFromEntry(`antigravity-${groupId}`, firstChild),
       modalities: DEFAULT_MODALITIES,
       ...(Object.keys(variants).length > 0 ? { variants } : {}),
@@ -347,7 +364,7 @@ export function modelsFromAntigravityAvailableModels(
 
     const variants = entry.supportsThinking ? defaultVariantsForModel(modelId) : undefined;
     const discovered: OpencodeModelDefinition = {
-      name: entry.displayName ? `${entry.displayName} (Antigravity)` : `${titleFromModelId(modelId)} (Antigravity)`,
+      name: antigravityDisplayName(entry.displayName, modelId),
       limit: limitFromEntry(modelId, entry),
       modalities: DEFAULT_MODALITIES,
       ...(variants ? { variants } : {}),

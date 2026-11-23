@@ -199,14 +199,22 @@ describe("dynamic model discovery helpers", () => {
         maxTokens: 131072,
         maxOutputTokens: 32768,
         supportsThinking: true,
-        modelProvider: "MODEL_PROVIDER_OPENAI",
       },
     });
 
     expect(models["antigravity-gpt-oss-120b-medium"]).toMatchObject({
-      name: "GPT-OSS 120B (Medium) (Antigravity)",
+      // The registry name already carries the tier: no second parenthetical.
+      name: "GPT-OSS 120B (Antigravity)",
       limit: { context: 131072, output: 32768 },
     });
+  });
+
+  it("keeps a registry display name that has no trailing parenthetical", () => {
+    const models = modelsFromAntigravityAvailableModels({
+      "claude-sonnet-4-6": { displayName: "Claude Sonnet 4.6" },
+    });
+
+    expect(models["antigravity-claude-sonnet-4-6"]?.name).toBe("Claude Sonnet 4.6 (Antigravity)");
   });
 });
 
@@ -217,21 +225,18 @@ describe("grouped model discovery", () => {
       maxTokens: 1000000,
       maxOutputTokens: 128000,
       supportsThinking: true,
-      supportsAdaptiveThinking: true,
     },
     "claude-opus-5-5-medium": {
       displayName: "Claude Opus 5.5 (Medium)",
       maxTokens: 1000000,
       maxOutputTokens: 128000,
       supportsThinking: true,
-      supportsAdaptiveThinking: true,
     },
     "claude-opus-5-5-high": {
       displayName: "Claude Opus 5.5 (High)",
       maxTokens: 1000000,
       maxOutputTokens: 128000,
       supportsThinking: true,
-      supportsAdaptiveThinking: true,
     },
   };
   const claudeGroup = {
@@ -338,5 +343,50 @@ describe("grouped model discovery", () => {
       "antigravity-claude-opus-5-5-low",
       "antigravity-claude-opus-5-5-medium",
     ]);
+  });
+
+  it("exposes an xhigh variant for a grouped family that serves it", () => {
+    const models = modelsFromAntigravityAvailableModels(
+      {
+        "gemini-4-hydrogen-low": { displayName: "Gemini 4 Hydrogen (Low)" },
+        "gemini-4-hydrogen-xhigh": { displayName: "Gemini 4 Hydrogen (XHigh)" },
+      },
+      {
+        "gemini-4-hydrogen": {
+          displayName: "Gemini 4 Hydrogen",
+          supportedThinkingLevels: [
+            { thinkingSuffix: "low" },
+            { thinkingSuffix: "xhigh" },
+          ],
+        },
+      },
+    );
+
+    expect(models["antigravity-gemini-4-hydrogen"]?.variants).toEqual({
+      low: { thinkingLevel: "low" },
+      xhigh: { thinkingLevel: "xhigh" },
+    });
+  });
+
+  it("skips a group whose only children have no display name", () => {
+    const models = modelsFromAntigravityAvailableModels(
+      {
+        "claude-sonnet-5-5-low": {},
+        "claude-sonnet-5-5-medium": {},
+      },
+      {
+        "claude-sonnet-5-5": {
+          displayName: "Claude Sonnet 5.5",
+          supportedThinkingLevels: [
+            { thinkingSuffix: "low" },
+            { thinkingSuffix: "medium" },
+          ],
+        },
+      },
+    );
+
+    // Display-less children are internal routing ids, as in the registry pass,
+    // so the group emits nothing.
+    expect(models).toEqual({});
   });
 });

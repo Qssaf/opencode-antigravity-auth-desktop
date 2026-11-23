@@ -2661,7 +2661,8 @@ export const createAntigravityRuntime = (providerId: string) => async (
 
               const warmupBody = buildThinkingWarmupBody(
                 typeof prepared.init.body === "string" ? prepared.init.body : undefined,
-                Boolean(prepared.effectiveModel?.toLowerCase().includes("claude") && prepared.effectiveModel?.toLowerCase().includes("thinking")),
+                Boolean(prepared.isClaudeThinking),
+                Boolean(prepared.isAdaptiveClaude5),
               );
               if (!warmupBody) {
                 return;

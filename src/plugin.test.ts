@@ -224,7 +224,7 @@ describe("createAntigravityPlugin provider models", () => {
               modelName: "gemini-3.7-flash",
             },
             "gemini-3.9-flash": {
-              displayName: "Gemini 3.9 Flash (Registry)",
+              displayName: "Gemini 3.9 Flash Registry",
               modelName: "gemini-3.9-flash",
               supportsThinking: true,
             },
@@ -262,7 +262,7 @@ describe("createAntigravityPlugin provider models", () => {
       expect(models?.["antigravity-gemini-3.7-flash"]).toBeUndefined();
       expect(models?.["antigravity-gemini-3.9-flash"]).toMatchObject({
         id: "antigravity-gemini-3.9-flash",
-        name: "Gemini 3.9 Flash (Registry) (Antigravity)",
+        name: "Gemini 3.9 Flash Registry (Antigravity)",
         capabilities: {
           reasoning: true,
           toolcall: true,
@@ -284,21 +284,18 @@ describe("createAntigravityPlugin provider models", () => {
               maxTokens: 1000000,
               maxOutputTokens: 128000,
               supportsThinking: true,
-              supportsAdaptiveThinking: true,
             },
             "claude-opus-5-5-medium": {
               displayName: "Claude Opus 5.5 (Medium)",
               maxTokens: 1000000,
               maxOutputTokens: 128000,
               supportsThinking: true,
-              supportsAdaptiveThinking: true,
             },
             "claude-opus-5-5-high": {
               displayName: "Claude Opus 5.5 (High)",
               maxTokens: 1000000,
               maxOutputTokens: 128000,
               supportsThinking: true,
-              supportsAdaptiveThinking: true,
             },
           },
           groupedModels: {
