@@ -10,7 +10,6 @@ import { logQuotaFetch, logQuotaStatus } from "./debug";
 import { ensureProjectContext } from "./project";
 import { refreshAccessToken } from "./token";
 import {
-  getModelFamily,
   isGemini2Model,
   isGemini3OrLaterModel,
   remapRetiredAntigravityGeminiModel,
@@ -21,7 +20,9 @@ import type { AccountMetadataV3 } from "./storage";
 
 const FETCH_TIMEOUT_MS = 10000;
 
-export type QuotaGroup = "claude" | "gemini-pro" | "gemini-flash";
+// "claude" is the shared Claude & GPT pool; it keeps the old key so accounts
+// files written before the pools were unified still read the right quota.
+export type QuotaGroup = "claude" | "gemini";
 
 export interface QuotaGroupSummary {
   remainingFraction?: number;
@@ -141,11 +142,17 @@ function parseResetTime(resetTime?: string): number | null {
   return timestamp;
 }
 
+/**
+ * Claude and the third-party models Antigravity serves (GPT-OSS, anything from
+ * OpenAI) draw from one pool, so they must report into one bucket.
+ */
+export function isClaudeOrGptModel(model: string): boolean {
+  const lower = model.toLowerCase();
+  return lower.includes("claude") || lower.includes("gpt-oss") || lower.includes("openai");
+}
+
 function classifyQuotaGroup(modelName: string, displayName?: string): QuotaGroup | null {
   const combined = `${modelName} ${displayName ?? ""}`.toLowerCase();
-  if (combined.includes("claude")) {
-    return "claude";
-  }
   // A model Antigravity no longer serves can still be listed with its own,
   // untouched quota. Counting it would make the group look available while the
   // model that replaced it (Gemini 3.8 Flash) is used up.
@@ -153,12 +160,15 @@ function classifyQuotaGroup(modelName: string, displayName?: string): QuotaGroup
   if (isGemini2Model(id) || remapRetiredAntigravityGeminiModel(id) !== id) {
     return null;
   }
+  if (isClaudeOrGptModel(combined)) {
+    return "claude";
+  }
   const isGemini3 = isGemini3OrLaterModel(combined) || /gemini (?:[3-9]|[1-9]\d+)\b/.test(combined);
   if (!isGemini3) {
     return null;
   }
-  const family = getModelFamily(modelName);
-  return family === "gemini-flash" ? "gemini-flash" : "gemini-pro";
+  // Google now serves one Gemini pool for every Gemini 3+ model.
+  return "gemini";
 }
 
 function aggregateQuota(models?: Record<string, FetchAvailableModelEntry>): QuotaSummary {

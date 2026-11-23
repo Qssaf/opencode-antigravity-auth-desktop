@@ -121,7 +121,13 @@ describe("renderQuota", () => {
   it("lists every bucket and model pool when detailed", async () => {
     checkAccountsQuota.mockResolvedValue([
       quotaResult(0, "first@example.com", {
-        quota: { groups: { claude: { remainingFraction: 0.4, modelCount: 2 } }, modelCount: 2 },
+        quota: {
+          groups: {
+            claude: { remainingFraction: 0.4, modelCount: 2 },
+            gemini: { remainingFraction: 0.7, modelCount: 5 },
+          },
+          modelCount: 7,
+        },
       }),
     ]);
 
@@ -130,6 +136,27 @@ describe("renderQuota", () => {
     expect(output).toContain("Gemini models");
     expect(output).toContain("Claude and GPT models");
     expect(output).toContain("Model pools (5-hour)");
+    expect(output).toContain("Claude / GPT");
+    expect(output).toContain("Gemini");
+    expect(output).toMatch(/Gemini\s+70%/);
+    expect(output).not.toContain("Gemini 3 Pro");
+    expect(output).not.toContain("Gemini 3 Flash");
+  });
+
+  it("still renders the pools cached under the legacy gemini keys", async () => {
+    checkAccountsQuota.mockResolvedValue([
+      quotaResult(0, "first@example.com", {
+        // Accounts files written before the pools were unified.
+        quota: {
+          groups: { "gemini-pro": { remainingFraction: 0.6, modelCount: 3 } },
+          modelCount: 3,
+        } as unknown as AccountQuotaResult["quota"],
+      }),
+    ]);
+
+    const output = await renderQuota(client, "google", { detailed: true });
+
+    expect(output).toMatch(/Gemini\s+60%/);
   });
 
   it("says so when no account is stored", async () => {

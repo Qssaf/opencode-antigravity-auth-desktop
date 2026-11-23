@@ -4,8 +4,8 @@ import type { OAuthAuthDetails, RefreshParts } from "./types";
 import type { AccountSelectionStrategy } from "./config/schema";
 import { getHealthTracker, getTokenTracker, selectHybridAccount, type AccountWithMetrics } from "./rotation";
 import { generateFingerprint, updateFingerprintVersion, type Fingerprint, type FingerprintVersion, MAX_FINGERPRINT_HISTORY } from "./fingerprint";
+import { isClaudeOrGptModel } from "./quota";
 import type { QuotaGroup, QuotaGroupSummary } from "./quota";
-import { getModelFamily } from "./transform/model-resolver";
 import { debugLogToFile } from "./debug";
 import { formatAccountLabel } from "./logging-utils";
 
@@ -361,21 +361,38 @@ function sanitizeClearedSetTimes(
 
 /**
  * Resolve the quota group for soft quota checks.
- * 
- * When a model string is available, we can precisely determine the quota group.
- * When model is null/undefined, we fall back based on family:
+ *
+ * Claude and GPT models share one pool; every Gemini model shares the other.
+ * When model is null/undefined we fall back on family:
  * - Claude → "claude" quota group
- * - Gemini → "gemini-pro" (conservative fallback; may misclassify flash models)
- * 
+ * - Gemini → "gemini" quota group
+ *
  * @param family - The model family ("claude" | "gemini")
  * @param model - Optional model string for precise resolution
  * @returns The QuotaGroup to use for soft quota checks
  */
 export function resolveQuotaGroup(family: ModelFamily, model?: string | null): QuotaGroup {
   if (model) {
-    return getModelFamily(model);
+    return isClaudeOrGptModel(model) ? "claude" : "gemini";
   }
-  return family === "claude" ? "claude" : "gemini-pro";
+  return family === "claude" ? "claude" : "gemini";
+}
+
+/**
+ * Read a pool from the quota cache. Accounts files written before the Gemini
+ * pools were unified cached `gemini-pro` / `gemini-flash`; both held the single
+ * Gemini pool, so either still answers a `gemini` lookup.
+ */
+function readCachedQuotaGroup(
+  quota: Partial<Record<QuotaGroup, QuotaGroupSummary>> | undefined,
+  group: QuotaGroup,
+): QuotaGroupSummary | undefined {
+  if (!quota) return undefined;
+  if (group === "gemini") {
+    const legacy = quota as Partial<Record<string, QuotaGroupSummary>>;
+    return quota.gemini ?? legacy["gemini-pro"] ?? legacy["gemini-flash"];
+  }
+  return quota[group];
 }
 
 function isOverSoftQuotaThreshold(
@@ -395,7 +412,7 @@ function isOverSoftQuotaThreshold(
   
   const quotaGroup = resolveQuotaGroup(family, model);
   
-  const groupData = account.cachedQuota[quotaGroup];
+  const groupData = readCachedQuotaGroup(account.cachedQuota, quotaGroup);
   if (groupData?.remainingFraction == null) return false;
   const resetTimestamp = groupData.resetTime ? Date.parse(groupData.resetTime) : Number.NaN;
   if (Number.isFinite(resetTimestamp) && resetTimestamp <= nowMs()) return false;
@@ -1544,15 +1561,12 @@ export class AccountManager {
     if (available.length > 0) return 0;
     
     // All accounts are over threshold - find earliest reset time
-    // For gemini family, we MUST have the model to distinguish pro vs flash quotas.
-    // Fail-open (return null = no wait info) if model is missing to avoid blocking on wrong quota.
-    if (!model && family !== "claude") return null;
     const quotaGroup = resolveQuotaGroup(family, model);
     const now = nowMs();
     const waitTimes: number[] = [];
     
     for (const acc of enabled) {
-      const groupData = acc.cachedQuota?.[quotaGroup];
+      const groupData = readCachedQuotaGroup(acc.cachedQuota, quotaGroup);
       if (groupData?.resetTime) {
         const resetTimestamp = Date.parse(groupData.resetTime);
         if (Number.isFinite(resetTimestamp)) {

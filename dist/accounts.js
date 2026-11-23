@@ -65,7 +65,7 @@ You are pair programming with a USER to solve their coding task. The task may re
 import { exec } from "node:child_process";
 import { randomUUID as randomUUID3 } from "node:crypto";
 
-// node_modules/@opencode-ai/plugin/dist/tool.js
+// ../opencode-antigravity-auth-desktop/node_modules/@opencode-ai/plugin/dist/tool.js
 import { z } from "zod";
 function tool(input3) {
   return input3;
@@ -2394,16 +2394,6 @@ function resolveModel(requestedModel, onAntigravity) {
     quotaPreference,
     explicitQuota
   };
-}
-function getModelFamily(model) {
-  const lower = model.toLowerCase();
-  if (lower.includes("claude")) {
-    return "claude";
-  }
-  if (lower.includes("flash")) {
-    return "gemini-flash";
-  }
-  return "gemini-pro";
 }
 var ANTIGRAVITY_TO_PUBLIC_API_MODEL_MAP = /* @__PURE__ */ new Map([
   ["gemini-3-pro", "gemini-3-pro-preview"],
@@ -7124,7 +7114,7 @@ function wrapToolsAsFunctionDeclarations(payload) {
 // src/plugin/transform/cross-model-sanitizer.ts
 var GEMINI_SIGNATURE_FIELDS = ["thoughtSignature", "thinkingMetadata"];
 var CLAUDE_SIGNATURE_FIELDS = ["signature"];
-function getModelFamily2(model) {
+function getModelFamily(model) {
   if (isClaudeModel(model)) return "claude";
   if (isGeminiModel(model)) return "gemini";
   return "unknown";
@@ -7181,12 +7171,12 @@ function stripClaudeThinkingFields(part) {
   return { part, stripped };
 }
 function sanitizeCrossModelPayloadInPlace(payload, options) {
-  const targetFamily = getModelFamily2(options.targetModel);
+  const targetFamily = getModelFamily(options.targetModel);
   if (targetFamily === "unknown") {
     return 0;
   }
   if (options.sourceModel) {
-    const sourceFamily = getModelFamily2(options.sourceModel);
+    const sourceFamily = getModelFamily(options.sourceModel);
     if (sourceFamily === targetFamily) {
       return 0;
     }
@@ -9869,6 +9859,335 @@ function updateFingerprintVersion(fingerprint) {
   return true;
 }
 
+// src/plugin/model-catalog.ts
+var CATALOG_TTL_MS = 60 * 60 * 1e3;
+var catalog;
+var antigravityCatalog;
+function modelIdFromName(model) {
+  const raw = (model.name ? model.name.replace(/^models\//, "") : model.baseModelId)?.trim();
+  return raw || null;
+}
+function recordPublicGeminiApiModels(models) {
+  const ids = /* @__PURE__ */ new Set();
+  for (const model of models) {
+    const id = modelIdFromName(model);
+    if (id) ids.add(id.toLowerCase());
+  }
+  if (ids.size === 0) return;
+  catalog = { ids, fetchedAt: Date.now() };
+}
+function getPublicGeminiApiModelIds() {
+  if (!catalog) return void 0;
+  if (Date.now() - catalog.fetchedAt > CATALOG_TTL_MS) return void 0;
+  return catalog.ids;
+}
+function recordAntigravityAvailableModels(models) {
+  if (!models || Object.keys(models).length === 0) return;
+  antigravityCatalog = {
+    models: { ...models },
+    fetchedAt: Date.now()
+  };
+}
+function getCachedAntigravityAvailableModels() {
+  if (!antigravityCatalog) return void 0;
+  if (Date.now() - antigravityCatalog.fetchedAt > CATALOG_TTL_MS) return void 0;
+  return antigravityCatalog.models;
+}
+
+// src/plugin/quota.ts
+var FETCH_TIMEOUT_MS2 = 1e4;
+function buildAuthFromAccount(account) {
+  return {
+    type: "oauth",
+    refresh: formatRefreshParts({
+      refreshToken: account.refreshToken,
+      projectId: account.projectId,
+      managedProjectId: account.managedProjectId
+    }),
+    access: void 0,
+    expires: void 0
+  };
+}
+function normalizeRemainingFraction(value) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0;
+  }
+  if (value < 0) return 0;
+  if (value > 1) return 1;
+  return value;
+}
+function parseResetTime(resetTime) {
+  if (!resetTime) return null;
+  const timestamp = Date.parse(resetTime);
+  if (!Number.isFinite(timestamp)) {
+    return null;
+  }
+  return timestamp;
+}
+function isClaudeOrGptModel(model) {
+  const lower = model.toLowerCase();
+  return lower.includes("claude") || lower.includes("gpt-oss") || lower.includes("openai");
+}
+function classifyQuotaGroup(modelName, displayName) {
+  const combined = `${modelName} ${displayName ?? ""}`.toLowerCase();
+  const id = modelName.toLowerCase().replace(/^antigravity-/, "");
+  if (isGemini2Model(id) || remapRetiredAntigravityGeminiModel(id) !== id) {
+    return null;
+  }
+  if (isClaudeOrGptModel(combined)) {
+    return "claude";
+  }
+  const isGemini3 = isGemini3OrLaterModel(combined) || /gemini (?:[3-9]|[1-9]\d+)\b/.test(combined);
+  if (!isGemini3) {
+    return null;
+  }
+  return "gemini";
+}
+function aggregateQuota(models) {
+  const groups = {};
+  if (!models) {
+    return { groups, modelCount: 0 };
+  }
+  let totalCount = 0;
+  for (const [modelName, entry] of Object.entries(models)) {
+    const group = classifyQuotaGroup(modelName, entry.displayName ?? entry.modelName);
+    if (!group) {
+      continue;
+    }
+    const quotaInfo = entry.quotaInfo;
+    const remainingFraction = quotaInfo ? normalizeRemainingFraction(quotaInfo.remainingFraction) : void 0;
+    const resetTime = quotaInfo?.resetTime;
+    const resetTimestamp = parseResetTime(resetTime);
+    const validResetTime = resetTimestamp !== null ? resetTime : void 0;
+    totalCount += 1;
+    const existing = groups[group];
+    const nextCount = (existing?.modelCount ?? 0) + 1;
+    let nextRemaining = existing?.remainingFraction;
+    let nextResetTime = existing?.resetTime;
+    if (existing === void 0) {
+      nextRemaining = remainingFraction;
+      nextResetTime = validResetTime;
+    } else if (remainingFraction !== void 0 && (existing.remainingFraction === void 0 || remainingFraction > existing.remainingFraction)) {
+      nextRemaining = remainingFraction;
+      nextResetTime = validResetTime;
+    } else if (remainingFraction !== void 0 && existing.remainingFraction !== void 0 && remainingFraction === existing.remainingFraction) {
+      const existingResetTimestamp = parseResetTime(existing.resetTime);
+      if (resetTimestamp !== null && (existingResetTimestamp === null || resetTimestamp < existingResetTimestamp)) {
+        nextResetTime = validResetTime;
+      }
+    }
+    groups[group] = {
+      remainingFraction: nextRemaining,
+      resetTime: nextResetTime,
+      modelCount: nextCount
+    };
+  }
+  return { groups, modelCount: totalCount };
+}
+async function fetchWithTimeout2(url, options, timeoutMs = FETCH_TIMEOUT_MS2) {
+  return googleFetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
+}
+async function fetchAvailableModels(accessToken, projectId) {
+  const endpoint = ANTIGRAVITY_ENDPOINT_DAILY;
+  const errors = [];
+  const body = projectId ? { project: projectId } : {};
+  const response = await fetchWithTimeout2(`${endpoint}/v1internal:fetchAvailableModels`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      "User-Agent": ANTIGRAVITY_CLI_USER_AGENT
+    },
+    body: JSON.stringify(body)
+  });
+  if (response.ok) {
+    return await response.json();
+  }
+  const message = await response.text().catch(() => "");
+  const snippet = message.trim().slice(0, 200);
+  errors.push(
+    `fetchAvailableModels ${response.status} at ${endpoint}${snippet ? `: ${snippet}` : ""}`
+  );
+  throw new Error(errors.join("; ") || "fetchAvailableModels failed");
+}
+function applyAccountUpdates(account, auth) {
+  const parts = parseRefreshParts(auth.refresh);
+  if (!parts.refreshToken) {
+    return void 0;
+  }
+  const updated = {
+    ...account,
+    refreshToken: parts.refreshToken,
+    projectId: parts.projectId ?? account.projectId,
+    managedProjectId: parts.managedProjectId ?? account.managedProjectId
+  };
+  const changed = updated.refreshToken !== account.refreshToken || updated.projectId !== account.projectId || updated.managedProjectId !== account.managedProjectId;
+  return changed ? updated : void 0;
+}
+var QUOTA_CHECK_CONCURRENCY = 3;
+async function mapWithConcurrency(items, concurrency, fn) {
+  const results = new Array(items.length);
+  if (items.length === 0) {
+    return results;
+  }
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+  let cursor2 = 0;
+  const worker = async () => {
+    while (true) {
+      const index = cursor2;
+      cursor2 += 1;
+      if (index >= items.length) {
+        break;
+      }
+      const item = items[index];
+      if (item === void 0) {
+        continue;
+      }
+      results[index] = await fn(item, index);
+    }
+  };
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
+}
+async function fetchWithEndpointFallback(requestPath, options, timeoutMs = FETCH_TIMEOUT_MS2) {
+  let lastError;
+  for (const endpoint of ANTIGRAVITY_ENDPOINT_FALLBACKS) {
+    try {
+      const response = await fetchWithTimeout2(`${endpoint}${requestPath}`, options, timeoutMs);
+      if (response.ok) {
+        return response;
+      }
+      if (response.status === 403 || response.status === 404 || response.status >= 500) {
+        lastError = new Error(`HTTP ${response.status} at ${endpoint}`);
+        continue;
+      }
+      return response;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("All Antigravity endpoints failed");
+}
+async function fetchRateLimitSummary(accessToken, projectId) {
+  const body = projectId ? { project: projectId } : {};
+  try {
+    const response = await fetchWithEndpointFallback("/v1internal:retrieveUserQuotaSummary", {
+      method: "POST",
+      headers: {
+        // The backend keys what it reports off the client it thinks is
+        // calling; agy sends its CLI agent and nothing else.
+        "User-Agent": ANTIGRAVITY_CLI_USER_AGENT,
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      return { groups: [], error: `HTTP ${response.status}${text ? `: ${text.slice(0, 100)}` : ""}` };
+    }
+    const data = await response.json();
+    return normalizeRateLimitSummary(data);
+  } catch (error) {
+    return { groups: [], error: error instanceof Error ? error.message : String(error) };
+  }
+}
+function normalizeRateLimitSummary(payload) {
+  const groups = (payload.groups ?? []).map((group) => ({
+    displayName: group.displayName || "Unknown group",
+    description: group.description || void 0,
+    buckets: (group.buckets ?? []).map((bucket) => ({
+      bucketId: bucket.bucketId || "",
+      displayName: bucket.displayName || bucket.bucketId || "",
+      window: bucket.window || "",
+      remainingFraction: normalizeRemainingFraction(bucket.remainingFraction) ?? 0,
+      remainingAmount: bucket.remainingAmount,
+      disabled: bucket.disabled === true,
+      resetTime: bucket.resetTime,
+      description: bucket.description || void 0
+    }))
+  }));
+  return { description: payload.description || void 0, groups };
+}
+function isGeminiRateLimitGroup(group) {
+  return /gemini/i.test(group.displayName);
+}
+function findRateLimitBucket(summary, matches, window) {
+  const group = summary?.groups.find(matches);
+  return group?.buckets.find((bucket) => bucket.window === window);
+}
+async function checkSingleAccountQuota(account, index, client2, providerId) {
+  const disabled = account.enabled === false;
+  let auth = buildAuthFromAccount(account);
+  try {
+    if (accessTokenExpired(auth)) {
+      const refreshed = await refreshAccessToken(auth, client2, providerId);
+      if (!refreshed) {
+        throw new Error("Token refresh failed");
+      }
+      auth = refreshed;
+    }
+    const projectContext = await ensureProjectContext(auth);
+    auth = projectContext.auth;
+    const updatedAccount = applyAccountUpdates(account, auth);
+    let quotaResult;
+    const [antigravityResponse, rateLimitSummary] = await Promise.all([
+      fetchAvailableModels(auth.access ?? "", projectContext.effectiveProjectId).catch(() => ({ models: void 0 })),
+      fetchRateLimitSummary(auth.access ?? "", projectContext.effectiveProjectId)
+    ]);
+    if (antigravityResponse.models === void 0) {
+      quotaResult = {
+        groups: {},
+        modelCount: 0,
+        error: "Failed to fetch Antigravity quota"
+      };
+    } else {
+      recordAntigravityAvailableModels(antigravityResponse.models);
+      quotaResult = aggregateQuota(antigravityResponse.models);
+    }
+    for (const [family, groupQuota] of Object.entries(quotaResult.groups)) {
+      const remainingPercent = (groupQuota.remainingFraction ?? 0) * 100;
+      logQuotaStatus(account.email, index, remainingPercent, family);
+    }
+    return {
+      index,
+      email: account.email,
+      status: "ok",
+      disabled,
+      quota: quotaResult,
+      rateLimits: rateLimitSummary,
+      updatedAccount
+    };
+  } catch (error) {
+    logQuotaFetch(
+      "error",
+      void 0,
+      `account=${account.email ?? index} error=${error instanceof Error ? error.message : String(error)}`
+    );
+    return {
+      index,
+      email: account.email,
+      status: "error",
+      disabled,
+      error: error instanceof Error ? error.message : String(error)
+    };
+  }
+}
+async function checkAccountsQuota(accounts, client2, providerId = ANTIGRAVITY_PROVIDER_ID) {
+  logQuotaFetch("start", accounts.length);
+  const results = await mapWithConcurrency(
+    accounts,
+    QUOTA_CHECK_CONCURRENCY,
+    (account, index) => checkSingleAccountQuota(account, index, client2, providerId)
+  );
+  logQuotaFetch(
+    "complete",
+    accounts.length,
+    `ok=${results.filter((r) => r.status === "ok").length} errors=${results.filter((r) => r.status === "error").length}`
+  );
+  return results;
+}
+
 // src/plugin/accounts.ts
 var QUOTA_EXHAUSTED_BACKOFFS = [6e4, 3e5, 18e5, 72e5];
 var RATE_LIMIT_EXCEEDED_BACKOFF = 3e4;
@@ -10055,9 +10374,17 @@ function sanitizeClearedSetTimes(raw, cleared) {
 }
 function resolveQuotaGroup(family, model) {
   if (model) {
-    return getModelFamily(model);
+    return isClaudeOrGptModel(model) ? "claude" : "gemini";
   }
-  return family === "claude" ? "claude" : "gemini-pro";
+  return family === "claude" ? "claude" : "gemini";
+}
+function readCachedQuotaGroup(quota, group) {
+  if (!quota) return void 0;
+  if (group === "gemini") {
+    const legacy = quota;
+    return quota.gemini ?? legacy["gemini-pro"] ?? legacy["gemini-flash"];
+  }
+  return quota[group];
 }
 function isOverSoftQuotaThreshold(account, family, headerStyle, thresholdPercent, cacheTtlMs, model) {
   if (thresholdPercent >= 100) return false;
@@ -10066,7 +10393,7 @@ function isOverSoftQuotaThreshold(account, family, headerStyle, thresholdPercent
   const age = nowMs() - account.cachedQuotaUpdatedAt;
   if (age > cacheTtlMs) return false;
   const quotaGroup = resolveQuotaGroup(family, model);
-  const groupData = account.cachedQuota[quotaGroup];
+  const groupData = readCachedQuotaGroup(account.cachedQuota, quotaGroup);
   if (groupData?.remainingFraction == null) return false;
   const resetTimestamp = groupData.resetTime ? Date.parse(groupData.resetTime) : Number.NaN;
   if (Number.isFinite(resetTimestamp) && resetTimestamp <= nowMs()) return false;
@@ -10946,12 +11273,11 @@ var AccountManager = class _AccountManager {
     if (enabled.length === 0) return null;
     const available = enabled.filter((a) => !isOverSoftQuotaThreshold(a, family, headerStyle, thresholdPercent, cacheTtlMs, model));
     if (available.length > 0) return 0;
-    if (!model && family !== "claude") return null;
     const quotaGroup = resolveQuotaGroup(family, model);
     const now = nowMs();
     const waitTimes = [];
     for (const acc of enabled) {
-      const groupData = acc.cachedQuota?.[quotaGroup];
+      const groupData = readCachedQuotaGroup(acc.cachedQuota, quotaGroup);
       if (groupData?.resetTime) {
         const resetTimestamp = Date.parse(groupData.resetTime);
         if (Number.isFinite(resetTimestamp)) {
@@ -10964,332 +11290,6 @@ var AccountManager = class _AccountManager {
     return minWait === 0 ? null : minWait;
   }
 };
-
-// src/plugin/model-catalog.ts
-var CATALOG_TTL_MS = 60 * 60 * 1e3;
-var catalog;
-var antigravityCatalog;
-function modelIdFromName(model) {
-  const raw = (model.name ? model.name.replace(/^models\//, "") : model.baseModelId)?.trim();
-  return raw || null;
-}
-function recordPublicGeminiApiModels(models) {
-  const ids = /* @__PURE__ */ new Set();
-  for (const model of models) {
-    const id = modelIdFromName(model);
-    if (id) ids.add(id.toLowerCase());
-  }
-  if (ids.size === 0) return;
-  catalog = { ids, fetchedAt: Date.now() };
-}
-function getPublicGeminiApiModelIds() {
-  if (!catalog) return void 0;
-  if (Date.now() - catalog.fetchedAt > CATALOG_TTL_MS) return void 0;
-  return catalog.ids;
-}
-function recordAntigravityAvailableModels(models) {
-  if (!models || Object.keys(models).length === 0) return;
-  antigravityCatalog = {
-    models: { ...models },
-    fetchedAt: Date.now()
-  };
-}
-function getCachedAntigravityAvailableModels() {
-  if (!antigravityCatalog) return void 0;
-  if (Date.now() - antigravityCatalog.fetchedAt > CATALOG_TTL_MS) return void 0;
-  return antigravityCatalog.models;
-}
-
-// src/plugin/quota.ts
-var FETCH_TIMEOUT_MS2 = 1e4;
-function buildAuthFromAccount(account) {
-  return {
-    type: "oauth",
-    refresh: formatRefreshParts({
-      refreshToken: account.refreshToken,
-      projectId: account.projectId,
-      managedProjectId: account.managedProjectId
-    }),
-    access: void 0,
-    expires: void 0
-  };
-}
-function normalizeRemainingFraction(value) {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return 0;
-  }
-  if (value < 0) return 0;
-  if (value > 1) return 1;
-  return value;
-}
-function parseResetTime(resetTime) {
-  if (!resetTime) return null;
-  const timestamp = Date.parse(resetTime);
-  if (!Number.isFinite(timestamp)) {
-    return null;
-  }
-  return timestamp;
-}
-function classifyQuotaGroup(modelName, displayName) {
-  const combined = `${modelName} ${displayName ?? ""}`.toLowerCase();
-  if (combined.includes("claude")) {
-    return "claude";
-  }
-  const id = modelName.toLowerCase().replace(/^antigravity-/, "");
-  if (isGemini2Model(id) || remapRetiredAntigravityGeminiModel(id) !== id) {
-    return null;
-  }
-  const isGemini3 = isGemini3OrLaterModel(combined) || /gemini (?:[3-9]|[1-9]\d+)\b/.test(combined);
-  if (!isGemini3) {
-    return null;
-  }
-  const family = getModelFamily(modelName);
-  return family === "gemini-flash" ? "gemini-flash" : "gemini-pro";
-}
-function aggregateQuota(models) {
-  const groups = {};
-  if (!models) {
-    return { groups, modelCount: 0 };
-  }
-  let totalCount = 0;
-  for (const [modelName, entry] of Object.entries(models)) {
-    const group = classifyQuotaGroup(modelName, entry.displayName ?? entry.modelName);
-    if (!group) {
-      continue;
-    }
-    const quotaInfo = entry.quotaInfo;
-    const remainingFraction = quotaInfo ? normalizeRemainingFraction(quotaInfo.remainingFraction) : void 0;
-    const resetTime = quotaInfo?.resetTime;
-    const resetTimestamp = parseResetTime(resetTime);
-    const validResetTime = resetTimestamp !== null ? resetTime : void 0;
-    totalCount += 1;
-    const existing = groups[group];
-    const nextCount = (existing?.modelCount ?? 0) + 1;
-    let nextRemaining = existing?.remainingFraction;
-    let nextResetTime = existing?.resetTime;
-    if (existing === void 0) {
-      nextRemaining = remainingFraction;
-      nextResetTime = validResetTime;
-    } else if (remainingFraction !== void 0 && (existing.remainingFraction === void 0 || remainingFraction > existing.remainingFraction)) {
-      nextRemaining = remainingFraction;
-      nextResetTime = validResetTime;
-    } else if (remainingFraction !== void 0 && existing.remainingFraction !== void 0 && remainingFraction === existing.remainingFraction) {
-      const existingResetTimestamp = parseResetTime(existing.resetTime);
-      if (resetTimestamp !== null && (existingResetTimestamp === null || resetTimestamp < existingResetTimestamp)) {
-        nextResetTime = validResetTime;
-      }
-    }
-    groups[group] = {
-      remainingFraction: nextRemaining,
-      resetTime: nextResetTime,
-      modelCount: nextCount
-    };
-  }
-  return { groups, modelCount: totalCount };
-}
-async function fetchWithTimeout2(url, options, timeoutMs = FETCH_TIMEOUT_MS2) {
-  return googleFetch(url, { ...options, signal: AbortSignal.timeout(timeoutMs) });
-}
-async function fetchAvailableModels(accessToken, projectId) {
-  const endpoint = ANTIGRAVITY_ENDPOINT_DAILY;
-  const errors = [];
-  const body = projectId ? { project: projectId } : {};
-  const response = await fetchWithTimeout2(`${endpoint}/v1internal:fetchAvailableModels`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-      "User-Agent": ANTIGRAVITY_CLI_USER_AGENT
-    },
-    body: JSON.stringify(body)
-  });
-  if (response.ok) {
-    return await response.json();
-  }
-  const message = await response.text().catch(() => "");
-  const snippet = message.trim().slice(0, 200);
-  errors.push(
-    `fetchAvailableModels ${response.status} at ${endpoint}${snippet ? `: ${snippet}` : ""}`
-  );
-  throw new Error(errors.join("; ") || "fetchAvailableModels failed");
-}
-function applyAccountUpdates(account, auth) {
-  const parts = parseRefreshParts(auth.refresh);
-  if (!parts.refreshToken) {
-    return void 0;
-  }
-  const updated = {
-    ...account,
-    refreshToken: parts.refreshToken,
-    projectId: parts.projectId ?? account.projectId,
-    managedProjectId: parts.managedProjectId ?? account.managedProjectId
-  };
-  const changed = updated.refreshToken !== account.refreshToken || updated.projectId !== account.projectId || updated.managedProjectId !== account.managedProjectId;
-  return changed ? updated : void 0;
-}
-var QUOTA_CHECK_CONCURRENCY = 3;
-async function mapWithConcurrency(items, concurrency, fn) {
-  const results = new Array(items.length);
-  if (items.length === 0) {
-    return results;
-  }
-  const workerCount = Math.max(1, Math.min(concurrency, items.length));
-  let cursor2 = 0;
-  const worker = async () => {
-    while (true) {
-      const index = cursor2;
-      cursor2 += 1;
-      if (index >= items.length) {
-        break;
-      }
-      const item = items[index];
-      if (item === void 0) {
-        continue;
-      }
-      results[index] = await fn(item, index);
-    }
-  };
-  await Promise.all(Array.from({ length: workerCount }, () => worker()));
-  return results;
-}
-async function fetchWithEndpointFallback(requestPath, options, timeoutMs = FETCH_TIMEOUT_MS2) {
-  let lastError;
-  for (const endpoint of ANTIGRAVITY_ENDPOINT_FALLBACKS) {
-    try {
-      const response = await fetchWithTimeout2(`${endpoint}${requestPath}`, options, timeoutMs);
-      if (response.ok) {
-        return response;
-      }
-      if (response.status === 403 || response.status === 404 || response.status >= 500) {
-        lastError = new Error(`HTTP ${response.status} at ${endpoint}`);
-        continue;
-      }
-      return response;
-    } catch (error) {
-      lastError = error;
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error("All Antigravity endpoints failed");
-}
-async function fetchRateLimitSummary(accessToken, projectId) {
-  const body = projectId ? { project: projectId } : {};
-  try {
-    const response = await fetchWithEndpointFallback("/v1internal:retrieveUserQuotaSummary", {
-      method: "POST",
-      headers: {
-        // The backend keys what it reports off the client it thinks is
-        // calling; agy sends its CLI agent and nothing else.
-        "User-Agent": ANTIGRAVITY_CLI_USER_AGENT,
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(body)
-    });
-    if (!response.ok) {
-      const text = await response.text().catch(() => "");
-      return { groups: [], error: `HTTP ${response.status}${text ? `: ${text.slice(0, 100)}` : ""}` };
-    }
-    const data = await response.json();
-    return normalizeRateLimitSummary(data);
-  } catch (error) {
-    return { groups: [], error: error instanceof Error ? error.message : String(error) };
-  }
-}
-function normalizeRateLimitSummary(payload) {
-  const groups = (payload.groups ?? []).map((group) => ({
-    displayName: group.displayName || "Unknown group",
-    description: group.description || void 0,
-    buckets: (group.buckets ?? []).map((bucket) => ({
-      bucketId: bucket.bucketId || "",
-      displayName: bucket.displayName || bucket.bucketId || "",
-      window: bucket.window || "",
-      remainingFraction: normalizeRemainingFraction(bucket.remainingFraction) ?? 0,
-      remainingAmount: bucket.remainingAmount,
-      disabled: bucket.disabled === true,
-      resetTime: bucket.resetTime,
-      description: bucket.description || void 0
-    }))
-  }));
-  return { description: payload.description || void 0, groups };
-}
-function isGeminiRateLimitGroup(group) {
-  return /gemini/i.test(group.displayName);
-}
-function findRateLimitBucket(summary, matches, window) {
-  const group = summary?.groups.find(matches);
-  return group?.buckets.find((bucket) => bucket.window === window);
-}
-async function checkSingleAccountQuota(account, index, client2, providerId) {
-  const disabled = account.enabled === false;
-  let auth = buildAuthFromAccount(account);
-  try {
-    if (accessTokenExpired(auth)) {
-      const refreshed = await refreshAccessToken(auth, client2, providerId);
-      if (!refreshed) {
-        throw new Error("Token refresh failed");
-      }
-      auth = refreshed;
-    }
-    const projectContext = await ensureProjectContext(auth);
-    auth = projectContext.auth;
-    const updatedAccount = applyAccountUpdates(account, auth);
-    let quotaResult;
-    const [antigravityResponse, rateLimitSummary] = await Promise.all([
-      fetchAvailableModels(auth.access ?? "", projectContext.effectiveProjectId).catch(() => ({ models: void 0 })),
-      fetchRateLimitSummary(auth.access ?? "", projectContext.effectiveProjectId)
-    ]);
-    if (antigravityResponse.models === void 0) {
-      quotaResult = {
-        groups: {},
-        modelCount: 0,
-        error: "Failed to fetch Antigravity quota"
-      };
-    } else {
-      recordAntigravityAvailableModels(antigravityResponse.models);
-      quotaResult = aggregateQuota(antigravityResponse.models);
-    }
-    for (const [family, groupQuota] of Object.entries(quotaResult.groups)) {
-      const remainingPercent = (groupQuota.remainingFraction ?? 0) * 100;
-      logQuotaStatus(account.email, index, remainingPercent, family);
-    }
-    return {
-      index,
-      email: account.email,
-      status: "ok",
-      disabled,
-      quota: quotaResult,
-      rateLimits: rateLimitSummary,
-      updatedAccount
-    };
-  } catch (error) {
-    logQuotaFetch(
-      "error",
-      void 0,
-      `account=${account.email ?? index} error=${error instanceof Error ? error.message : String(error)}`
-    );
-    return {
-      index,
-      email: account.email,
-      status: "error",
-      disabled,
-      error: error instanceof Error ? error.message : String(error)
-    };
-  }
-}
-async function checkAccountsQuota(accounts, client2, providerId = ANTIGRAVITY_PROVIDER_ID) {
-  logQuotaFetch("start", accounts.length);
-  const results = await mapWithConcurrency(
-    accounts,
-    QUOTA_CHECK_CONCURRENCY,
-    (account, index) => checkSingleAccountQuota(account, index, client2, providerId)
-  );
-  logQuotaFetch(
-    "complete",
-    accounts.length,
-    `ok=${results.filter((r) => r.status === "ok").length} errors=${results.filter((r) => r.status === "error").length}`
-  );
-  return results;
-}
 
 // src/plugin/account-admin.ts
 function accountLabel(account, index) {
@@ -11492,10 +11492,10 @@ function renderRateLimitDetail(result) {
 function renderModelQuotaDetail(result) {
   const lines = [];
   const groups = result.quota?.groups ?? {};
+  const legacyGroups = groups;
   const rows = [
-    ["Claude", groups.claude],
-    ["Gemini 3 Pro", groups["gemini-pro"]],
-    ["Gemini 3 Flash", groups["gemini-flash"]]
+    ["Claude / GPT", groups.claude],
+    ["Gemini", groups.gemini ?? legacyGroups["gemini-pro"] ?? legacyGroups["gemini-flash"]]
   ];
   const known = rows.filter(([, data]) => data);
   if (known.length === 0) {
@@ -15329,10 +15329,10 @@ Alternatively, you can:
                         console.log(`     \u2514\u2500 ${errorMsg}`);
                       } else {
                         const groups = res.quota.groups;
+                        const legacyGroups = groups;
                         const groupEntries = [
-                          { name: "Claude", data: groups.claude },
-                          { name: "Gemini 3 Pro", data: groups["gemini-pro"] },
-                          { name: "Gemini 3 Flash", data: groups["gemini-flash"] }
+                          { name: "Claude / GPT", data: groups.claude },
+                          { name: "Gemini", data: groups.gemini ?? legacyGroups["gemini-pro"] ?? legacyGroups["gemini-flash"] }
                         ].filter((g) => g.data);
                         groupEntries.forEach((g, idx) => {
                           const isLast = idx === groupEntries.length - 1;
@@ -15876,7 +15876,7 @@ function extractModelFromUrlWithSuffix(urlString) {
 function getModelFamilyFromUrl(urlString) {
   const model = extractModelFromUrl(urlString);
   let family = "gemini";
-  if (model && model.includes("claude")) {
+  if (model && isClaudeOrGptModel(model)) {
     family = "claude";
   }
   if (isDebugEnabled()) {
