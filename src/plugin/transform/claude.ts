@@ -9,6 +9,7 @@
  */
 
 import type { RequestPayload, ThinkingConfig } from "./types";
+import { isAdaptiveClaude5Model } from "./model-resolver";
 import {
   EMPTY_SCHEMA_PLACEHOLDER_NAME,
   EMPTY_SCHEMA_PLACEHOLDER_DESCRIPTION,
@@ -30,10 +31,15 @@ export function isClaudeModel(model: string): boolean {
 
 /**
  * Check if a model is a Claude thinking model.
+ *
+ * Claude 4.x ids say so with a `-thinking` suffix; Claude 5 dropped it for
+ * adaptive thinking and is served only as tier-specific ids
+ * (claude-opus-5-5-{low,medium,high}).
  */
 export function isClaudeThinkingModel(model: string): boolean {
   const lower = model.toLowerCase();
-  return lower.includes("claude") && lower.includes("thinking");
+  return lower.includes("claude")
+    && (lower.includes("thinking") || isAdaptiveClaude5Model(lower));
 }
 
 /**

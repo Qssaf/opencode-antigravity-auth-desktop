@@ -185,6 +185,8 @@ export function isApiKeyAuth(auth: unknown): auth is ApiKeyAuthDetails {
 function canRouteAsPublicGeminiApiModel(model: string): boolean {
   const m = model.toLowerCase();
   if (m.includes("claude")) return false;
+  // GPT-OSS 120B shares the Claude/GPT pool and is served by Antigravity only.
+  if (m.includes("gpt-oss")) return false;
   const isAntigravityPrefixed = m.startsWith("antigravity-");
   const stripped = m.replace(/^antigravity-/, "").replace(/-(minimal|low|medium|high)$/, "");
 
@@ -302,14 +304,15 @@ const ANTIGRAVITY_ONLY_BARE_GEMINI_IDS: ReadonlySet<string> = new Set([
  * Classifies models that the Antigravity Code Assist backend serves but the public
  * Gemini API (v1beta on `generativelanguage.googleapis.com`) does not.
  *
- * Anything with the `antigravity-` prefix or any Claude model is OAuth-only by
- * construction. For Gemini ids we use an explicit denylist (see
- * `ANTIGRAVITY_ONLY_BARE_GEMINI_IDS`).
+ * Anything with the `antigravity-` prefix, any Claude model, and any `gpt-oss`
+ * model is OAuth-only by construction. For Gemini ids we use an explicit
+ * denylist (see `ANTIGRAVITY_ONLY_BARE_GEMINI_IDS`).
  */
 export function isLikelyAntigravityOnlyModel(model: string): boolean {
   const m = model.toLowerCase();
   if (m.startsWith("antigravity-")) return true;
   if (m.includes("claude")) return true;
+  if (m.includes("gpt-oss")) return true;
   return ANTIGRAVITY_ONLY_BARE_GEMINI_IDS.has(m);
 }
 

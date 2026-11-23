@@ -74,6 +74,16 @@ describe("isClaudeThinkingModel", () => {
     expect(isClaudeThinkingModel("gpt-4-thinking")).toBe(false);
   });
 
+  it("returns true for Claude 5 adaptive ids, which dropped the -thinking suffix", () => {
+    expect(isClaudeThinkingModel("claude-opus-5-5")).toBe(true);
+    expect(isClaudeThinkingModel("claude-sonnet-5-5-medium")).toBe(true);
+    expect(isClaudeThinkingModel("antigravity-claude-opus-5-5-high")).toBe(true);
+  });
+
+  it("returns false for a Claude 5 id Google disabled", () => {
+    expect(isClaudeThinkingModel("claude-opus-5-5-disabled")).toBe(false);
+  });
+
   it("requires both claude and thinking keywords", () => {
     expect(isClaudeThinkingModel("thinking-model")).toBe(false);
     expect(isClaudeThinkingModel("claude-model")).toBe(false);

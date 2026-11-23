@@ -522,6 +522,16 @@ describe("isLikelyAntigravityOnlyModel", () => {
     expect(isLikelyAntigravityOnlyModel("claude-opus-4-6-thinking")).toBe(true);
   });
 
+  it("flags gpt-oss ids as Antigravity-only", () => {
+    expect(isLikelyAntigravityOnlyModel("gpt-oss-120b-medium")).toBe(true);
+    expect(isLikelyAntigravityOnlyModel("antigravity-gpt-oss-120b-medium")).toBe(true);
+    expect(
+      isAntigravityOnlyGenerativeLanguageRequest(
+        "https://generativelanguage.googleapis.com/v1beta/models/gpt-oss-120b-medium:generateContent",
+      ),
+    ).toBe(true);
+  });
+
   it("does NOT flag public-API Gemini 3 ids (preview / lite / 3.5-flash)", () => {
     expect(isLikelyAntigravityOnlyModel("gemini-3.1-pro-preview")).toBe(false);
     expect(isLikelyAntigravityOnlyModel("gemini-3-pro-preview")).toBe(false);

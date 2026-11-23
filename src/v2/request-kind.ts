@@ -18,16 +18,21 @@ export const REQUEST_KIND_HEADER = "x-antigravity-request-kind";
  */
 export const TITLE_REQUEST_HEADER = "x-opencode-antigravity-title";
 
-/** Thinking a title request gets. Low is the lowest level every Gemini 3 backend accepts. */
+/** Thinking a title request gets. Low is the lowest level every Gemini 3 backend and Claude 5 accept. */
 const TITLE_THINKING = { thinkingLevel: "low", includeThoughts: false } as const;
+
+const GEMINI_TITLE_MODEL_REGEX = /\/models\/[^/:]*gemini-(?:[3-9]|[1-9]\d+)(?=[.-]|[:/]|$)/i;
+/** Claude 5 dropped `-thinking`; its adaptive ids take a thinkingLevel too. */
+const CLAUDE_5_TITLE_MODEL_REGEX = /\/models\/[^/:]*claude-(?:opus|sonnet)-5(?:[.-]\d+)+(?:-(?:minimal|low|medium|high))?(?=[.:/]|$)/i;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
- * Removes the kind tag from `init` and, for a Gemini title request, caps its
- * thinking. Other requests pass through unchanged apart from losing the tag.
+ * Removes the kind tag from `init` and, for a Gemini or Claude 5 title request,
+ * caps its thinking. Other requests pass through unchanged apart from losing the
+ * tag.
  */
 export function applyRequestKind(url: string, init: RequestInit): RequestInit {
   const headers = new Headers(init.headers);
@@ -37,8 +42,10 @@ export function applyRequestKind(url: string, init: RequestInit): RequestInit {
   if (kind === "title") headers.set(TITLE_REQUEST_HEADER, "1");
   const untagged: RequestInit = { ...init, headers };
 
-  // Claude takes a thinking budget, not a level; its titles are left alone.
-  if (kind !== "title" || !/\/models\/[^/:]*gemini-(?:[3-9]|[1-9]\d+)(?=[.-]|[:/]|$)/i.test(url) || typeof init.body !== "string") {
+  // Claude 4.x takes a thinking budget, not a level; its titles are left alone.
+  const takesTitleThinkingCap =
+    GEMINI_TITLE_MODEL_REGEX.test(url) || CLAUDE_5_TITLE_MODEL_REGEX.test(url);
+  if (kind !== "title" || !takesTitleThinkingCap || typeof init.body !== "string") {
     return untagged;
   }
 

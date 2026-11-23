@@ -266,6 +266,8 @@ async function modelsFromOAuthAuth(
   if (!effectiveAuth) {
     const cached = getCachedAntigravityAvailableModels();
     if (cached) {
+      // The cache stores only the per-id registry, not `groupedModels`, so this
+      // path cannot collapse tier ids; the live fetch below can.
       return modelsFromAntigravityAvailableModels(cached);
     }
     return {};
@@ -296,7 +298,7 @@ async function modelsFromOAuthAuth(
     if (response.models) {
       recordAntigravityAvailableModels(response.models);
     }
-    return modelsFromAntigravityAvailableModels(response.models ?? {});
+    return modelsFromAntigravityAvailableModels(response.models ?? {}, response.groupedModels);
   } catch (error) {
     log.debug("fetchAvailableModels-failed", { error: String(error) });
     const cached = getCachedAntigravityAvailableModels();

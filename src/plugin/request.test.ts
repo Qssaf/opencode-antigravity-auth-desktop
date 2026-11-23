@@ -10,6 +10,7 @@ import { DEFAULT_CONFIG } from "./config";
 import { stripRefusedSystemText } from "./request-helpers";
 import { initializeDebug } from "./debug";
 import { ANTIGRAVITY_CLI_USER_AGENT, SKIP_THOUGHT_SIGNATURE } from "../constants";
+import { CLAUDE_THINKING_MAX_OUTPUT_TOKENS } from "./transform";
 import { cacheSignature, getCachedSignature, clearSignatureCache } from "./cache";
 import * as config from "./config";
 import type { SignatureStore, ThoughtBuffer, StreamingCallbacks, StreamingOptions } from "./core/streaming/types";
@@ -1603,6 +1604,83 @@ it("removes API key headers", () => {
           "antigravity"
         );
         expect(result.effectiveModel).toBe(sent);
+      });
+    });
+
+    describe("Claude 5 adaptive thinking", () => {
+      it("routes a bare Claude 5 id to its high backend with a thinking level, not a budget", () => {
+        const result = prepareAntigravityRequest(
+          "https://generativelanguage.googleapis.com/v1beta/models/antigravity-claude-opus-5-5:generateContent",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              contents: [],
+              generationConfig: { maxOutputTokens: 128000 },
+            }),
+          },
+          mockAccessToken,
+          mockProjectId,
+          undefined,
+          "antigravity"
+        );
+
+        expect(result.effectiveModel).toBe("claude-opus-5-5-high");
+        const wrapped = JSON.parse(result.init.body as string);
+        expect(wrapped.model).toBe("claude-opus-5-5-high");
+        expect(wrapped.request.generationConfig.thinkingConfig).toEqual({
+          includeThoughts: true,
+          thinkingLevel: "HIGH",
+        });
+        // Claude 5.5 allows 128K output, so the client's limit is kept as sent.
+        expect(wrapped.request.generationConfig.maxOutputTokens).toBe(128000);
+      });
+
+      it("follows a variant's thinking level to the matching backend tier", () => {
+        const result = prepareAntigravityRequest(
+          "https://generativelanguage.googleapis.com/v1beta/models/antigravity-claude-sonnet-5-5:generateContent",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              contents: [],
+              providerOptions: { google: { thinkingLevel: "medium" } },
+            }),
+          },
+          mockAccessToken,
+          mockProjectId,
+          undefined,
+          "antigravity"
+        );
+
+        expect(result.effectiveModel).toBe("claude-sonnet-5-5-medium");
+        const wrapped = JSON.parse(result.init.body as string);
+        expect(wrapped.request.generationConfig.thinkingConfig).toEqual({
+          includeThoughts: true,
+          thinkingLevel: "MEDIUM",
+        });
+      });
+
+      it("keeps the Claude 4.x snake_case budget path and its 64K output floor", () => {
+        const result = prepareAntigravityRequest(
+          "https://generativelanguage.googleapis.com/v1beta/models/antigravity-claude-opus-4-6-thinking:generateContent",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              contents: [],
+              generationConfig: { maxOutputTokens: 8000 },
+            }),
+          },
+          mockAccessToken,
+          mockProjectId,
+          undefined,
+          "antigravity"
+        );
+
+        const wrapped = JSON.parse(result.init.body as string);
+        expect(wrapped.request.generationConfig.thinkingConfig).toEqual({
+          include_thoughts: true,
+          thinking_budget: 32768,
+        });
+        expect(wrapped.request.generationConfig.maxOutputTokens).toBe(CLAUDE_THINKING_MAX_OUTPUT_TOKENS);
       });
     });
   });
