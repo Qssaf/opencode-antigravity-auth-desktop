@@ -247,6 +247,12 @@ describe("resolveModelWithTier", () => {
       ["antigravity-gemini-4-argon-low", "gemini-4-argon-low", "low"],
       ["antigravity-gemini-4-argon-medium", "gemini-4-argon-medium", "medium"],
       ["antigravity-gemini-4-argon-high", "gemini-4-argon-high", "high"],
+      ["antigravity-gemini-4-hydrogen", "gemini-4-hydrogen-high", "high"],
+      ["antigravity-gemini-4-hydrogen-minimal", "gemini-4-hydrogen-low", "low"],
+      ["antigravity-gemini-4-hydrogen-medium", "gemini-4-hydrogen-medium", "medium"],
+      ["antigravity-gemini-4-hydrogen-xhigh", "gemini-4-hydrogen-xhigh", "xhigh"],
+      // Google stopped offering Sonar: sessions still set to it get Hydrogen.
+      ["antigravity-gemini-4-hydrogen-sonar", "gemini-4-hydrogen-high", "high"],
     ])("maps %s to the Antigravity backend id %s", (requested, actual, thinkingLevel) => {
       const result = resolveModelWithTier(requested);
       expect(result.actualModel).toBe(actual);

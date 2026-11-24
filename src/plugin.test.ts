@@ -117,7 +117,7 @@ describe("createAntigravityPlugin provider models", () => {
         return new Response(JSON.stringify({ access_token: "access", expires_in: 3600 }), { status: 200 });
       }
       if (url.includes("fetchAvailableModels")) {
-        return new Response(JSON.stringify({ models: { "gemini-4-hydrogen-sonar": {} } }), { status: 200 });
+        return new Response(JSON.stringify({ models: { "gemini-3.9-flash": { displayName: "Gemini 3.9 Flash" } } }), { status: 200 });
       }
       return new Response(JSON.stringify({ models: [] }), { status: 200 });
     }));
@@ -129,9 +129,9 @@ describe("createAntigravityPlugin provider models", () => {
         { auth: { type: "oauth", refresh: formatRefreshParts({ refreshToken: "discovery-token", projectId: "p" }), access: "", expires: 0 } },
       );
 
-      expect((await discover())?.["antigravity-gemini-4-hydrogen-sonar"]).toBeDefined();
+      expect((await discover())?.["antigravity-gemini-3.9-flash"]).toBeDefined();
       googleReachable = false;
-      expect((await discover())?.["antigravity-gemini-4-hydrogen-sonar"]).toBeDefined();
+      expect((await discover())?.["antigravity-gemini-3.9-flash"]).toBeDefined();
     } finally {
       vi.unstubAllGlobals();
     }

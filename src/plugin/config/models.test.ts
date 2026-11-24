@@ -21,6 +21,7 @@ describe("OPENCODE_MODEL_DEFINITIONS", () => {
     expect(modelNames).toEqual([
       "antigravity-gemini-3.8-flash",
       "antigravity-gemini-4-argon",
+      "antigravity-gemini-4-hydrogen",
     ]);
   });
 
@@ -162,23 +163,15 @@ describe("dynamic model discovery helpers", () => {
     expect(Object.keys(models)).toEqual(["antigravity-gemini-3.9-flash"]);
   });
 
-  it("offers Gemini 4 Hydrogen Sonar when an account is served it, though Google leaves it unlabeled", () => {
+  it("leaves out Sonar, which Google stopped offering, and Hydrogen's labeled -tiered routing ids", () => {
     const models = modelsFromAntigravityAvailableModels({
       "gemini-4-hydrogen-sonar": {},
-      "gemini-3.8-flash-tiered": {},
+      "gemini-4-hydrogen-tiered-xhigh": { displayName: "Gemini 4 Hydrogen (XHigh)", supportsThinking: true },
+      "gemini-4-hydrogen-xhigh": { displayName: "Gemini 4 Hydrogen (XHigh)", supportsThinking: true },
       tab_flash_lite_preview: {},
     });
 
-    expect(Object.keys(models)).toEqual(["antigravity-gemini-4-hydrogen-sonar"]);
-    expect(models["antigravity-gemini-4-hydrogen-sonar"]).toMatchObject({
-      name: "Gemini 4 Hydrogen Sonar (Antigravity)",
-      limit: { context: 1048576, output: 65536 },
-      variants: {
-        low: { thinkingLevel: "low" },
-        medium: { thinkingLevel: "medium" },
-        high: { thinkingLevel: "high" },
-      },
-    });
+    expect(Object.keys(models)).toEqual(["antigravity-gemini-4-hydrogen-xhigh"]);
   });
 
   it("gives thinking variants only to models Google says think", () => {

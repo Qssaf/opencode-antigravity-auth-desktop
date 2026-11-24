@@ -13,8 +13,8 @@ import type { ResolvedModel, ThinkingTier, GoogleSearchConfig } from "./types";
  * instead of a thinking level.
  */
 export const THINKING_TIER_BUDGETS = {
-  claude: { low: 8192, medium: 16384, high: 32768 },
-  default: { low: 4096, medium: 8192, high: 16384 },
+  claude: { low: 8192, medium: 16384, high: 32768, xhigh: 32768 },
+  default: { low: 4096, medium: 8192, high: 16384, xhigh: 16384 },
 } as const;
 
 /**
@@ -55,7 +55,7 @@ export const MODEL_ALIASES: Record<string, string> = {
   // Reference: Antigravity-Manager/src-tauri/src/proxy/common/model_mapping.rs
 };
 
-const TIER_REGEX = /-(minimal|low|medium|high)$/;
+const TIER_REGEX = /-(minimal|low|medium|high|xhigh)$/;
 const QUOTA_PREFIX_REGEX = /^antigravity-/i;
 const GEMINI_3_PRO_REGEX = /^gemini-3(?:\.\d+)?-pro/i;
 const GEMINI_3_FLASH_REGEX = /^gemini-3(?:\.\d+)?-flash/i;
@@ -75,6 +75,14 @@ const GEMINI_4_ARGON_MODELS = {
   medium: "gemini-4-argon-medium",
   high: "gemini-4-argon-high",
 } as const;
+const GEMINI_4_HYDROGEN_REGEX =
+  /^gemini-4-hydrogen(?:-(minimal|low|medium|high|xhigh))?$/i;
+const GEMINI_4_HYDROGEN_MODELS: Readonly<Record<string, string>> = {
+  low: "gemini-4-hydrogen-low",
+  medium: "gemini-4-hydrogen-medium",
+  high: "gemini-4-hydrogen-high",
+  xhigh: "gemini-4-hydrogen-xhigh",
+};
 /**
  * Gemini generations that take a thinkingLevel string and thought signatures:
  * Gemini 3 and every later one (gemini-3.8-flash, gemini-4-argon, ...).
@@ -192,18 +200,21 @@ const RETIRED_ANTIGRAVITY_GEMINI_REGEX =
   /^gemini-(?:2\.0|2\.5|3|3\.0|3\.1|3\.5|3\.6|3\.7)-(?:pro|flash)(?:-lite)?(?:-preview)?(?:-customtools)?(?:-(minimal|low|medium|high))?$/;
 
 /**
- * Antigravity now serves only Gemini 3.8 Flash and Gemini 4 Argon. A request
+ * Antigravity now serves only Gemini 3.8 Flash, Gemini 4 Argon and Gemini 4
+ * Hydrogen. A request
  * for a retired Gemini chat model on Antigravity (Gemini 2.5, 3 Pro, 3.1 Pro,
  * 3 Flash, 3.1 Flash-Lite, the dropped 3.5-3.7 Flash) moves to Gemini 3.8 Flash
  * at the same tier, so sessions still set to an old model keep working.
  * Retired backend ids get the same treatment: `gemini-pro-agent` (3.1 Pro High),
  * `gemini-3-flash-agent` (3.5 Flash High) and `gemini-3.5-flash-extra-low`.
- * Image models are left alone.
+ * Gemini 4 Hydrogen Sonar, which Google stopped offering, moves to Gemini 4
+ * Hydrogen. Image models are left alone.
  */
 export function remapRetiredAntigravityGeminiModel(model: string): string {
   const lower = model.toLowerCase();
   if (lower === "gemini-pro-agent" || lower === "gemini-3-flash-agent") return "gemini-3.8-flash-high";
   if (lower === "gemini-3.5-flash-extra-low") return "gemini-3.8-flash-low";
+  if (lower === "gemini-4-hydrogen-sonar") return "gemini-4-hydrogen";
   const retired = lower.match(RETIRED_ANTIGRAVITY_GEMINI_REGEX);
   if (!retired) return model;
   // Minimal becomes low, the lowest tier 3.8 Flash serves on Antigravity.
@@ -288,6 +299,24 @@ export function resolveAntigravityGemini4ArgonBackendModel(
   return GEMINI_4_ARGON_MODELS[level];
 }
 
+/**
+ * Antigravity serves Gemini 4 Hydrogen as gemini-4-hydrogen-{low,medium,high,xhigh}
+ * (fetchAvailableModels, 2026-11-24). High is the default, as in agy; minimal is
+ * accepted as low.
+ */
+export function resolveAntigravityGemini4HydrogenBackendModel(
+  model: string,
+  thinkingLevel?: string,
+): string | undefined {
+  const match = model.replace(QUOTA_PREFIX_REGEX, "").match(GEMINI_4_HYDROGEN_REGEX);
+  if (!match) {
+    return undefined;
+  }
+  const rawLevel = (thinkingLevel ?? match[1] ?? "high").toLowerCase();
+  const level = rawLevel === "minimal" ? "low" : rawLevel;
+  return Object.hasOwn(GEMINI_4_HYDROGEN_MODELS, level) ? GEMINI_4_HYDROGEN_MODELS[level] : undefined;
+}
+
 /** True for Gemini 4 Argon under any of its names or backend ids. */
 export function isGemini4ArgonModel(model: string): boolean {
   return /(?:^|[-/])gemini-4-argon(?:-|$)/i.test(model);
@@ -296,7 +325,7 @@ export function isGemini4ArgonModel(model: string): boolean {
 /**
  * Picks the Antigravity backend id for a Gemini 3 or later model and the
  * thinking level to send with it. Gemini 3.1 Pro, 3.8 Flash and 4 Argon reject
- * thinkingLevel "minimal" with HTTP 400, so it is sent as low. Returns undefined
+ * thinkingLevel "minimal" with HTTP 400, so it is sent as low (Hydrogen too). Returns undefined
  * for models that go out under their own name.
  */
 export function resolveAntigravityGeminiBackend(
@@ -305,7 +334,8 @@ export function resolveAntigravityGeminiBackend(
 ): { model: string; thinkingLevel?: string } | undefined {
   const tiered =
     resolveAntigravityGemini38FlashBackendModel(model, thinkingLevel) ??
-    resolveAntigravityGemini4ArgonBackendModel(model, thinkingLevel);
+    resolveAntigravityGemini4ArgonBackendModel(model, thinkingLevel) ??
+    resolveAntigravityGemini4HydrogenBackendModel(model, thinkingLevel);
   if (tiered) {
     return {
       model: tiered,
@@ -321,7 +351,7 @@ export function resolveAntigravityGeminiBackend(
 
 export function getDefaultGemini3ThinkingLevel(model: string): string {
   const normalized = model.toLowerCase().replace(QUOTA_PREFIX_REGEX, "");
-  const tiered = /^gemini-(?:3\.8-flash|4-argon)(?:-(low|medium|high))?$/.exec(normalized);
+  const tiered = /^gemini-(?:3\.8-flash|4-argon|4-hydrogen)(?:-(low|medium|high|xhigh))?$/.exec(normalized);
   if (tiered) {
     return tiered[1] ?? "high";
   }
@@ -376,7 +406,7 @@ function resolveModel(requestedModel: string, onAntigravity: boolean): ResolvedM
   const isGemini3 = isGemini3OrLaterModel(modelWithoutQuota);
   const skipAlias = isAntigravity && isGemini3;
 
-  // Antigravity API: Gemini 3.1 Pro, 3.8 Flash and 4 Argon take tier-specific backend ids
+  // Antigravity API: Gemini 3.1 Pro, 3.8 Flash, 4 Argon and 4 Hydrogen take tier-specific backend ids
   //                  (see the resolveAntigravityGemini*BackendModel helpers);
   //                  other gemini-3-flash models use bare name + thinkingLevel param.
   // Pro defaults to the high tier unless an explicit tier is provided.
@@ -387,7 +417,8 @@ function resolveModel(requestedModel: string, onAntigravity: boolean): ResolvedM
   if (skipAlias) {
     const tieredBackendModel =
       resolveAntigravityGemini38FlashBackendModel(modelWithoutQuota, tier) ??
-      resolveAntigravityGemini4ArgonBackendModel(modelWithoutQuota, tier);
+      resolveAntigravityGemini4ArgonBackendModel(modelWithoutQuota, tier) ??
+      resolveAntigravityGemini4HydrogenBackendModel(modelWithoutQuota, tier);
     const gemini3ProBackendModel = isImageModel
       ? undefined
       : resolveAntigravityGemini3ProBackendModel(modelWithoutQuota, effectiveTier);

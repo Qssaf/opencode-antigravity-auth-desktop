@@ -209,10 +209,11 @@ describe("prepareAntigravityRequest wire model", () => {
 });
 
 describe("advertised catalog", () => {
-  it("offers only Gemini 3.8 Flash and Gemini 4 Argon on Antigravity", () => {
+  it("offers only Gemini 3.8 Flash, Gemini 4 Argon and Gemini 4 Hydrogen on Antigravity", () => {
     expect(Object.keys(OPENCODE_MODEL_DEFINITIONS).filter((id) => id.startsWith("antigravity-")).sort()).toEqual([
       "antigravity-gemini-3.8-flash",
       "antigravity-gemini-4-argon",
+      "antigravity-gemini-4-hydrogen",
     ]);
     for (const id of [
       "antigravity-gemini-3-pro",
@@ -233,6 +234,15 @@ describe("advertised catalog", () => {
       "medium",
       "high",
     ]);
+    expect(OPENCODE_MODEL_DEFINITIONS["antigravity-gemini-4-hydrogen"]).toMatchObject({
+      limit: { context: 1048576, output: 262144 },
+      variants: {
+        low: { thinkingLevel: "low" },
+        medium: { thinkingLevel: "medium" },
+        high: { thinkingLevel: "high" },
+        xhigh: { thinkingLevel: "xhigh" },
+      },
+    });
   });
 
   it("discovery skips unlabeled, retired and renamed registry entries", () => {

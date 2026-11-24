@@ -1268,10 +1268,10 @@ it("removes API key headers", () => {
       expect(stripRefusedSystemText("  - tools.opencode.session_move(): Promise<void> // Move.\nafter")).toBe("after");
     });
 
-    it("sends Gemini 4 Hydrogen Sonar under its own id with the variant's thinking level", () => {
-      const send = (thinkingLevel?: string) => {
+    it("sends Gemini 4 Hydrogen as the variant's tier id, xhigh included", () => {
+      const send = (thinkingLevel?: string, model = "antigravity-gemini-4-hydrogen") => {
         const result = prepareAntigravityRequest(
-          "https://generativelanguage.googleapis.com/v1beta/models/antigravity-gemini-4-hydrogen-sonar:streamGenerateContent?alt=sse",
+          `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,
           {
             method: "POST",
             body: JSON.stringify({
@@ -1287,10 +1287,15 @@ it("removes API key headers", () => {
         return JSON.parse(result.init.body as string);
       };
 
-      expect(send("high").model).toBe("gemini-4-hydrogen-sonar");
-      expect(send("high").request.generationConfig.thinkingConfig.thinkingLevel).toBe("HIGH");
-      // "minimal" is refused by Hydrogen; nothing chosen means low.
-      expect(send().request.generationConfig.thinkingConfig.thinkingLevel).toBe("LOW");
+      expect(send("xhigh").model).toBe("gemini-4-hydrogen-xhigh");
+      expect(send("xhigh").request.generationConfig.thinkingConfig.thinkingLevel).toBe("XHIGH");
+      expect(send("medium").model).toBe("gemini-4-hydrogen-medium");
+      // "minimal" is sent as low; nothing chosen means high.
+      expect(send("minimal").model).toBe("gemini-4-hydrogen-low");
+      expect(send().model).toBe("gemini-4-hydrogen-high");
+      expect(send().request.generationConfig.thinkingConfig.thinkingLevel).toBe("HIGH");
+      // Sessions still set to the withdrawn Sonar keep their variant on Hydrogen.
+      expect(send("low", "antigravity-gemini-4-hydrogen-sonar").model).toBe("gemini-4-hydrogen-low");
     });
 
     it("preserves headerStyle in response", () => {

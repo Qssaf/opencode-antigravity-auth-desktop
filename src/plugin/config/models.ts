@@ -6,7 +6,7 @@ import {
   toAntigravityWireModel,
 } from "../transform/model-resolver";
 
-export type ModelThinkingLevel = "minimal" | "low" | "medium" | "high";
+export type ModelThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh";
 
 export interface ModelThinkingConfig {
   thinkingBudget: number;
@@ -89,24 +89,18 @@ export const OPENCODE_MODEL_DEFINITIONS: OpencodeModelDefinitions = {
       high: { thinkingLevel: "high" },
     },
   },
-};
-
-/**
- * Chat models Antigravity serves under an id it leaves unlabeled, offered only
- * when an account's `fetchAvailableModels` lists them. Gemini 4 Hydrogen Sonar
- * is served to free accounts (with quota) while the labeled Gemini 4 Hydrogen
- * is disabled there (seen 2026-11-20); it takes low, medium and high thinking.
- */
-const UNLABELED_ANTIGRAVITY_MODELS: Readonly<Record<string, OpencodeModelDefinition>> = {
-  "gemini-4-hydrogen-sonar": {
-    name: "Gemini 4 Hydrogen Sonar (Antigravity)",
+  // Served as gemini-4-hydrogen-{low,medium,high,xhigh} (see
+  // resolveAntigravityGemini4HydrogenBackendModel); Google lists a 262k output.
+  "antigravity-gemini-4-hydrogen": {
+    name: "Gemini 4 Hydrogen (Antigravity)",
     temperature: false,
-    limit: { context: 1048576, output: 65536 },
+    limit: { context: 1048576, output: 262144 },
     modalities: DEFAULT_MODALITIES,
     variants: {
       low: { thinkingLevel: "low" },
       medium: { thinkingLevel: "medium" },
       high: { thinkingLevel: "high" },
+      xhigh: { thinkingLevel: "xhigh" },
     },
   },
 };
@@ -220,15 +214,10 @@ export function modelsFromAntigravityAvailableModels(
   const definitions: OpencodeModelDefinitions = {};
 
   for (const [sourceId, entry] of Object.entries(models)) {
-    if (entry.disabled) continue;
-    const unlabeled = UNLABELED_ANTIGRAVITY_MODELS[sourceId];
-    if (unlabeled) {
-      definitions[`antigravity-${sourceId}`] = unlabeled;
-      continue;
-    }
-    // Other unlabeled entries are tab-completion, internal chat and "-tiered"
-    // routing ids, not models the Antigravity IDE offers for chat.
-    if (!entry.displayName) continue;
+    // Unlabeled entries are tab-completion, internal chat and "-tiered" routing
+    // ids, not models the Antigravity IDE offers for chat; Hydrogen's "-tiered"
+    // ids carry a label, so they are matched by name.
+    if (entry.disabled || !entry.displayName || /-tiered(?:-|$)/.test(sourceId)) continue;
     const modelId = antigravityModelIdFromEntry(sourceId, entry);
     if (!modelId) continue;
     // Retired and renamed ids are served under their successor's catalog entry.

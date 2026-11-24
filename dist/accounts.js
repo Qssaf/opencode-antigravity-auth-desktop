@@ -2142,8 +2142,8 @@ import { homedir as homedir2 } from "node:os";
 
 // src/plugin/transform/model-resolver.ts
 var THINKING_TIER_BUDGETS = {
-  claude: { low: 8192, medium: 16384, high: 32768 },
-  default: { low: 4096, medium: 8192, high: 16384 }
+  claude: { low: 8192, medium: 16384, high: 32768, xhigh: 32768 },
+  default: { low: 4096, medium: 8192, high: 16384, xhigh: 16384 }
 };
 var MODEL_ALIASES = {
   "gemini-flash-latest": "gemini-3.8-flash",
@@ -2160,7 +2160,7 @@ var MODEL_ALIASES = {
   // Image generation models - only gemini-3-pro-image is available via Antigravity API
   // Reference: Antigravity-Manager/src-tauri/src/proxy/common/model_mapping.rs
 };
-var TIER_REGEX = /-(minimal|low|medium|high)$/;
+var TIER_REGEX = /-(minimal|low|medium|high|xhigh)$/;
 var QUOTA_PREFIX_REGEX = /^antigravity-/i;
 var GEMINI_3_PRO_REGEX = /^gemini-3(?:\.\d+)?-pro/i;
 var GEMINI_3_FLASH_REGEX = /^gemini-3(?:\.\d+)?-flash/i;
@@ -2176,6 +2176,13 @@ var GEMINI_4_ARGON_MODELS = {
   low: "gemini-4-argon-low",
   medium: "gemini-4-argon-medium",
   high: "gemini-4-argon-high"
+};
+var GEMINI_4_HYDROGEN_REGEX = /^gemini-4-hydrogen(?:-(minimal|low|medium|high|xhigh))?$/i;
+var GEMINI_4_HYDROGEN_MODELS = {
+  low: "gemini-4-hydrogen-low",
+  medium: "gemini-4-hydrogen-medium",
+  high: "gemini-4-hydrogen-high",
+  xhigh: "gemini-4-hydrogen-xhigh"
 };
 var GEMINI_3_OR_LATER_REGEX = /gemini-(?:[3-9]|[1-9]\d+)(?=[.-]|$)/i;
 var IMAGE_GENERATION_MODELS = /image|imagen/i;
@@ -2226,6 +2233,7 @@ function remapRetiredAntigravityGeminiModel(model) {
   const lower = model.toLowerCase();
   if (lower === "gemini-pro-agent" || lower === "gemini-3-flash-agent") return "gemini-3.8-flash-high";
   if (lower === "gemini-3.5-flash-extra-low") return "gemini-3.8-flash-low";
+  if (lower === "gemini-4-hydrogen-sonar") return "gemini-4-hydrogen";
   const retired = lower.match(RETIRED_ANTIGRAVITY_GEMINI_REGEX);
   if (!retired) return model;
   return toGemini38Flash(retired[1] === "minimal" ? "low" : retired[1]);
@@ -2270,11 +2278,20 @@ function resolveAntigravityGemini4ArgonBackendModel(model, thinkingLevel) {
   }
   return GEMINI_4_ARGON_MODELS[level];
 }
+function resolveAntigravityGemini4HydrogenBackendModel(model, thinkingLevel) {
+  const match = model.replace(QUOTA_PREFIX_REGEX, "").match(GEMINI_4_HYDROGEN_REGEX);
+  if (!match) {
+    return void 0;
+  }
+  const rawLevel = (thinkingLevel ?? match[1] ?? "high").toLowerCase();
+  const level = rawLevel === "minimal" ? "low" : rawLevel;
+  return Object.hasOwn(GEMINI_4_HYDROGEN_MODELS, level) ? GEMINI_4_HYDROGEN_MODELS[level] : void 0;
+}
 function isGemini4ArgonModel(model) {
   return /(?:^|[-/])gemini-4-argon(?:-|$)/i.test(model);
 }
 function resolveAntigravityGeminiBackend(model, thinkingLevel) {
-  const tiered = resolveAntigravityGemini38FlashBackendModel(model, thinkingLevel) ?? resolveAntigravityGemini4ArgonBackendModel(model, thinkingLevel);
+  const tiered = resolveAntigravityGemini38FlashBackendModel(model, thinkingLevel) ?? resolveAntigravityGemini4ArgonBackendModel(model, thinkingLevel) ?? resolveAntigravityGemini4HydrogenBackendModel(model, thinkingLevel);
   if (tiered) {
     return {
       model: tiered,
@@ -2289,7 +2306,7 @@ function resolveAntigravityGeminiBackend(model, thinkingLevel) {
 }
 function getDefaultGemini3ThinkingLevel(model) {
   const normalized = model.toLowerCase().replace(QUOTA_PREFIX_REGEX, "");
-  const tiered = /^gemini-(?:3\.8-flash|4-argon)(?:-(low|medium|high))?$/.exec(normalized);
+  const tiered = /^gemini-(?:3\.8-flash|4-argon|4-hydrogen)(?:-(low|medium|high|xhigh))?$/.exec(normalized);
   if (tiered) {
     return tiered[1] ?? "high";
   }
@@ -2317,7 +2334,7 @@ function resolveModel(requestedModel, onAntigravity) {
   let effectiveTier = tier;
   let antigravityModel = modelWithoutQuota;
   if (skipAlias) {
-    const tieredBackendModel = resolveAntigravityGemini38FlashBackendModel(modelWithoutQuota, tier) ?? resolveAntigravityGemini4ArgonBackendModel(modelWithoutQuota, tier);
+    const tieredBackendModel = resolveAntigravityGemini38FlashBackendModel(modelWithoutQuota, tier) ?? resolveAntigravityGemini4ArgonBackendModel(modelWithoutQuota, tier) ?? resolveAntigravityGemini4HydrogenBackendModel(modelWithoutQuota, tier);
     const gemini3ProBackendModel = isImageModel ? void 0 : resolveAntigravityGemini3ProBackendModel(modelWithoutQuota, effectiveTier);
     if (tieredBackendModel) {
       antigravityModel = tieredBackendModel;
@@ -2475,18 +2492,19 @@ var OPENCODE_MODEL_DEFINITIONS = {
       medium: { thinkingLevel: "medium" },
       high: { thinkingLevel: "high" }
     }
-  }
-};
-var UNLABELED_ANTIGRAVITY_MODELS = {
-  "gemini-4-hydrogen-sonar": {
-    name: "Gemini 4 Hydrogen Sonar (Antigravity)",
+  },
+  // Served as gemini-4-hydrogen-{low,medium,high,xhigh} (see
+  // resolveAntigravityGemini4HydrogenBackendModel); Google lists a 262k output.
+  "antigravity-gemini-4-hydrogen": {
+    name: "Gemini 4 Hydrogen (Antigravity)",
     temperature: false,
-    limit: { context: 1048576, output: 65536 },
+    limit: { context: 1048576, output: 262144 },
     modalities: DEFAULT_MODALITIES,
     variants: {
       low: { thinkingLevel: "low" },
       medium: { thinkingLevel: "medium" },
-      high: { thinkingLevel: "high" }
+      high: { thinkingLevel: "high" },
+      xhigh: { thinkingLevel: "xhigh" }
     }
   }
 };
@@ -2576,13 +2594,7 @@ function modelsFromGeminiApi(models) {
 function modelsFromAntigravityAvailableModels(models) {
   const definitions = {};
   for (const [sourceId, entry] of Object.entries(models)) {
-    if (entry.disabled) continue;
-    const unlabeled = UNLABELED_ANTIGRAVITY_MODELS[sourceId];
-    if (unlabeled) {
-      definitions[`antigravity-${sourceId}`] = unlabeled;
-      continue;
-    }
-    if (!entry.displayName) continue;
+    if (entry.disabled || !entry.displayName || /-tiered(?:-|$)/.test(sourceId)) continue;
     const modelId = antigravityModelIdFromEntry(sourceId, entry);
     if (!modelId) continue;
     const backendId = modelId.replace(/^antigravity-/, "");
