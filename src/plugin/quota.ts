@@ -16,6 +16,7 @@ import {
   remapRetiredAntigravityGeminiModel,
 } from "./transform/model-resolver";
 import { recordAntigravityAvailableModels } from "./model-catalog";
+import type { AntigravityGroupedModels } from "./config/models";
 import type { PluginClient, OAuthAuthDetails } from "./types";
 import type { AccountMetadataV3 } from "./storage";
 
@@ -98,6 +99,8 @@ export interface AccountQuotaResult {
 
 export interface FetchAvailableModelsResponse {
   models?: Record<string, FetchAvailableModelEntry>;
+  /** Families Google groups its tier-specific ids under (Claude 5, Gemini 4, ...). */
+  groupedModels?: AntigravityGroupedModels;
 }
 
 export interface FetchAvailableModelEntry {

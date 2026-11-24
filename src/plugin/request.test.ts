@@ -4,12 +4,14 @@ import {
   transformAntigravityResponse,
   getPluginSessionId,
   isGenerativeLanguageRequest,
+  buildThinkingWarmupBody,
   __testExports,
 } from "./request";
 import { DEFAULT_CONFIG } from "./config";
 import { stripRefusedSystemText } from "./request-helpers";
 import { initializeDebug } from "./debug";
 import { ANTIGRAVITY_CLI_USER_AGENT, SKIP_THOUGHT_SIGNATURE } from "../constants";
+import { CLAUDE_THINKING_MAX_OUTPUT_TOKENS } from "./transform";
 import { cacheSignature, getCachedSignature, clearSignatureCache } from "./cache";
 import * as config from "./config";
 import type { SignatureStore, ThoughtBuffer, StreamingCallbacks, StreamingOptions } from "./core/streaming/types";
@@ -1603,6 +1605,199 @@ it("removes API key headers", () => {
           "antigravity"
         );
         expect(result.effectiveModel).toBe(sent);
+      });
+    });
+
+    describe("Claude 5 adaptive thinking", () => {
+      it("routes a bare Claude 5 id to its high backend with a thinking level, not a budget", () => {
+        const result = prepareAntigravityRequest(
+          "https://generativelanguage.googleapis.com/v1beta/models/antigravity-claude-opus-5-5:generateContent",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              contents: [],
+              generationConfig: { maxOutputTokens: 128000 },
+            }),
+          },
+          mockAccessToken,
+          mockProjectId,
+          undefined,
+          "antigravity"
+        );
+
+        expect(result.effectiveModel).toBe("claude-opus-5-5-high");
+        const wrapped = JSON.parse(result.init.body as string);
+        expect(wrapped.model).toBe("claude-opus-5-5-high");
+        expect(wrapped.request.generationConfig.thinkingConfig).toEqual({
+          includeThoughts: true,
+          thinkingLevel: "HIGH",
+        });
+        // Claude 5.5 allows 128K output, so the client's limit is kept as sent.
+        expect(wrapped.request.generationConfig.maxOutputTokens).toBe(128000);
+      });
+
+      it("follows a variant's thinking level to the matching backend tier", () => {
+        const result = prepareAntigravityRequest(
+          "https://generativelanguage.googleapis.com/v1beta/models/antigravity-claude-sonnet-5-5:generateContent",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              contents: [],
+              providerOptions: { google: { thinkingLevel: "medium" } },
+            }),
+          },
+          mockAccessToken,
+          mockProjectId,
+          undefined,
+          "antigravity"
+        );
+
+        expect(result.effectiveModel).toBe("claude-sonnet-5-5-medium");
+        const wrapped = JSON.parse(result.init.body as string);
+        expect(wrapped.request.generationConfig.thinkingConfig).toEqual({
+          includeThoughts: true,
+          thinkingLevel: "MEDIUM",
+        });
+      });
+
+      it("clamps an out-of-range tier to the backend tier it selects", () => {
+        const prepare = (thinkingLevel: string) =>
+          prepareAntigravityRequest(
+            "https://generativelanguage.googleapis.com/v1beta/models/antigravity-claude-opus-5-5:generateContent",
+            {
+              method: "POST",
+              body: JSON.stringify({
+                contents: [],
+                providerOptions: { google: { thinkingLevel } },
+              }),
+            },
+            mockAccessToken,
+            mockProjectId,
+            undefined,
+            "antigravity"
+          );
+
+        const minimal = prepare("minimal");
+        expect(minimal.effectiveModel).toBe("claude-opus-5-5-low");
+        expect(JSON.parse(minimal.init.body as string).request.generationConfig.thinkingConfig).toEqual({
+          includeThoughts: true,
+          thinkingLevel: "LOW",
+        });
+
+        const xhigh = prepare("xhigh");
+        expect(xhigh.effectiveModel).toBe("claude-opus-5-5-high");
+        expect(JSON.parse(xhigh.init.body as string).request.generationConfig.thinkingConfig).toEqual({
+          includeThoughts: true,
+          thinkingLevel: "HIGH",
+        });
+      });
+
+      it("keeps the Claude 4.x snake_case budget path and its 64K output floor", () => {
+        const result = prepareAntigravityRequest(
+          "https://generativelanguage.googleapis.com/v1beta/models/antigravity-claude-opus-4-6-thinking:generateContent",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              contents: [],
+              generationConfig: { maxOutputTokens: 8000 },
+            }),
+          },
+          mockAccessToken,
+          mockProjectId,
+          undefined,
+          "antigravity"
+        );
+
+        const wrapped = JSON.parse(result.init.body as string);
+        expect(wrapped.request.generationConfig.thinkingConfig).toEqual({
+          include_thoughts: true,
+          thinking_budget: 32768,
+        });
+        expect(wrapped.request.generationConfig.maxOutputTokens).toBe(CLAUDE_THINKING_MAX_OUTPUT_TOKENS);
+      });
+
+      it("exposes the Claude thinking flags so the warmup does not re-derive them", () => {
+        const claude5 = prepareAntigravityRequest(
+          "https://generativelanguage.googleapis.com/v1beta/models/antigravity-claude-opus-5-5:generateContent",
+          { method: "POST", body: JSON.stringify({ contents: [] }) },
+          mockAccessToken,
+          mockProjectId,
+          undefined,
+          "antigravity"
+        );
+        expect(claude5.isClaudeThinking).toBe(true);
+        expect(claude5.isAdaptiveClaude5).toBe(true);
+
+        const claude4 = prepareAntigravityRequest(
+          "https://generativelanguage.googleapis.com/v1beta/models/antigravity-claude-opus-4-6-thinking:generateContent",
+          { method: "POST", body: JSON.stringify({ contents: [] }) },
+          mockAccessToken,
+          mockProjectId,
+          undefined,
+          "antigravity"
+        );
+        expect(claude4.isClaudeThinking).toBe(true);
+        expect(claude4.isAdaptiveClaude5).toBe(false);
+      });
+
+      it("warms up Claude 5 with the adaptive thinking shape", () => {
+        const prepared = prepareAntigravityRequest(
+          "https://generativelanguage.googleapis.com/v1beta/models/antigravity-claude-opus-5-5:generateContent",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              contents: [],
+              tools: [{ functionDeclarations: [{ name: "read_file" }] }],
+            }),
+          },
+          mockAccessToken,
+          mockProjectId,
+          undefined,
+          "antigravity"
+        );
+
+        const warmup = buildThinkingWarmupBody(
+          prepared.init.body as string,
+          Boolean(prepared.isClaudeThinking),
+          Boolean(prepared.isAdaptiveClaude5),
+        );
+        expect(warmup).not.toBeNull();
+        const request = JSON.parse(warmup as string).request;
+        expect(request.contents).toEqual([
+          { role: "user", parts: [{ text: "Warmup request for thinking signature." }] },
+        ]);
+        expect(request.tools).toBeUndefined();
+        expect(request.generationConfig.thinkingConfig).toEqual({
+          includeThoughts: true,
+          thinkingLevel: "HIGH",
+        });
+        // Claude 5.5 allows 128K output, so the warmup keeps the client's limit.
+        expect(request.generationConfig.maxOutputTokens).not.toBe(CLAUDE_THINKING_MAX_OUTPUT_TOKENS);
+      });
+
+      it("keeps the legacy warmup shape for Claude 4.x", () => {
+        const prepared = prepareAntigravityRequest(
+          "https://generativelanguage.googleapis.com/v1beta/models/antigravity-claude-opus-4-6-thinking:generateContent",
+          {
+            method: "POST",
+            body: JSON.stringify({ contents: [] }),
+          },
+          mockAccessToken,
+          mockProjectId,
+          undefined,
+          "antigravity"
+        );
+
+        const warmup = buildThinkingWarmupBody(
+          prepared.init.body as string,
+          Boolean(prepared.isClaudeThinking),
+          Boolean(prepared.isAdaptiveClaude5),
+        );
+        expect(warmup).not.toBeNull();
+        const config = JSON.parse(warmup as string).request.generationConfig;
+        expect(config.thinkingConfig).toMatchObject({ include_thoughts: true });
+        expect(config.thinkingConfig.thinkingLevel).toBeUndefined();
+        expect(config.maxOutputTokens).toBe(CLAUDE_THINKING_MAX_OUTPUT_TOKENS);
       });
     });
   });

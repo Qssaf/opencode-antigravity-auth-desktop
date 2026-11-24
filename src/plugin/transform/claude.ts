@@ -9,6 +9,7 @@
  */
 
 import type { RequestPayload, ThinkingConfig } from "./types";
+import { isAdaptiveClaude5Model } from "./model-resolver";
 import {
   EMPTY_SCHEMA_PLACEHOLDER_NAME,
   EMPTY_SCHEMA_PLACEHOLDER_DESCRIPTION,
@@ -30,10 +31,15 @@ export function isClaudeModel(model: string): boolean {
 
 /**
  * Check if a model is a Claude thinking model.
+ *
+ * Claude 4.x ids say so with a `-thinking` suffix; Claude 5 dropped it for
+ * adaptive thinking and is served only as tier-specific ids
+ * (claude-opus-5-5-{low,medium,high}).
  */
 export function isClaudeThinkingModel(model: string): boolean {
   const lower = model.toLowerCase();
-  return lower.includes("claude") && lower.includes("thinking");
+  return lower.includes("claude")
+    && (lower.includes("thinking") || isAdaptiveClaude5Model(lower));
 }
 
 /**
@@ -285,82 +291,4 @@ export function normalizeClaudeTools(
   payload.tools = finalTools.concat(passthroughTools);
 
   return { toolDebugMissing, toolDebugSummaries };
-}
-
-/**
- * Convert snake_case stop_sequences to camelCase stopSequences.
- */
-export function convertStopSequences(
-  generationConfig: Record<string, unknown>,
-): void {
-  if (Array.isArray(generationConfig.stop_sequences)) {
-    generationConfig.stopSequences = generationConfig.stop_sequences;
-    delete generationConfig.stop_sequences;
-  }
-}
-
-/**
- * Apply all Claude-specific transformations to a request payload.
- */
-export interface ClaudeTransformOptions {
-  /** The effective model name (resolved) */
-  model: string;
-  /** Tier-based thinking budget (from model suffix) */
-  tierThinkingBudget?: number;
-  /** Normalized thinking config from user settings */
-  normalizedThinking?: { includeThoughts?: boolean; thinkingBudget?: number };
-  /** Function to clean JSON schema for Antigravity */
-  cleanJSONSchema: (schema: unknown) => Record<string, unknown>;
-}
-
-export interface ClaudeTransformResult {
-  toolDebugMissing: number;
-  toolDebugSummaries: string[];
-}
-
-/**
- * Apply all Claude-specific transformations.
- */
-export function applyClaudeTransforms(
-  payload: RequestPayload,
-  options: ClaudeTransformOptions,
-): ClaudeTransformResult {
-  const { model, tierThinkingBudget, normalizedThinking, cleanJSONSchema } = options;
-  const isThinking = isClaudeThinkingModel(model);
-
-  // 1. Configure tool calling mode
-  configureClaudeToolConfig(payload);
-
-  if (payload.generationConfig) {
-    convertStopSequences(payload.generationConfig as Record<string, unknown>);
-  }
-
-  // 2. Apply thinking config if needed
-  if (normalizedThinking) {
-    const thinkingBudget = tierThinkingBudget ?? normalizedThinking.thinkingBudget;
-    
-    if (isThinking) {
-      const thinkingConfig = buildClaudeThinkingConfig(
-        normalizedThinking.includeThoughts ?? true,
-        thinkingBudget,
-      );
-
-      const generationConfig = (payload.generationConfig ?? {}) as Record<string, unknown>;
-      generationConfig.thinkingConfig = thinkingConfig;
-
-      if (typeof thinkingBudget === "number" && thinkingBudget > 0) {
-        ensureClaudeMaxOutputTokens(generationConfig, thinkingBudget);
-      }
-
-      payload.generationConfig = generationConfig;
-    }
-  }
-
-  // 3. Append interleaved thinking hint for thinking models with tools
-  if (isThinking && Array.isArray(payload.tools) && (payload.tools as unknown[]).length > 0) {
-    appendClaudeThinkingHint(payload);
-  }
-
-  // 4. Normalize tools
-  return normalizeClaudeTools(payload, cleanJSONSchema);
 }

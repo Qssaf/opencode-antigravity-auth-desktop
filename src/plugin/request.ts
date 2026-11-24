@@ -73,6 +73,8 @@ import {
 import {
   resolveModelForHeaderStyle,
   resolveAntigravityGeminiBackend,
+  resolveAntigravityClaude5BackendModel,
+  isAdaptiveClaude5Model,
   toAntigravityWireModel,
   getDefaultGemini3ThinkingLevel,
   isClaudeModel,
@@ -1140,6 +1142,10 @@ interface PreparedAntigravityRequest {
   toolDebugSummary?: string;
   toolDebugPayload?: string;
   needsSignedThinkingWarmup?: boolean;
+  /** Claude thinking model, so the warmup can reuse the request's thinking shape. */
+  isClaudeThinking?: boolean;
+  /** Claude 5 adaptive thinking, which takes `{ includeThoughts, thinkingLevel }`. */
+  isAdaptiveClaude5?: boolean;
   headerStyle: HeaderStyle;
   thinkingRecoveryMessage?: string;
 }
@@ -1314,6 +1320,9 @@ export function prepareAntigravityRequest(
 
   const isClaude = isClaudeModel(resolved.actualModel);
   const isClaudeThinking = isClaudeThinkingModel(resolved.actualModel);
+  // Claude 5 dropped `-thinking` for adaptive thinking: it takes a thinkingLevel
+  // on a tier-specific backend id instead of a numeric budget.
+  const isAdaptiveClaude5 = isAdaptiveClaude5Model(resolved.actualModel);
   const keepThinkingEnabled = getKeepThinking();
   const enableClaudePromptAutoCaching =
     options?.claudePromptAutoCaching ?? false;
@@ -1492,8 +1501,8 @@ export function prepareAntigravityRequest(
           `[ThinkingResolution] rawModel=${rawModel} resolvedModel=${effectiveModel} resolvedTier=${tierThinkingLevel ?? "none"} variantLevel=${variantConfig?.thinkingLevel ?? "none"} variantBudget=${variantConfig?.thinkingBudget ?? "none"} providerOptions.google=${JSON.stringify((requestPayload.providerOptions as any)?.google ?? null)} generationConfig.thinkingConfig=${JSON.stringify((rawGenerationConfig as any)?.thinkingConfig ?? null)}`,
         );
 
-        if (variantConfig?.thinkingLevel && isGemini3) {
-          // Gemini 3 native format - use thinkingLevel directly
+        if (variantConfig?.thinkingLevel && (isGemini3 || isAdaptiveClaude5)) {
+          // Gemini 3 and Claude 5 native format - use thinkingLevel directly
           tierThinkingLevel = variantConfig.thinkingLevel;
           tierThinkingBudget = undefined;
         } else if (variantConfig?.thinkingBudget) {
@@ -1521,6 +1530,18 @@ export function prepareAntigravityRequest(
           if (backend) {
             effectiveModel = backend.model;
             tierThinkingLevel = backend.thinkingLevel;
+          } else if (isAdaptiveClaude5 && tierThinkingLevel) {
+            // A variant (or a title cap) picks the Claude 5 backend tier, like
+            // the Gemini backend ids above. Claude 5 serves no minimal or xhigh
+            // tier, so the level sent must match the tier in the backend id.
+            tierThinkingLevel =
+              tierThinkingLevel === "minimal"
+                ? "low"
+                : tierThinkingLevel === "xhigh"
+                  ? "high"
+                  : tierThinkingLevel;
+            effectiveModel =
+              resolveAntigravityClaude5BackendModel(effectiveModel, tierThinkingLevel) ?? effectiveModel;
           }
         }
 
@@ -1644,8 +1665,15 @@ export function prepareAntigravityRequest(
             // Build thinking config based on model type
             let thinkingConfig: Record<string, unknown>;
 
-            if (isClaudeThinking) {
-              // Claude uses snake_case keys
+            if (isAdaptiveClaude5) {
+              // Claude 5 adaptive thinking takes camelCase { includeThoughts,
+              // thinkingLevel }, uppercased on the wire like Gemini's.
+              thinkingConfig = {
+                includeThoughts: normalizedThinking.includeThoughts ?? true,
+                ...(tierThinkingLevel ? { thinkingLevel: tierThinkingLevel } : {}),
+              };
+            } else if (isClaudeThinking) {
+              // Claude 4.x uses snake_case keys
               thinkingConfig = {
                 include_thoughts: normalizedThinking.includeThoughts ?? true,
                 ...(typeof thinkingBudget === "number" && thinkingBudget > 0
@@ -1673,6 +1701,7 @@ export function prepareAntigravityRequest(
 
               if (
                 isClaudeThinking &&
+                !isAdaptiveClaude5 &&
                 typeof thinkingBudget === "number" &&
                 thinkingBudget > 0
               ) {
@@ -1695,6 +1724,7 @@ export function prepareAntigravityRequest(
 
               if (
                 isClaudeThinking &&
+                !isAdaptiveClaude5 &&
                 typeof thinkingBudget === "number" &&
                 thinkingBudget > 0
               ) {
@@ -2366,6 +2396,8 @@ export function prepareAntigravityRequest(
       return toolDebugPayloadCache;
     },
     needsSignedThinkingWarmup,
+    isClaudeThinking,
+    isAdaptiveClaude5,
     headerStyle,
     thinkingRecoveryMessage,
   };
@@ -2374,6 +2406,7 @@ export function prepareAntigravityRequest(
 export function buildThinkingWarmupBody(
   bodyText: string | undefined,
   isClaudeThinking: boolean,
+  isAdaptiveClaude5 = false,
 ): string | null {
   if (!bodyText || !isClaudeThinking) {
     return null;
@@ -2397,11 +2430,27 @@ export function buildThinkingWarmupBody(
       string,
       unknown
     >;
-    generationConfig.thinkingConfig = {
-      include_thoughts: true,
-      thinking_budget: DEFAULT_THINKING_BUDGET,
-    };
-    generationConfig.maxOutputTokens = CLAUDE_THINKING_MAX_OUTPUT_TOKENS;
+    if (isAdaptiveClaude5) {
+      // Claude 5 takes the same camelCase thinkingLevel as Gemini 3. Reuse the
+      // tier the request already resolved (and uppercased) for the backend id.
+      const existing = generationConfig.thinkingConfig as
+        | Record<string, unknown>
+        | undefined;
+      const thinkingLevel =
+        typeof existing?.thinkingLevel === "string"
+          ? existing.thinkingLevel
+          : "HIGH";
+      generationConfig.thinkingConfig = {
+        includeThoughts: true,
+        thinkingLevel,
+      };
+    } else {
+      generationConfig.thinkingConfig = {
+        include_thoughts: true,
+        thinking_budget: DEFAULT_THINKING_BUDGET,
+      };
+      generationConfig.maxOutputTokens = CLAUDE_THINKING_MAX_OUTPUT_TOKENS;
+    }
     req.generationConfig = generationConfig;
   };
 

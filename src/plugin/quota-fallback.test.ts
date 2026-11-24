@@ -153,6 +153,7 @@ describe("header routing decision", () => {
     ["antigravity-gemini-4-argon", true],
     ["gemini-3-pro-image", true],
     ["claude-opus-4-6-thinking", false],
+    ["gpt-oss-120b-medium", false],
   ])("routes %s to the Antigravity quota (explicit: %s)", (model, explicitQuota) => {
     const decision = resolveHeaderRoutingDecision?.(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent`,

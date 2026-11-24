@@ -8,7 +8,7 @@ import {
 } from "../constants";
 import { processImageData } from "./image-saver";
 import type { GoogleSearchConfig } from "./transform/types";
-import { isGemini3OrLaterModel } from "./transform/model-resolver";
+import { isAdaptiveClaude5Model, isGemini3OrLaterModel } from "./transform/model-resolver";
 
 const log = createLogger("request-helpers");
 
@@ -800,13 +800,15 @@ export const DEFAULT_THINKING_BUDGET = 16000;
 
 /**
  * Checks if a model name indicates thinking/reasoning capability.
- * Models with "thinking" or "opus" in their name, and Gemini 3 or later, support extended thinking.
+ * Models with "thinking" or "opus" in their name, Claude 5's tier-specific
+ * adaptive ids, and Gemini 3 or later support extended thinking.
  */
 export function isThinkingCapableModel(modelName: string): boolean {
   const lowerModel = modelName.toLowerCase();
   return lowerModel.includes("thinking")
     || isGemini3OrLaterModel(lowerModel)
-    || lowerModel.includes("opus");
+    || lowerModel.includes("opus")
+    || isAdaptiveClaude5Model(lowerModel);
 }
 
 /**

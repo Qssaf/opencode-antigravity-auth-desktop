@@ -65,7 +65,7 @@ You are pair programming with a USER to solve their coding task. The task may re
 import { exec } from "node:child_process";
 import { randomUUID as randomUUID3 } from "node:crypto";
 
-// node_modules/@opencode-ai/plugin/dist/tool.js
+// ../opencode-antigravity-auth-desktop/node_modules/@opencode-ai/plugin/dist/tool.js
 import { z } from "zod";
 function tool(input3) {
   return input3;
@@ -2181,7 +2181,7 @@ var GEMINI_3_OR_LATER_REGEX = /gemini-(?:[3-9]|[1-9]\d+)(?=[.-]|$)/i;
 var IMAGE_GENERATION_MODELS = /image|imagen/i;
 function supportsThinkingTiers(model) {
   const lower = model.toLowerCase();
-  return isGemini3OrLaterModel(lower) || lower.includes("claude") && lower.includes("thinking");
+  return isGemini3OrLaterModel(lower) || lower.includes("claude") && lower.includes("thinking") || isAdaptiveClaude5Model(lower);
 }
 function extractThinkingTierFromModel(model) {
   if (!supportsThinkingTiers(model)) {
@@ -2198,7 +2198,7 @@ function getBudgetFamily(model) {
 }
 function isThinkingCapableModel(model) {
   const lower = model.toLowerCase();
-  return lower.includes("thinking") || isGemini3OrLaterModel(lower);
+  return lower.includes("thinking") || isGemini3OrLaterModel(lower) || isAdaptiveClaude5Model(lower);
 }
 function isGemini3ProModel(model) {
   return GEMINI_3_PRO_REGEX.test(model);
@@ -2208,6 +2208,22 @@ function isGemini3FlashModel(model) {
 }
 function isGemini3OrLaterModel(model) {
   return GEMINI_3_OR_LATER_REGEX.test(model);
+}
+var CLAUDE_5_ADAPTIVE_REGEX = /^claude-(opus|sonnet)-(5(?:[.-]\d+)+)(?:-(minimal|low|medium|high))?$/i;
+function isAdaptiveClaude5Model(model) {
+  return CLAUDE_5_ADAPTIVE_REGEX.test(model.replace(QUOTA_PREFIX_REGEX, ""));
+}
+function resolveAntigravityClaude5BackendModel(model, thinkingLevel) {
+  const match = model.toLowerCase().replace(QUOTA_PREFIX_REGEX, "").match(CLAUDE_5_ADAPTIVE_REGEX);
+  if (!match) {
+    return void 0;
+  }
+  const [, family, version, tier] = match;
+  const rawLevel = (thinkingLevel ?? tier ?? "high").toLowerCase();
+  const backend = `claude-${family}-${version?.replace(/\./g, "-")}`;
+  if (rawLevel === "low" || rawLevel === "minimal") return `${backend}-low`;
+  if (rawLevel === "medium") return `${backend}-medium`;
+  return `${backend}-high`;
 }
 var DROPPED_GEMINI_REGEX = /^gemini-(?:2(?:\.\d+)?-(?:pro|flash)(?:-lite)?(?:-preview)?(?:-\d{2}-\d{2}|-\d{3})?|3\.[567]-flash(?:-lite)?)(?:-(minimal|low|medium|high))?$/;
 function remapDroppedGeminiModel(model) {
@@ -2313,6 +2329,7 @@ function resolveModel(requestedModel, onAntigravity) {
   const explicitQuota = isAntigravity || isImageModel;
   const isGemini3 = isGemini3OrLaterModel(modelWithoutQuota);
   const skipAlias = isAntigravity && isGemini3;
+  const claude5BackendModel = isImageModel ? void 0 : resolveAntigravityClaude5BackendModel(modelWithoutQuota, tier);
   const isGemini3Flash = isGemini3FlashModel(modelWithoutQuota);
   let effectiveTier = tier;
   let antigravityModel = modelWithoutQuota;
@@ -2332,8 +2349,11 @@ function resolveModel(requestedModel, onAntigravity) {
     } else if (isGemini3Flash && effectiveTier) {
       antigravityModel = baseName;
     }
+  } else if (claude5BackendModel) {
+    antigravityModel = claude5BackendModel;
+    effectiveTier = claude5BackendModel.endsWith("-low") ? "low" : claude5BackendModel.endsWith("-medium") ? "medium" : "high";
   }
-  const actualModel = skipAlias ? antigravityModel : MODEL_ALIASES[modelWithoutQuota] || MODEL_ALIASES[baseName] || baseName;
+  const actualModel = skipAlias || claude5BackendModel ? antigravityModel : MODEL_ALIASES[modelWithoutQuota] || MODEL_ALIASES[baseName] || baseName;
   const resolvedModel = actualModel;
   const isThinking = isThinkingCapableModel(resolvedModel);
   if (isImageModel) {
@@ -2341,6 +2361,16 @@ function resolveModel(requestedModel, onAntigravity) {
       actualModel: resolvedModel,
       isThinkingModel: false,
       isImageModel: true,
+      quotaPreference,
+      explicitQuota
+    };
+  }
+  if (claude5BackendModel) {
+    return {
+      actualModel: resolvedModel,
+      thinkingLevel: effectiveTier,
+      tier: effectiveTier,
+      isThinkingModel: true,
       quotaPreference,
       explicitQuota
     };
@@ -2502,6 +2532,11 @@ function supportsGeminiGeneration(model) {
 function titleFromModelId(modelId) {
   return modelId.split("-").filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
 }
+function antigravityDisplayName(displayName, modelId) {
+  const fallback = titleFromModelId(modelId);
+  const base = (displayName ?? fallback).replace(/\s*\([^()]*\)\s*$/, "").trim();
+  return `${base || fallback} (Antigravity)`;
+}
 function defaultLimitForModel(modelId) {
   if (modelId.includes("claude")) {
     return { context: 2e5, output: 64e3 };
@@ -2573,8 +2608,60 @@ function modelsFromGeminiApi(models) {
   }
   return definitions;
 }
-function modelsFromAntigravityAvailableModels(models) {
+function isRetiredOrRenamedAntigravityModel(backendId) {
+  return isGemini2Model(backendId) || remapRetiredAntigravityGeminiModel(backendId) !== backendId || toAntigravityWireModel(backendId) !== backendId;
+}
+function isModelThinkingLevel(value) {
+  return value === "minimal" || value === "low" || value === "medium" || value === "high" || value === "xhigh";
+}
+function limitFromEntry(modelId, entry) {
+  const fallback = defaultLimitForModel(modelId);
+  return {
+    context: entry?.maxTokens ?? fallback.context,
+    output: entry?.maxOutputTokens ?? fallback.output
+  };
+}
+function groupedModelDefinition(groupId, group, models) {
+  const variants = {};
+  const childIds = [];
+  let firstChild;
+  for (const level of group.supportedThinkingLevels ?? []) {
+    const suffix = level.thinkingSuffix?.trim().toLowerCase();
+    if (!suffix) continue;
+    const childId = `${groupId}-${suffix}`;
+    const entry = models[childId];
+    if (!entry || !entry.displayName || entry.disabled || childId.endsWith("-disabled")) continue;
+    if (isRetiredOrRenamedAntigravityModel(childId)) continue;
+    childIds.push(childId);
+    firstChild ??= entry;
+    if (isModelThinkingLevel(suffix)) {
+      variants[suffix] = { thinkingLevel: suffix };
+    }
+  }
+  if (childIds.length === 0) return void 0;
+  return {
+    definition: {
+      name: antigravityDisplayName(group.displayName, groupId),
+      limit: limitFromEntry(`antigravity-${groupId}`, firstChild),
+      modalities: DEFAULT_MODALITIES,
+      ...Object.keys(variants).length > 0 ? { variants } : {}
+    },
+    childIds
+  };
+}
+function modelsFromAntigravityAvailableModels(models, groupedModels) {
   const definitions = {};
+  const groupedIds = /* @__PURE__ */ new Set();
+  for (const [groupId, group] of Object.entries(groupedModels ?? {})) {
+    const collapsed = groupedModelDefinition(groupId, group, models);
+    if (!collapsed) continue;
+    definitions[`antigravity-${groupId}`] = mergeWithStaticDefinition(
+      `antigravity-${groupId}`,
+      collapsed.definition
+    );
+    for (const childId of collapsed.childIds) groupedIds.add(childId);
+    groupedIds.add(groupId);
+  }
   for (const [sourceId, entry] of Object.entries(models)) {
     if (entry.disabled) continue;
     const unlabeled = UNLABELED_ANTIGRAVITY_MODELS[sourceId];
@@ -2586,13 +2673,14 @@ function modelsFromAntigravityAvailableModels(models) {
     const modelId = antigravityModelIdFromEntry(sourceId, entry);
     if (!modelId) continue;
     const backendId = modelId.replace(/^antigravity-/, "");
-    if (isGemini2Model(backendId) || remapRetiredAntigravityGeminiModel(backendId) !== backendId || toAntigravityWireModel(backendId) !== backendId) {
+    if (isRetiredOrRenamedAntigravityModel(backendId)) {
       continue;
     }
+    if (groupedIds.has(backendId)) continue;
     const variants = entry.supportsThinking ? defaultVariantsForModel(modelId) : void 0;
     const discovered = {
-      name: entry.displayName ? `${entry.displayName} (Antigravity)` : `${titleFromModelId(modelId)} (Antigravity)`,
-      limit: defaultLimitForModel(modelId),
+      name: antigravityDisplayName(entry.displayName, modelId),
+      limit: limitFromEntry(modelId, entry),
       modalities: DEFAULT_MODALITIES,
       ...variants ? { variants } : {}
     };
@@ -4886,7 +4974,7 @@ function cleanJSONSchemaForAntigravity(schema) {
 var DEFAULT_THINKING_BUDGET = 16e3;
 function isThinkingCapableModel2(modelName) {
   const lowerModel = modelName.toLowerCase();
-  return lowerModel.includes("thinking") || isGemini3OrLaterModel(lowerModel) || lowerModel.includes("opus");
+  return lowerModel.includes("thinking") || isGemini3OrLaterModel(lowerModel) || lowerModel.includes("opus") || isAdaptiveClaude5Model(lowerModel);
 }
 function extractThinkingConfig(requestPayload, rawGenerationConfig, extraBody) {
   const thinkingConfig = rawGenerationConfig?.thinkingConfig ?? extraBody?.thinkingConfig ?? requestPayload.thinkingConfig;
@@ -6486,7 +6574,7 @@ function isClaudeModel(model) {
 }
 function isClaudeThinkingModel(model) {
   const lower = model.toLowerCase();
-  return lower.includes("claude") && lower.includes("thinking");
+  return lower.includes("claude") && (lower.includes("thinking") || isAdaptiveClaude5Model(lower));
 }
 
 // src/plugin/transform/gemini.ts
@@ -8400,6 +8488,7 @@ function prepareAntigravityRequest(input3, init, accessToken, projectId, endpoin
   const transformedUrl = `${baseEndpoint}/v1internal:${rawAction}${streaming ? "?alt=sse" : ""}`;
   const isClaude = isClaudeModel(resolved.actualModel);
   const isClaudeThinking = isClaudeThinkingModel(resolved.actualModel);
+  const isAdaptiveClaude5 = isAdaptiveClaude5Model(resolved.actualModel);
   const keepThinkingEnabled = getKeepThinking();
   const enableClaudePromptAutoCaching = options?.claudePromptAutoCaching ?? false;
   let tierThinkingBudget = resolved.thinkingBudget;
@@ -8529,7 +8618,7 @@ function prepareAntigravityRequest(input3, init, accessToken, projectId, endpoin
         log7.debug(
           `[ThinkingResolution] rawModel=${rawModel} resolvedModel=${effectiveModel} resolvedTier=${tierThinkingLevel ?? "none"} variantLevel=${variantConfig?.thinkingLevel ?? "none"} variantBudget=${variantConfig?.thinkingBudget ?? "none"} providerOptions.google=${JSON.stringify(requestPayload.providerOptions?.google ?? null)} generationConfig.thinkingConfig=${JSON.stringify(rawGenerationConfig?.thinkingConfig ?? null)}`
         );
-        if (variantConfig?.thinkingLevel && isGemini3) {
+        if (variantConfig?.thinkingLevel && (isGemini3 || isAdaptiveClaude5)) {
           tierThinkingLevel = variantConfig.thinkingLevel;
           tierThinkingBudget = void 0;
         } else if (variantConfig?.thinkingBudget) {
@@ -8554,6 +8643,9 @@ function prepareAntigravityRequest(input3, init, accessToken, projectId, endpoin
           if (backend) {
             effectiveModel = backend.model;
             tierThinkingLevel = backend.thinkingLevel;
+          } else if (isAdaptiveClaude5 && tierThinkingLevel) {
+            tierThinkingLevel = tierThinkingLevel === "minimal" ? "low" : tierThinkingLevel === "xhigh" ? "high" : tierThinkingLevel;
+            effectiveModel = resolveAntigravityClaude5BackendModel(effectiveModel, tierThinkingLevel) ?? effectiveModel;
           }
         }
         if (isClaude) {
@@ -8630,7 +8722,12 @@ function prepareAntigravityRequest(input3, init, accessToken, projectId, endpoin
           if (normalizedThinking) {
             const thinkingBudget = tierThinkingBudget ?? normalizedThinking.thinkingBudget;
             let thinkingConfig;
-            if (isClaudeThinking) {
+            if (isAdaptiveClaude5) {
+              thinkingConfig = {
+                includeThoughts: normalizedThinking.includeThoughts ?? true,
+                ...tierThinkingLevel ? { thinkingLevel: tierThinkingLevel } : {}
+              };
+            } else if (isClaudeThinking) {
               thinkingConfig = {
                 include_thoughts: normalizedThinking.includeThoughts ?? true,
                 ...typeof thinkingBudget === "number" && thinkingBudget > 0 ? { thinking_budget: thinkingBudget } : {}
@@ -8648,7 +8745,7 @@ function prepareAntigravityRequest(input3, init, accessToken, projectId, endpoin
             }
             if (rawGenerationConfig) {
               rawGenerationConfig.thinkingConfig = thinkingConfig;
-              if (isClaudeThinking && typeof thinkingBudget === "number" && thinkingBudget > 0) {
+              if (isClaudeThinking && !isAdaptiveClaude5 && typeof thinkingBudget === "number" && thinkingBudget > 0) {
                 const currentMax = rawGenerationConfig.maxOutputTokens ?? rawGenerationConfig.max_output_tokens;
                 if (!currentMax || currentMax <= thinkingBudget) {
                   rawGenerationConfig.maxOutputTokens = CLAUDE_THINKING_MAX_OUTPUT_TOKENS;
@@ -8662,7 +8759,7 @@ function prepareAntigravityRequest(input3, init, accessToken, projectId, endpoin
               const generationConfig = {
                 thinkingConfig
               };
-              if (isClaudeThinking && typeof thinkingBudget === "number" && thinkingBudget > 0) {
+              if (isClaudeThinking && !isAdaptiveClaude5 && typeof thinkingBudget === "number" && thinkingBudget > 0) {
                 generationConfig.maxOutputTokens = CLAUDE_THINKING_MAX_OUTPUT_TOKENS;
               }
               requestPayload.generationConfig = generationConfig;
@@ -9089,11 +9186,13 @@ ${hint}`;
       return toolDebugPayloadCache;
     },
     needsSignedThinkingWarmup,
+    isClaudeThinking,
+    isAdaptiveClaude5,
     headerStyle,
     thinkingRecoveryMessage
   };
 }
-function buildThinkingWarmupBody(bodyText, isClaudeThinking) {
+function buildThinkingWarmupBody(bodyText, isClaudeThinking, isAdaptiveClaude5 = false) {
   if (!bodyText || !isClaudeThinking) {
     return null;
   }
@@ -9109,11 +9208,20 @@ function buildThinkingWarmupBody(bodyText, isClaudeThinking) {
     delete req.tools;
     delete req.toolConfig;
     const generationConfig = req.generationConfig ?? {};
-    generationConfig.thinkingConfig = {
-      include_thoughts: true,
-      thinking_budget: DEFAULT_THINKING_BUDGET
-    };
-    generationConfig.maxOutputTokens = CLAUDE_THINKING_MAX_OUTPUT_TOKENS;
+    if (isAdaptiveClaude5) {
+      const existing = generationConfig.thinkingConfig;
+      const thinkingLevel = typeof existing?.thinkingLevel === "string" ? existing.thinkingLevel : "HIGH";
+      generationConfig.thinkingConfig = {
+        includeThoughts: true,
+        thinkingLevel
+      };
+    } else {
+      generationConfig.thinkingConfig = {
+        include_thoughts: true,
+        thinking_budget: DEFAULT_THINKING_BUDGET
+      };
+      generationConfig.maxOutputTokens = CLAUDE_THINKING_MAX_OUTPUT_TOKENS;
+    }
     req.generationConfig = generationConfig;
   };
   if (parsed.request && typeof parsed.request === "object") {
@@ -12531,6 +12639,7 @@ function isApiKeyAuth(auth) {
 function canRouteAsPublicGeminiApiModel(model) {
   const m = model.toLowerCase();
   if (m.includes("claude")) return false;
+  if (m.includes("gpt-oss")) return false;
   const isAntigravityPrefixed = m.startsWith("antigravity-");
   const stripped = m.replace(/^antigravity-/, "").replace(/-(minimal|low|medium|high)$/, "");
   if (mapAntigravityModelToPublicApi(stripped)) return true;
@@ -12583,6 +12692,7 @@ function isLikelyAntigravityOnlyModel(model) {
   const m = model.toLowerCase();
   if (m.startsWith("antigravity-")) return true;
   if (m.includes("claude")) return true;
+  if (m.includes("gpt-oss")) return true;
   return ANTIGRAVITY_ONLY_BARE_GEMINI_IDS.has(m);
 }
 function buildAntigravityModelGuidanceMessage(requestedModel, originalMessage) {
@@ -12961,7 +13071,7 @@ async function modelsFromOAuthAuth(config, auth, client2, providerId) {
     if (response.models) {
       recordAntigravityAvailableModels(response.models);
     }
-    return modelsFromAntigravityAvailableModels(response.models ?? {});
+    return modelsFromAntigravityAvailableModels(response.models ?? {}, response.groupedModels);
   } catch (error) {
     log11.debug("fetchAvailableModels-failed", { error: String(error) });
     const cached = getCachedAntigravityAvailableModels();
@@ -14607,7 +14717,8 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                 }
                 const warmupBody = buildThinkingWarmupBody(
                   typeof prepared.init.body === "string" ? prepared.init.body : void 0,
-                  Boolean(prepared.effectiveModel?.toLowerCase().includes("claude") && prepared.effectiveModel?.toLowerCase().includes("thinking"))
+                  Boolean(prepared.isClaudeThinking),
+                  Boolean(prepared.isAdaptiveClaude5)
                 );
                 if (!warmupBody) {
                   return;

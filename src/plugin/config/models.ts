@@ -54,9 +54,28 @@ export interface AntigravityAvailableModel {
   /** Listed but not served to this account (a paid-plan model on a free one). */
   disabled?: boolean;
   supportsThinking?: boolean;
+  /** Context window Google reports for this backend id. */
+  maxTokens?: number;
+  /** Output limit Google reports for this backend id. */
+  maxOutputTokens?: number;
 }
 
 export type AntigravityAvailableModels = Record<string, AntigravityAvailableModel>;
+
+/**
+ * A family Google groups its tier-specific ids under
+ * (`claude-opus-5-5` covering `claude-opus-5-5-{low,medium,high}`), so discovery
+ * can offer one OpenCode model per family instead of one per tier.
+ */
+export interface AntigravityGroupedModel {
+  displayName?: string;
+  supportedThinkingLevels?: Array<{
+    thinkingSuffix?: string;
+    thinkingDisplayName?: string;
+  }>;
+}
+
+export type AntigravityGroupedModels = Record<string, AntigravityGroupedModel>;
 
 const DEFAULT_MODALITIES: ModelModalities = {
   input: ["text", "image", "pdf"],
@@ -128,6 +147,17 @@ function titleFromModelId(modelId: string): string {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+/**
+ * Appends the Antigravity suffix, dropping a trailing parenthetical Google
+ * already used for the thinking tier ("GPT-OSS 120B (Medium)") so the name does
+ * not stack two of them.
+ */
+function antigravityDisplayName(displayName: string | undefined, modelId: string): string {
+  const fallback = titleFromModelId(modelId);
+  const base = (displayName ?? fallback).replace(/\s*\([^()]*\)\s*$/, "").trim();
+  return `${base || fallback} (Antigravity)`;
 }
 
 function defaultLimitForModel(modelId: string): ModelLimit {
@@ -214,10 +244,104 @@ export function modelsFromGeminiApi(models: GeminiApiModel[]): OpencodeModelDefi
   return definitions;
 }
 
+/** Backend ids Antigravity no longer serves under their own name. */
+function isRetiredOrRenamedAntigravityModel(backendId: string): boolean {
+  return (
+    isGemini2Model(backendId) ||
+    remapRetiredAntigravityGeminiModel(backendId) !== backendId ||
+    toAntigravityWireModel(backendId) !== backendId
+  );
+}
+
+/**
+ * Thinking levels an OpenCode variant can carry. `xhigh` is accepted ahead of
+ * the Gemini 4 Hydrogen variant type so a grouped family that declares it still
+ * exposes the tier.
+ */
+function isModelThinkingLevel(value: string): value is ModelThinkingLevel {
+  return (
+    value === "minimal" ||
+    value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "xhigh"
+  );
+}
+
+/**
+ * Context/output limits from the registry, falling back to the family default
+ * when Google sends none.
+ */
+function limitFromEntry(modelId: string, entry: AntigravityAvailableModel | undefined): ModelLimit {
+  const fallback = defaultLimitForModel(modelId);
+  return {
+    context: entry?.maxTokens ?? fallback.context,
+    output: entry?.maxOutputTokens ?? fallback.output,
+  };
+}
+
+/**
+ * Collapses one `groupedModels` family into a single OpenCode model whose
+ * variants are its tier suffixes, returning the family's child backend ids so
+ * the caller suppresses the `-low`/`-medium`/`-high` duplicates.
+ */
+function groupedModelDefinition(
+  groupId: string,
+  group: AntigravityGroupedModel,
+  models: AntigravityAvailableModels,
+): { definition: OpencodeModelDefinition; childIds: string[] } | undefined {
+  const variants: Record<string, ModelVariant> = {};
+  const childIds: string[] = [];
+  let firstChild: AntigravityAvailableModel | undefined;
+
+  for (const level of group.supportedThinkingLevels ?? []) {
+    const suffix = level.thinkingSuffix?.trim().toLowerCase();
+    if (!suffix) continue;
+    const childId = `${groupId}-${suffix}`;
+    const entry = models[childId];
+    // A group is only offered when Google actually serves at least one child;
+    // display-less ids are internal routing entries, as in the registry pass.
+    if (!entry || !entry.displayName || entry.disabled || childId.endsWith("-disabled")) continue;
+    if (isRetiredOrRenamedAntigravityModel(childId)) continue;
+    childIds.push(childId);
+    firstChild ??= entry;
+    if (isModelThinkingLevel(suffix)) {
+      variants[suffix] = { thinkingLevel: suffix };
+    }
+  }
+
+  if (childIds.length === 0) return undefined;
+
+  return {
+    definition: {
+      name: antigravityDisplayName(group.displayName, groupId),
+      limit: limitFromEntry(`antigravity-${groupId}`, firstChild),
+      modalities: DEFAULT_MODALITIES,
+      ...(Object.keys(variants).length > 0 ? { variants } : {}),
+    },
+    childIds,
+  };
+}
+
 export function modelsFromAntigravityAvailableModels(
   models: AntigravityAvailableModels,
+  groupedModels?: AntigravityGroupedModels,
 ): OpencodeModelDefinitions {
   const definitions: OpencodeModelDefinitions = {};
+  // Child ids of a collapsed family, plus the family id itself: OpenCode shows
+  // one model per family, not one per thinking tier.
+  const groupedIds = new Set<string>();
+
+  for (const [groupId, group] of Object.entries(groupedModels ?? {})) {
+    const collapsed = groupedModelDefinition(groupId, group, models);
+    if (!collapsed) continue;
+    definitions[`antigravity-${groupId}`] = mergeWithStaticDefinition(
+      `antigravity-${groupId}`,
+      collapsed.definition,
+    );
+    for (const childId of collapsed.childIds) groupedIds.add(childId);
+    groupedIds.add(groupId);
+  }
 
   for (const [sourceId, entry] of Object.entries(models)) {
     if (entry.disabled) continue;
@@ -233,18 +357,15 @@ export function modelsFromAntigravityAvailableModels(
     if (!modelId) continue;
     // Retired and renamed ids are served under their successor's catalog entry.
     const backendId = modelId.replace(/^antigravity-/, "");
-    if (
-      isGemini2Model(backendId) ||
-      remapRetiredAntigravityGeminiModel(backendId) !== backendId ||
-      toAntigravityWireModel(backendId) !== backendId
-    ) {
+    if (isRetiredOrRenamedAntigravityModel(backendId)) {
       continue;
     }
+    if (groupedIds.has(backendId)) continue;
 
     const variants = entry.supportsThinking ? defaultVariantsForModel(modelId) : undefined;
     const discovered: OpencodeModelDefinition = {
-      name: entry.displayName ? `${entry.displayName} (Antigravity)` : `${titleFromModelId(modelId)} (Antigravity)`,
-      limit: defaultLimitForModel(modelId),
+      name: antigravityDisplayName(entry.displayName, modelId),
+      limit: limitFromEntry(modelId, entry),
       modalities: DEFAULT_MODALITIES,
       ...(variants ? { variants } : {}),
     };

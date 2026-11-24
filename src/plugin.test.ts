@@ -224,7 +224,7 @@ describe("createAntigravityPlugin provider models", () => {
               modelName: "gemini-3.7-flash",
             },
             "gemini-3.9-flash": {
-              displayName: "Gemini 3.9 Flash (Registry)",
+              displayName: "Gemini 3.9 Flash Registry",
               modelName: "gemini-3.9-flash",
               supportsThinking: true,
             },
@@ -262,12 +262,94 @@ describe("createAntigravityPlugin provider models", () => {
       expect(models?.["antigravity-gemini-3.7-flash"]).toBeUndefined();
       expect(models?.["antigravity-gemini-3.9-flash"]).toMatchObject({
         id: "antigravity-gemini-3.9-flash",
-        name: "Gemini 3.9 Flash (Registry) (Antigravity)",
+        name: "Gemini 3.9 Flash Registry (Antigravity)",
         capabilities: {
           reasoning: true,
           toolcall: true,
         },
       });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("collapses grouped tier ids from the Antigravity registry into one model", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("fetchAvailableModels")) {
+        return new Response(JSON.stringify({
+          models: {
+            "claude-opus-5-5-low": {
+              displayName: "Claude Opus 5.5 (Low)",
+              maxTokens: 1000000,
+              maxOutputTokens: 128000,
+              supportsThinking: true,
+            },
+            "claude-opus-5-5-medium": {
+              displayName: "Claude Opus 5.5 (Medium)",
+              maxTokens: 1000000,
+              maxOutputTokens: 128000,
+              supportsThinking: true,
+            },
+            "claude-opus-5-5-high": {
+              displayName: "Claude Opus 5.5 (High)",
+              maxTokens: 1000000,
+              maxOutputTokens: 128000,
+              supportsThinking: true,
+            },
+          },
+          groupedModels: {
+            "claude-opus-5-5": {
+              displayName: "Claude Opus 5.5",
+              supportedThinkingLevels: [
+                { thinkingSuffix: "low" },
+                { thinkingSuffix: "medium" },
+                { thinkingSuffix: "high" },
+              ],
+            },
+          },
+        }));
+      }
+      return new Response("1.2.3");
+    }));
+
+    try {
+      const plugin = await createAntigravityPlugin("google")({
+        client,
+        directory: process.cwd(),
+      });
+
+      const models = await plugin.provider?.models?.(
+        {
+          id: "google",
+          api: "https://generativelanguage.googleapis.com/v1beta",
+          npm: "@ai-sdk/google",
+          models: {},
+        },
+        {
+          auth: {
+            type: "oauth",
+            access: "valid-token",
+            refresh: "refresh-token|project=proj-1",
+            expires: Date.now() + 3600_000,
+          },
+        },
+      );
+
+      expect(models?.["antigravity-claude-opus-5-5"]).toMatchObject({
+        id: "antigravity-claude-opus-5-5",
+        name: "Claude Opus 5.5 (Antigravity)",
+        limit: { context: 1000000, output: 128000 },
+        variants: {
+          low: { thinkingLevel: "low" },
+          medium: { thinkingLevel: "medium" },
+          high: { thinkingLevel: "high" },
+        },
+        capabilities: { reasoning: true },
+      });
+      expect(models?.["antigravity-claude-opus-5-5-low"]).toBeUndefined();
+      expect(models?.["antigravity-claude-opus-5-5-medium"]).toBeUndefined();
+      expect(models?.["antigravity-claude-opus-5-5-high"]).toBeUndefined();
     } finally {
       vi.unstubAllGlobals();
     }

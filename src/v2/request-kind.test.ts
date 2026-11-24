@@ -19,6 +19,8 @@ const GEMINI_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/antigravity-gemini-3.8-flash:streamGenerateContent?alt=sse";
 const CLAUDE_URL =
   "https://generativelanguage.googleapis.com/v1beta/models/antigravity-claude-opus-4-6-thinking:streamGenerateContent?alt=sse";
+const CLAUDE_5_URL =
+  "https://generativelanguage.googleapis.com/v1beta/models/antigravity-claude-opus-5-5:streamGenerateContent?alt=sse";
 
 function titleInit(kind: string, generationConfig?: Record<string, unknown>): RequestInit {
   return {
@@ -58,7 +60,7 @@ describe("applyRequestKind", () => {
     expect(bodyOf(out).generationConfig.thinkingConfig).toEqual({ thinkingLevel: "low", includeThoughts: false });
   });
 
-  it("leaves primary requests and Claude titles alone apart from the tag", () => {
+  it("leaves primary requests and Claude 4.x titles alone apart from the tag", () => {
     const primary = titleInit("primary", { thinkingConfig: { thinkingLevel: "high" } });
     const primaryOut = applyRequestKind(GEMINI_URL, primary);
     expect(primaryOut.body).toBe(primary.body);
@@ -66,6 +68,28 @@ describe("applyRequestKind", () => {
 
     const claude = titleInit("title", { thinkingConfig: { thinkingBudget: 32768 } });
     expect(applyRequestKind(CLAUDE_URL, claude).body).toBe(claude.body);
+  });
+
+  it("caps a Claude 5 title request at low thinking without thoughts", () => {
+    const out = applyRequestKind(
+      CLAUDE_5_URL,
+      titleInit("title", { maxOutputTokens: 200, thinkingConfig: { thinkingLevel: "high", includeThoughts: true } }),
+    );
+    expect(bodyOf(out).generationConfig).toEqual({
+      maxOutputTokens: 200,
+      thinkingConfig: { thinkingLevel: "low", includeThoughts: false },
+    });
+  });
+
+  it("makes the pipeline pick the low Claude 5 backend for a title", async () => {
+    const out = applyRequestKind(CLAUDE_5_URL, titleInit("title"));
+    const prepared = await prepareAntigravityRequest(CLAUDE_5_URL, out, "token", "project");
+    const sent = JSON.parse(prepared.init.body as string);
+    expect(sent.model).toBe("claude-opus-5-5-low");
+    expect(sent.request.generationConfig.thinkingConfig).toMatchObject({
+      thinkingLevel: "LOW",
+      includeThoughts: false,
+    });
   });
 
   it("returns an untagged request unchanged", () => {
