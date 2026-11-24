@@ -1692,10 +1692,28 @@ describe("AccountManager", () => {
       };
 
       const manager = new AccountManager(undefined, stored);
-      manager.updateQuotaCache(0, { "gemini-pro": { remainingFraction: 0, modelCount: 1 } });
-      manager.updateQuotaCache(1, { "gemini-pro": { remainingFraction: 0, modelCount: 1 } });
+      manager.updateQuotaCache(0, { gemini: { remainingFraction: 0, modelCount: 1 } });
+      manager.updateQuotaCache(1, { gemini: { remainingFraction: 0, modelCount: 1 } });
 
       const account = manager.getCurrentOrNextForFamily("gemini", null, "hybrid", "antigravity", false, 90);
+      expect(account).toBeNull();
+    });
+
+    it("honours the legacy gemini-pro cache key left by older accounts files", () => {
+      const stored: AccountStorageV4 = {
+        version: 4,
+        accounts: [
+          { refreshToken: "r1", projectId: "p1", addedAt: 1, lastUsed: 0 },
+        ],
+        activeIndex: 0,
+      };
+
+      const manager = new AccountManager(undefined, stored);
+      const acc = (manager as any).accounts[0];
+      acc.cachedQuota = { "gemini-pro": { remainingFraction: 0.05, modelCount: 1 } };
+      acc.cachedQuotaUpdatedAt = Date.now();
+
+      const account = manager.getCurrentOrNextForFamily("gemini", null, "sticky", "antigravity", false, 90);
       expect(account).toBeNull();
     });
 
@@ -2150,10 +2168,16 @@ describe("AccountManager", () => {
 });
 
 describe("resolveQuotaGroup", () => {
-  it("returns model-based quota group when model is provided", () => {
+  it("sends Claude and GPT models to the shared claude pool", () => {
     expect(resolveQuotaGroup("claude", "claude-opus-4-6-thinking")).toBe("claude");
-    expect(resolveQuotaGroup("gemini", "gemini-2.5-pro")).toBe("gemini-pro");
-    expect(resolveQuotaGroup("gemini", "gemini-2.5-flash")).toBe("gemini-flash");
+    expect(resolveQuotaGroup("gemini", "gpt-oss-120b-medium")).toBe("claude");
+    expect(resolveQuotaGroup("gemini", "openai-gpt-5-mini")).toBe("claude");
+  });
+
+  it("sends every Gemini model to the unified gemini pool", () => {
+    expect(resolveQuotaGroup("gemini", "gemini-2.5-pro")).toBe("gemini");
+    expect(resolveQuotaGroup("gemini", "gemini-2.5-flash")).toBe("gemini");
+    expect(resolveQuotaGroup("gemini", "gemini-4-neon-high")).toBe("gemini");
   });
 
   it("falls back to claude for claude family when no model", () => {
@@ -2161,14 +2185,13 @@ describe("resolveQuotaGroup", () => {
     expect(resolveQuotaGroup("claude", undefined)).toBe("claude");
   });
 
-  it("falls back to gemini-pro for gemini family when no model", () => {
-    expect(resolveQuotaGroup("gemini", null)).toBe("gemini-pro");
-    expect(resolveQuotaGroup("gemini", undefined)).toBe("gemini-pro");
+  it("falls back to gemini for gemini family when no model", () => {
+    expect(resolveQuotaGroup("gemini", null)).toBe("gemini");
+    expect(resolveQuotaGroup("gemini", undefined)).toBe("gemini");
   });
 
   it("model takes precedence over family", () => {
-    // Even if family says claude, model determines the quota group
-    expect(resolveQuotaGroup("gemini", "gemini-2.5-flash")).toBe("gemini-flash");
-    expect(resolveQuotaGroup("gemini", "gemini-3-pro")).toBe("gemini-pro");
+    expect(resolveQuotaGroup("claude", "gemini-3-pro")).toBe("gemini");
+    expect(resolveQuotaGroup("gemini", "claude-opus-4-6-thinking")).toBe("claude");
   });
 });

@@ -300,10 +300,12 @@ function renderRateLimitDetail(result: AccountQuotaResult): string[] {
 function renderModelQuotaDetail(result: AccountQuotaResult): string[] {
   const lines: string[] = [];
   const groups = result.quota?.groups ?? {};
+  // Accounts cached before the Gemini pools were unified still carry the
+  // gemini-pro / gemini-flash keys.
+  const legacyGroups = groups as Record<string, (typeof groups)["claude"]>;
   const rows: Array<[string, { remainingFraction?: number; resetTime?: string } | undefined]> = [
-    ["Claude", groups.claude],
-    ["Gemini 3 Pro", groups["gemini-pro"]],
-    ["Gemini 3 Flash", groups["gemini-flash"]],
+    ["Claude / GPT", groups.claude],
+    ["Gemini", groups.gemini ?? legacyGroups["gemini-pro"] ?? legacyGroups["gemini-flash"]],
   ];
   const known = rows.filter(([, data]) => data);
 

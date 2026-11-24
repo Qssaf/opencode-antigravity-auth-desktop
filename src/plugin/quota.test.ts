@@ -21,9 +21,65 @@ describe("Antigravity quota aggregation", () => {
       },
     });
 
-    expect(summary.groups["gemini-flash"]?.remainingFraction).toBe(1);
-    expect(summary.groups["gemini-flash"]?.resetTime).toBe("2026-05-26T18:00:00Z");
-    expect(summary.groups["gemini-flash"]?.modelCount).toBe(2);
+    expect(summary.groups.gemini?.remainingFraction).toBe(1);
+    expect(summary.groups.gemini?.resetTime).toBe("2026-05-26T18:00:00Z");
+    expect(summary.groups.gemini?.modelCount).toBe(2);
+  });
+
+  it("puts Claude and GPT models in the one shared pool", () => {
+    const summary = __testExports.aggregateQuota({
+      "claude-opus-5-5-high": {
+        displayName: "Claude Opus 5.5 (High)",
+        quotaInfo: { remainingFraction: 0.4, resetTime: "2026-05-26T18:00:00Z" },
+      },
+      "gpt-oss-120b-medium": {
+        displayName: "GPT-OSS 120B (Medium)",
+        quotaInfo: { remainingFraction: 0.6, resetTime: "2026-05-27T18:00:00Z" },
+      },
+    });
+
+    expect(summary.groups.claude?.remainingFraction).toBe(0.6);
+    expect(summary.groups.claude?.resetTime).toBe("2026-05-27T18:00:00Z");
+    expect(summary.groups.claude?.modelCount).toBe(2);
+    expect(summary.groups.gemini).toBeUndefined();
+  });
+
+  it("puts a GPT-OSS model in the Claude/GPT pool on its own", () => {
+    const summary = __testExports.aggregateQuota({
+      "gpt-oss-120b-medium": {
+        displayName: "GPT-OSS 120B (Medium)",
+        quotaInfo: { remainingFraction: 0.3, resetTime: "2026-05-28T18:00:00Z" },
+      },
+    });
+
+    expect(summary.groups.claude).toEqual({
+      remainingFraction: 0.3,
+      resetTime: "2026-05-28T18:00:00Z",
+      modelCount: 1,
+    });
+    expect(summary.groups.gemini).toBeUndefined();
+  });
+
+  it("reports every Gemini 3+ model as one unified pool", () => {
+    const summary = __testExports.aggregateQuota({
+      "gemini-4-neon-high": {
+        displayName: "Gemini 4 Neon (High)",
+        quotaInfo: { remainingFraction: 0.9, resetTime: "2026-05-27T18:00:00Z" },
+      },
+      "gemini-4-argon-low": {
+        displayName: "Gemini 4 Argon (Low)",
+        quotaInfo: { remainingFraction: 0.2, resetTime: "2026-05-26T18:00:00Z" },
+      },
+      "gemini-3.1-flash-image": {
+        displayName: "Gemini 3.1 Flash Image",
+        quotaInfo: { remainingFraction: 0.9, resetTime: "2026-05-28T18:00:00Z" },
+      },
+    });
+
+    expect(summary.groups.gemini?.remainingFraction).toBe(0.9);
+    // The tie on 0.9 keeps Neon's earlier reset, not the later image model reset.
+    expect(summary.groups.gemini?.resetTime).toBe("2026-05-27T18:00:00Z");
+    expect(summary.groups.gemini?.modelCount).toBe(3);
   });
 
   it("leaves out models Google dropped, so their unused quota does not hide an exhausted 3.8 Flash", () => {
@@ -50,7 +106,7 @@ describe("Antigravity quota aggregation", () => {
       },
     });
 
-    expect(summary.groups["gemini-flash"]).toEqual({
+    expect(summary.groups.gemini).toEqual({
       remainingFraction: 0,
       resetTime: "2026-05-27T18:00:00Z",
       modelCount: 1,
@@ -78,8 +134,8 @@ describe("Antigravity quota aggregation", () => {
 
     // The displayed remainingFraction (1) belongs to gemini-3.8-flash-low, so the
     // reset time must be that same model's reset time, not the earliest across models.
-    expect(summary.groups["gemini-flash"]?.remainingFraction).toBe(1);
-    expect(summary.groups["gemini-flash"]?.resetTime).toBe("2026-05-27T18:00:00Z");
+    expect(summary.groups.gemini?.remainingFraction).toBe(1);
+    expect(summary.groups.gemini?.resetTime).toBe("2026-05-27T18:00:00Z");
   });
 
   it("takes the resetTime of the winning model regardless of iteration order", () => {
@@ -100,8 +156,8 @@ describe("Antigravity quota aggregation", () => {
       },
     });
 
-    expect(summary.groups["gemini-flash"]?.remainingFraction).toBe(0.9);
-    expect(summary.groups["gemini-flash"]?.resetTime).toBe("2026-05-28T18:00:00Z");
+    expect(summary.groups.gemini?.remainingFraction).toBe(0.9);
+    expect(summary.groups.gemini?.resetTime).toBe("2026-05-28T18:00:00Z");
   });
 
   it("breaks equal-remainingFraction ties by keeping the earliest reset time", () => {
@@ -124,8 +180,8 @@ describe("Antigravity quota aggregation", () => {
       },
     });
 
-    expect(summary.groups["gemini-flash"]?.remainingFraction).toBe(0.5);
-    expect(summary.groups["gemini-flash"]?.resetTime).toBe("2026-05-26T18:00:00Z");
+    expect(summary.groups.gemini?.remainingFraction).toBe(0.5);
+    expect(summary.groups.gemini?.resetTime).toBe("2026-05-26T18:00:00Z");
   });
 
   it("ignores unparseable reset times", () => {
@@ -139,8 +195,8 @@ describe("Antigravity quota aggregation", () => {
       },
     });
 
-    expect(summary.groups["gemini-flash"]?.remainingFraction).toBe(0.5);
-    expect(summary.groups["gemini-flash"]?.resetTime).toBeUndefined();
+    expect(summary.groups.gemini?.remainingFraction).toBe(0.5);
+    expect(summary.groups.gemini?.resetTime).toBeUndefined();
   });
 });
 

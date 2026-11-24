@@ -66,7 +66,7 @@ global demand. Whichever empties first is what blocks a request:
 ```
 
 From a shell, `antigravity-accounts quota --detailed` adds every bucket and the
-per-model 5-hour pools (Claude, Gemini 3 Pro/Flash), and
+Gemini and Claude/GPT pools, and
 `--json` prints the raw data.
 
 ### From a shell

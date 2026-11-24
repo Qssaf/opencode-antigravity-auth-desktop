@@ -61,7 +61,7 @@ import { accountState } from "./plugin/account-admin";
 import { createAutoUpdateCheckerHook } from "./hooks/auto-update-checker";
 import { loadConfig, initRuntimeConfig, type AntigravityConfig } from "./plugin/config";
 import { createSessionRecoveryHook, getRecoverySuccessToast } from "./plugin/recovery";
-import { checkAccountsQuota, fetchAvailableModels } from "./plugin/quota";
+import { checkAccountsQuota, fetchAvailableModels, isClaudeOrGptModel } from "./plugin/quota";
 import { initDiskSignatureCache, shutdownDiskSignatureCache } from "./plugin/cache";
 import { createProactiveRefreshQueue, type ProactiveRefreshQueue } from "./plugin/refresh-queue";
 import { initLogger, createLogger } from "./plugin/logger";
@@ -1396,7 +1396,7 @@ function isModelGenerationRequest(urlString: string): boolean {
  */
 export function createNoUsableCredentialsResponse(urlString: string, detail: string): Response {
   const requestedModel = extractRequestedGeminiModel(urlString) ?? extractModelFromUrl(urlString) ?? undefined;
-  const family: ModelFamily = requestedModel?.toLowerCase().includes("claude") ? "claude" : "gemini";
+  const family: ModelFamily = requestedModel && isClaudeOrGptModel(requestedModel) ? "claude" : "gemini";
   const errorMessage = [
     "[Antigravity Error] No usable Google credential for this request.",
     detail,
@@ -1428,7 +1428,7 @@ export function createUltraRequiredResponse(urlString: string, accountCount: num
  */
 function createRequestRefusedResponse(urlString: string, accountCount: number): Response {
   const requestedModel = extractRequestedGeminiModel(urlString) ?? extractModelFromUrl(urlString) ?? undefined;
-  const family: ModelFamily = requestedModel?.toLowerCase().includes("claude") ? "claude" : "gemini";
+  const family: ModelFamily = requestedModel && isClaudeOrGptModel(requestedModel) ? "claude" : "gemini";
   const errorMessage = [
     `[Antigravity Error] Google refused this request on ${accountCount === 1 ? "your account" : `${accountCount} accounts`} with a bare`,
     "\"Resource has been exhausted\" (no rate-limit reason or retry time). Google answers",
@@ -3636,10 +3636,12 @@ export const createAntigravityRuntime = (providerId: string) => async (
                       console.log(`     └─ ${errorMsg}`);
                     } else {
                       const groups = res.quota!.groups;
+                      // Accounts cached before the Gemini pools were unified
+                      // still carry the gemini-pro / gemini-flash keys.
+                      const legacyGroups = groups as Record<string, (typeof groups)["claude"]>;
                       const groupEntries = [
-                        { name: "Claude", data: groups.claude },
-                        { name: "Gemini 3 Pro", data: groups["gemini-pro"] },
-                        { name: "Gemini 3 Flash", data: groups["gemini-flash"] },
+                        { name: "Claude / GPT", data: groups.claude },
+                        { name: "Gemini", data: groups.gemini ?? legacyGroups["gemini-pro"] ?? legacyGroups["gemini-flash"] },
                       ].filter(g => g.data);
                       
                       groupEntries.forEach((g, idx) => {
@@ -4309,7 +4311,8 @@ function extractModelFromUrlWithSuffix(urlString: string): string | null {
 function getModelFamilyFromUrl(urlString: string): ModelFamily {
   const model = extractModelFromUrl(urlString);
   let family: ModelFamily = "gemini";
-  if (model && model.includes("claude")) {
+  // Claude and the GPT models Antigravity serves share one quota pool.
+  if (model && isClaudeOrGptModel(model)) {
     family = "claude";
   }
   if (isDebugEnabled()) {
