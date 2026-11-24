@@ -1,6 +1,7 @@
 import { extractVariantThinkingConfig, thinkingLevelFromBudget } from "./request-helpers";
 import {
   applyGeminiTransforms,
+  clampThinkingLevelForModel,
   isGemini3Model,
   isImageGenerationModel,
   mapAntigravityModelToPublicApi,
@@ -164,7 +165,7 @@ export function isApiKeyAuth(auth: unknown): auth is ApiKeyAuthDetails {
  * either natively or via translation in `prepareAgySdkGeminiRequest`.
  *
  * Strips the optional `antigravity-` prefix and any tier suffix (-minimal/-low/
- * -medium/-high), then checks:
+ * -medium/-high/-xhigh), then checks:
  *  - Claude models: never servable on the public API → returns false.
  *  - Has an explicit translation (e.g. `gemini-3.1-pro` → `gemini-3.1-pro-preview`)
  *    via `mapAntigravityModelToPublicApi` → routable.
@@ -186,7 +187,7 @@ function canRouteAsPublicGeminiApiModel(model: string): boolean {
   const m = model.toLowerCase();
   if (m.includes("claude")) return false;
   const isAntigravityPrefixed = m.startsWith("antigravity-");
-  const stripped = m.replace(/^antigravity-/, "").replace(/-(minimal|low|medium|high)$/, "");
+  const stripped = m.replace(/^antigravity-/, "").replace(/-(minimal|low|medium|high|xhigh)$/, "");
 
   // Explicit translation (e.g. gemini-3.1-pro → gemini-3.1-pro-preview) → routable.
   if (mapAntigravityModelToPublicApi(stripped)) return true;
@@ -273,13 +274,17 @@ export function extractRequestedGeminiModel(urlString: string): string | undefin
  * the API-key path. Kept short and stable; the live registry has more, but these
  * are the high-signal choices for the error hint.
  *
- * Source: GET https://generativelanguage.googleapis.com/v1beta/models (May 2026).
+ * Source: Google's published Gemini API model documentation (the model ids below,
+ * including bare `gemini-4-hydrogen` and `gemini-4-neon`), not a probe run from
+ * this plugin.
  */
 const PUBLIC_GEMINI_API_MODEL_SUGGESTIONS = [
   "gemini-3.1-pro-preview",
   "gemini-3.1-flash-lite",
   "gemini-3.8-flash",
   "gemini-4-argon",
+  "gemini-4-hydrogen",
+  "gemini-4-neon",
 ] as const;
 
 /**
@@ -454,7 +459,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function toThinkingTier(value: string | undefined): ThinkingTier | undefined {
-  if (value === "low" || value === "medium" || value === "high") return value;
+  if (value === "low" || value === "medium" || value === "high" || value === "xhigh") return value;
   return undefined;
 }
 
@@ -511,7 +516,12 @@ function applyAgySdkGeminiBodyTransforms(payload: RequestPayload, model: string,
       ?? (variantConfig?.thinkingBudget !== undefined ? thinkingLevelFromBudget(variantConfig.thinkingBudget) : undefined)
       ?? thinkingLevel
       ?? "low";
-    existingThinkingConfig.thinkingLevel = resolvedLevel;
+    // Clamp per model: a hand-written variant cannot send xhigh to Argon/3.8
+    // Flash, and Gemini 4 gets minimal as low.
+    existingThinkingConfig.thinkingLevel = clampThinkingLevelForModel(
+      resolvedLevel as ThinkingTier,
+      model,
+    );
     if (variantConfig?.includeThoughts !== undefined) {
       existingThinkingConfig.includeThoughts = variantConfig.includeThoughts;
     } else if (typeof existingThinkingConfig.includeThoughts !== "boolean") {
@@ -660,3 +670,7 @@ export async function fetchGeminiApiModels(credential: AgySdkCredential): Promis
 
   throw new Error(`Gemini models.list exceeded ${GEMINI_MODELS_LIST_MAX_PAGES} pages for ${credential.label}`);
 }
+
+export const __testExports = {
+  toThinkingTier,
+};

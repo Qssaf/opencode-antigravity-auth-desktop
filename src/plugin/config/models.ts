@@ -2,11 +2,15 @@ import type { ProviderModel } from "../types";
 import {
   isGemini2Model,
   isGemini3OrLaterModel,
+  isGemini4ArgonModel,
+  isGemini4CarbonModel,
+  isGemini4HydrogenModel,
+  isGemini4NeonModel,
   remapRetiredAntigravityGeminiModel,
   toAntigravityWireModel,
 } from "../transform/model-resolver";
 
-export type ModelThinkingLevel = "minimal" | "low" | "medium" | "high";
+export type ModelThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh";
 
 export interface ModelThinkingConfig {
   thinkingBudget: number;
@@ -63,6 +67,17 @@ const DEFAULT_MODALITIES: ModelModalities = {
   output: ["text"],
 };
 
+/**
+ * Gemini 4 Hydrogen and Neon variants. One shared, frozen object so the static
+ * definitions and discovered ids cannot drift apart or mutate each other.
+ */
+const GEMINI_4_XHIGH_VARIANTS: Record<string, ModelVariant> = Object.freeze({
+  low: { thinkingLevel: "low" },
+  medium: { thinkingLevel: "medium" },
+  high: { thinkingLevel: "high" },
+  xhigh: { thinkingLevel: "xhigh" },
+});
+
 export const OPENCODE_MODEL_DEFINITIONS: OpencodeModelDefinitions = {
   "antigravity-gemini-3.8-flash": {
     name: "Gemini 3.8 Flash (Antigravity)",
@@ -88,6 +103,43 @@ export const OPENCODE_MODEL_DEFINITIONS: OpencodeModelDefinitions = {
       medium: { thinkingLevel: "medium" },
       high: { thinkingLevel: "high" },
     },
+  },
+  // Same paid Pro or Ultra entitlement as Argon. Antigravity serves it as
+  // gemini-4-carbon-{low,medium,high} (see
+  // resolveAntigravityGemini4CarbonBackendModel) with the 256K output Google
+  // reports for it; there is no xhigh tier.
+  "antigravity-gemini-4-carbon": {
+    name: "Gemini 4 Carbon (Antigravity)",
+    temperature: false,
+    limit: { context: 1048576, output: 262144 },
+    modalities: DEFAULT_MODALITIES,
+    variants: {
+      low: { thinkingLevel: "low" },
+      medium: { thinkingLevel: "medium" },
+      high: { thinkingLevel: "high" },
+    },
+  },
+  // Paid Google AI Pro or Ultra, like Argon. Antigravity serves it as
+  // gemini-4-hydrogen-{low,medium,high,xhigh} (see
+  // resolveAntigravityGemini4HydrogenBackendModel) with the 256K output Google
+  // reports for it.
+  "antigravity-gemini-4-hydrogen": {
+    name: "Gemini 4 Hydrogen (Antigravity)",
+    temperature: false,
+    limit: { context: 1048576, output: 262144 },
+    modalities: DEFAULT_MODALITIES,
+    variants: GEMINI_4_XHIGH_VARIANTS,
+  },
+  // Same paid Pro or Ultra entitlement as Hydrogen. Antigravity serves it as
+  // gemini-4-neon-{low,medium,high,xhigh} (see
+  // resolveAntigravityGemini4NeonBackendModel) with the 256K output Google
+  // reports for it.
+  "antigravity-gemini-4-neon": {
+    name: "Gemini 4 Neon (Antigravity)",
+    temperature: false,
+    limit: { context: 1048576, output: 262144 },
+    modalities: DEFAULT_MODALITIES,
+    variants: GEMINI_4_XHIGH_VARIANTS,
   },
 };
 
@@ -143,6 +195,16 @@ function defaultVariantsForModel(modelId: string): Record<string, ModelVariant> 
     return {
       low: { thinkingConfig: { thinkingBudget: 8192 } },
       max: { thinkingConfig: { thinkingBudget: 32768 } },
+    };
+  }
+  if (isGemini4HydrogenModel(normalized) || isGemini4NeonModel(normalized)) {
+    return GEMINI_4_XHIGH_VARIANTS;
+  }
+  if (isGemini4ArgonModel(normalized) || isGemini4CarbonModel(normalized)) {
+    return {
+      low: { thinkingLevel: "low" },
+      medium: { thinkingLevel: "medium" },
+      high: { thinkingLevel: "high" },
     };
   }
   if (isGemini3OrLaterModel(normalized)) {

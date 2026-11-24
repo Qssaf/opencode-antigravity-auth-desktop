@@ -110,7 +110,7 @@ src/
     ├── storage.ts           # Persistent storage schemas (Zod)
     ├── fingerprint.ts       # Device fingerprint generation & headers
     ├── project.ts           # Managed project context resolution
-    ├── ultra-gate.ts        # Ultra-only models (Gemini 4 Argon): remembers accounts Google refused
+    ├── ultra-gate.ts        # Ultra-only models (Gemini 4 Argon, Gemini 4 Hydrogen, Gemini 4 Neon): remembers accounts Google refused
     └── debug.ts             # Debug logging utilities
 ```
 
