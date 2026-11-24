@@ -143,12 +143,15 @@ opencode run "Hello" --model=google/antigravity-gemini-3.8-flash --variant=high
 | `antigravity-gemini-3.8-flash` | low, medium, high | Gemini 3.8 Flash with thinking (high default) |
 | `antigravity-gemini-4-argon` | low, medium, high | **Newest. Paid Google AI Pro or Ultra only.** Gemini 4 Argon with thinking (high default, 1M context) |
 | `antigravity-gemini-4-hydrogen` | low, medium, high, xhigh | Gemini 4 Hydrogen with thinking (high default, 1M context, 262k output). `xhigh` thinks the longest and uses the most quota |
+| `antigravity-claude-opus-4-6-thinking` | low, max | Claude Opus 4.6 with thinking. Offered when Google lists it for your accounts, like the rows below |
+| `antigravity-claude-sonnet-4-6` | — | Claude Sonnet 4.6 |
+| `antigravity-gpt-oss-120b-medium` | — | GPT-OSS 120B |
 
 > **Gemini 4 Hydrogen Sonar is gone.** Google replaced it with Gemini 4 Hydrogen. A session still set to `antigravity-gemini-4-hydrogen-sonar` is served by Gemini 4 Hydrogen at the same variant.
 
 > **Gemini 4 Argon needs a paid Google AI Pro or Google AI Ultra subscription.** Free plans, Google AI Plus and Pro free trials do not include it. The plugin cannot read your subscription, so it learns it from Google: an account Google refuses Argon for is skipped for an hour and the next account is tried. When no signed-in account may use it, the request is answered with a message saying so instead of an error. With an API key configured (`agy_sdk`), Argon is tried through the public Gemini API before that message.
 
-> Antigravity now serves only Gemini 3.8 Flash, Gemini 4 Argon and Gemini 4 Hydrogen. Google dropped Gemini 3.5, 3.6 and 3.7 Flash, Claude Sonnet 4.6, Claude Opus 4.6 and GPT-OSS from it, and no longer serves Gemini 3 Pro, 3.1 Pro, 3 Flash, 3.1 Flash-Lite or 2.5 there either. An `antigravity-` request for any of those (with or without a tier suffix) goes to Gemini 3.8 Flash at the same tier, so sessions still set to an old model keep working. Gemini 2 is gone from every route: a request for any Gemini 2 model is sent as Gemini 3.8 Flash.
+> Google stopped serving Gemini 3.5, 3.6 and 3.7 Flash, Gemini 3 Pro, 3.1 Pro, 3 Flash, 3.1 Flash-Lite and 2.5 on Antigravity. An `antigravity-` request for any of those Gemini models (with or without a tier suffix) goes to Gemini 3.8 Flash at the same tier, so sessions still set to an old model keep working. Gemini 2 is gone from every route: a request for any Gemini 2 model is sent as Gemini 3.8 Flash.
 
 > **The Gemini CLI quota is gone.** Google deprecated it in favour of Antigravity and the Antigravity CLI, which share the Antigravity quota. The former Gemini CLI models (`gemini-3.8-flash`, `gemini-3.1-pro`, `gemini-3-pro-preview`, `gemini-3-flash-preview`, `gemini-3.1-pro-preview-customtools`) are no longer listed, and a request for one is served on Antigravity as Gemini 3.8 Flash. `cli_first` is ignored.
 

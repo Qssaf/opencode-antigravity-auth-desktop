@@ -200,8 +200,7 @@ const RETIRED_ANTIGRAVITY_GEMINI_REGEX =
   /^gemini-(?:2\.0|2\.5|3|3\.0|3\.1|3\.5|3\.6|3\.7)-(?:pro|flash)(?:-lite)?(?:-preview)?(?:-customtools)?(?:-(minimal|low|medium|high))?$/;
 
 /**
- * Antigravity now serves only Gemini 3.8 Flash, Gemini 4 Argon and Gemini 4
- * Hydrogen. A request
+ * Antigravity no longer serves the older Gemini chat models. A request
  * for a retired Gemini chat model on Antigravity (Gemini 2.5, 3 Pro, 3.1 Pro,
  * 3 Flash, 3.1 Flash-Lite, the dropped 3.5-3.7 Flash) moves to Gemini 3.8 Flash
  * at the same tier, so sessions still set to an old model keep working.

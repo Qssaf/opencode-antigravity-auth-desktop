@@ -83,7 +83,7 @@ Gemini 3 and Gemini 4 models use string-based thinking levels. Available levels 
 
 ## Claude Thinking Budget
 
-Claude models use token-based thinking budgets (in tokens). Google dropped Claude Sonnet 4.6 and Opus 4.6 from Antigravity, so the plugin no longer lists a Claude model; the budget handling below still applies to any Claude model you configure yourself.
+Claude models use token-based thinking budgets (in tokens). The plugin offers Claude Opus 4.6 (Thinking) and Claude Sonnet 4.6 when Google lists them for your accounts (they answered on 2026-11-22).
 
 | Variant | Budget | Description |
 |---------|--------|-------------|
