@@ -3591,6 +3591,17 @@ var AntigravityConfigSchema = z2.object({
    * @default true
    */
   google_search_tool: z2.boolean().default(true),
+  /**
+   * Replace old tool output (files read, command output) with a short note
+   * before each request, keeping the newest ~40k tokens of it word for word.
+   *
+   * OpenCode resends the whole chat on every step and the quota counts all of
+   * it; in long agent chats most of that is old tool output. The agent can
+   * run a tool again when it needs an old result.
+   *
+   * @default true
+   */
+  trim_old_tool_output: z2.boolean().default(true),
   // =========================================================================
   // Session Recovery
   // =========================================================================
@@ -3961,6 +3972,7 @@ var DEFAULT_CONFIG = {
   soft_quota_cache_ttl_minutes: "auto",
   auto_update: true,
   google_search_tool: true,
+  trim_old_tool_output: true,
   signature_cache: {
     enabled: true,
     memory_ttl_seconds: 3600,
@@ -6339,6 +6351,43 @@ function stripRefusedSystemParts(parts) {
     if (stripped === text) return [part];
     return stripped.trim() ? [{ ...part, text: stripped }] : [];
   });
+}
+
+// src/plugin/tool-output-trim.ts
+var TRIMMED_TOOL_OUTPUT = "[Older tool output removed by the plugin to save quota. Run the tool again if you need it.]";
+var TOOL_OUTPUT_KEEP_TOKENS = 4e4;
+var TOOL_OUTPUT_TRIM_STEP_TOKENS = 2e4;
+var KEPT_TOOLS = /* @__PURE__ */ new Set(["skill"]);
+var estimateTokens = (value) => Math.ceil(JSON.stringify(value).length / 3);
+function trimOldToolOutput(contents, keepTokens = TOOL_OUTPUT_KEEP_TOKENS, stepTokens = TOOL_OUTPUT_TRIM_STEP_TOKENS) {
+  if (!Array.isArray(contents)) return 0;
+  const results = [];
+  for (const turn of contents) {
+    const parts = turn?.parts;
+    if (!Array.isArray(parts)) continue;
+    for (const part of parts) {
+      const result = part?.functionResponse;
+      const response = result?.response;
+      if (!response || typeof response !== "object" || !("content" in response)) continue;
+      if (typeof result.name === "string" && KEPT_TOOLS.has(result.name)) continue;
+      const record = response;
+      const tokens = estimateTokens(record);
+      if (tokens <= estimateTokens({ ...record, content: TRIMMED_TOOL_OUTPUT })) continue;
+      results.push({ response: record, tokens });
+    }
+  }
+  const total = results.reduce((sum, result) => sum + result.tokens, 0);
+  const budget = Math.floor((total - keepTokens) / stepTokens) * stepTokens;
+  if (budget <= 0) return 0;
+  let trimmedTokens = 0;
+  let trimmed = 0;
+  for (const result of results) {
+    if (trimmedTokens >= budget) break;
+    result.response.content = TRIMMED_TOOL_OUTPUT;
+    trimmedTokens += result.tokens;
+    trimmed++;
+  }
+  return trimmed;
 }
 
 // src/v2/request-kind.ts
@@ -9007,6 +9056,7 @@ ${hint}`;
           const wireModel = toAntigravityWireModel(effectiveModel);
           const { contents, systemInstruction, tools, generationConfig, ...rest } = requestPayload;
           agyToolCallIds(contents);
+          if (options?.trimToolOutput) trimOldToolOutput(contents);
           if (!isClaudeModel(effectiveModel)) agyToolResults(contents);
           const thinkingConfig = generationConfig?.thinkingConfig;
           if (typeof thinkingConfig?.thinkingLevel === "string") {
@@ -14712,6 +14762,7 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                       {
                         claudeToolHardening: config.claude_tool_hardening,
                         claudePromptAutoCaching: config.claude_prompt_auto_caching,
+                        trimToolOutput: config.trim_old_tool_output,
                         fingerprint: account.fingerprint,
                         pluginRequestId
                       }
@@ -14793,6 +14844,7 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                           {
                             claudeToolHardening: config.claude_tool_hardening,
                             claudePromptAutoCaching: config.claude_prompt_auto_caching,
+                            trimToolOutput: config.trim_old_tool_output,
                             fingerprint: hedgeAccount.fingerprint,
                             pluginRequestId
                           }

@@ -44,8 +44,19 @@ Settings that affect how the model thinks and responds.
 | Option | Default | Description |
 |--------|---------|-------------|
 | `google_search_tool` | `true` | Register the plugin's `google_search` tool |
+| `trim_old_tool_output` | `true` | Replace old tool output with a short note before each request |
 
-The tool answers through Google Search grounding on your Antigravity quota. If
+OpenCode resends the whole chat on every step, and the quota counts every
+token of it. In long agent chats most of that is old tool output: files read
+and command output from many steps ago. With `trim_old_tool_output` the plugin
+keeps the newest ~40k tokens of tool output word for word and replaces older
+results with a note telling the agent to run the tool again if it needs them.
+Tool calls and their arguments are never changed. Replaying a morning of real
+chats, this cut the tokens sent by 77%. The trimmed part grows in steps of 20k
+tokens so the start of the chat, which Google caches, stays the same between
+steps. Set it to `false` to send every tool result in full.
+
+The `google_search` tool answers through Google Search grounding on your Antigravity quota. If
 its results are poor for your use, turn it off:
 
 ```json
@@ -182,6 +193,7 @@ These settings are already `true` by default — you don't need to set them:
 | `session_recovery` | `true` | Auto-recover from errors |
 | `auto_update` | `true` | Keep plugin updated |
 | `google_search_tool` | `true` | Register the `google_search` tool |
+| `trim_old_tool_output` | `true` | Trim old tool output to save quota |
 | `switch_on_first_rate_limit` | `true` | Fast account switching |
 
 These settings are `false` by default:

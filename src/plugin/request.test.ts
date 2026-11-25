@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
+import { TRIMMED_TOOL_OUTPUT } from "./tool-output-trim";
 import {
   prepareAntigravityRequest,
   transformAntigravityResponse,
@@ -1296,6 +1297,32 @@ it("removes API key headers", () => {
       expect(send().request.generationConfig.thinkingConfig.thinkingLevel).toBe("HIGH");
       // Sessions still set to the withdrawn Sonar keep their variant on Hydrogen.
       expect(send("low", "antigravity-gemini-4-hydrogen-sonar").model).toBe("gemini-4-hydrogen-low");
+    });
+
+    it("trims old tool output on the wire when asked, and only then", () => {
+      const contents: unknown[] = [{ role: "user", parts: [{ text: "fix it" }] }];
+      for (let i = 0; i < 100; i++) {
+        contents.push({ role: "model", parts: [{ functionCall: { name: "read", args: { path: `f${i}` } } }] });
+        contents.push({ role: "user", parts: [{ functionResponse: { name: "read", response: { name: "read", content: `${i}:`.padEnd(3000, "x") } } }] });
+      }
+      const send = (trimToolOutput: boolean | undefined) => JSON.parse(prepareAntigravityRequest(
+        "https://generativelanguage.googleapis.com/v1beta/models/antigravity-gemini-4-hydrogen:streamGenerateContent?alt=sse",
+        { method: "POST", body: JSON.stringify({ contents }) },
+        mockAccessToken,
+        mockProjectId,
+        undefined,
+        "antigravity",
+        false,
+        { trimToolOutput },
+      ).init.body as string);
+      const outputs = (body: { request: { contents: Array<{ parts: Array<{ functionResponse?: { response: { output: string } } }> }> } }) =>
+        body.request.contents.flatMap((c) => c.parts).flatMap((p) => p.functionResponse ? [p.functionResponse.response.output] : []);
+
+      const trimmed = outputs(send(true));
+      expect(trimmed.filter((o) => o === TRIMMED_TOOL_OUTPUT)).toHaveLength(60);
+      expect(trimmed[99]).toBe("99:".padEnd(3000, "x"));
+      expect(outputs(send(false)).filter((o) => o === TRIMMED_TOOL_OUTPUT)).toHaveLength(0);
+      expect(outputs(send(undefined)).filter((o) => o === TRIMMED_TOOL_OUTPUT)).toHaveLength(0);
     });
 
     it("preserves headerStyle in response", () => {

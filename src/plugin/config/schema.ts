@@ -173,6 +173,18 @@ export const AntigravityConfigSchema = z.object({
    */
   google_search_tool: z.boolean().default(true),
 
+  /**
+   * Replace old tool output (files read, command output) with a short note
+   * before each request, keeping the newest ~40k tokens of it word for word.
+   *
+   * OpenCode resends the whole chat on every step and the quota counts all of
+   * it; in long agent chats most of that is old tool output. The agent can
+   * run a tool again when it needs an old result.
+   *
+   * @default true
+   */
+  trim_old_tool_output: z.boolean().default(true),
+
   // =========================================================================
   // Session Recovery
   // =========================================================================
@@ -593,6 +605,7 @@ export const DEFAULT_CONFIG: AntigravityConfig = {
   soft_quota_cache_ttl_minutes: "auto",
   auto_update: true,
   google_search_tool: true,
+  trim_old_tool_output: true,
   signature_cache: {
     enabled: true,
     memory_ttl_seconds: 3600,
