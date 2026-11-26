@@ -1301,7 +1301,7 @@ it("removes API key headers", () => {
 
     it("trims old tool output on the wire when asked, and only then", () => {
       const contents: unknown[] = [{ role: "user", parts: [{ text: "fix it" }] }];
-      for (let i = 0; i < 100; i++) {
+      for (let i = 0; i < 200; i++) {
         contents.push({ role: "model", parts: [{ functionCall: { name: "read", args: { path: `f${i}` } } }] });
         contents.push({ role: "user", parts: [{ functionResponse: { name: "read", response: { name: "read", content: `${i}:`.padEnd(3000, "x") } } }] });
       }
@@ -1319,8 +1319,9 @@ it("removes API key headers", () => {
         body.request.contents.flatMap((c) => c.parts).flatMap((p) => p.functionResponse ? [p.functionResponse.response.output] : []);
 
       const trimmed = outputs(send(true));
-      expect(trimmed.filter((o) => o === TRIMMED_TOOL_OUTPUT)).toHaveLength(60);
-      expect(trimmed[99]).toBe("99:".padEnd(3000, "x"));
+      // ~202k tokens of output: 40k kept, 160k trimmed in two 80k steps.
+      expect(trimmed.filter((o) => o === TRIMMED_TOOL_OUTPUT)).toHaveLength(159);
+      expect(trimmed[199]).toBe("199:".padEnd(3000, "x"));
       expect(outputs(send(false)).filter((o) => o === TRIMMED_TOOL_OUTPUT)).toHaveLength(0);
       expect(outputs(send(undefined)).filter((o) => o === TRIMMED_TOOL_OUTPUT)).toHaveLength(0);
     });

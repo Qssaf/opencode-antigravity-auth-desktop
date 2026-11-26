@@ -15,14 +15,18 @@
 export const TRIMMED_TOOL_OUTPUT =
   "[Older tool output removed by the plugin to save quota. Run the tool again if you need it.]"
 
-/** The newest tool output kept word for word, in tokens. */
+/** The least newest tool output kept word for word, in tokens (up to this plus one step). */
 export const TOOL_OUTPUT_KEEP_TOKENS = 40_000
 
 /**
- * The trimmed part grows in whole steps of this many tokens, so the chat's
- * start (which Google caches) changes only once per step, not on every call.
+ * The trimmed part grows in whole steps of this many tokens. Each time it
+ * grows, the history changes right after the part already trimmed, so Google
+ * re-reads everything after that point uncached. A 20k step did that every few
+ * steps (33% of steps missed the cache on 2026-11-25, against 6% before);
+ * replaying those chats, 80k keeps uncached tokens near the untrimmed level
+ * while sending about a quarter of the tokens.
  */
-export const TOOL_OUTPUT_TRIM_STEP_TOKENS = 20_000
+export const TOOL_OUTPUT_TRIM_STEP_TOKENS = 80_000
 
 /** Skill output carries instructions the agent keeps following (OpenCode never pruned it either). */
 const KEPT_TOOLS = new Set(["skill"])

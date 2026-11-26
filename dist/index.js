@@ -3588,7 +3588,7 @@ var AntigravityConfigSchema = z2.object({
   google_search_tool: z2.boolean().default(true),
   /**
    * Replace old tool output (files read, command output) with a short note
-   * before each request, keeping the newest ~40k tokens of it word for word.
+   * before each request, keeping at least the newest 40k tokens of it word for word.
    *
    * OpenCode resends the whole chat on every step and the quota counts all of
    * it; in long agent chats most of that is old tool output. The agent can
@@ -6351,7 +6351,7 @@ function stripRefusedSystemParts(parts) {
 // src/plugin/tool-output-trim.ts
 var TRIMMED_TOOL_OUTPUT = "[Older tool output removed by the plugin to save quota. Run the tool again if you need it.]";
 var TOOL_OUTPUT_KEEP_TOKENS = 4e4;
-var TOOL_OUTPUT_TRIM_STEP_TOKENS = 2e4;
+var TOOL_OUTPUT_TRIM_STEP_TOKENS = 8e4;
 var KEPT_TOOLS = /* @__PURE__ */ new Set(["skill"]);
 var estimateTokens = (value) => Math.ceil(JSON.stringify(value).length / 3);
 function trimOldToolOutput(contents, keepTokens = TOOL_OUTPUT_KEEP_TOKENS, stepTokens = TOOL_OUTPUT_TRIM_STEP_TOKENS) {

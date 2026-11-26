@@ -175,7 +175,7 @@ export const AntigravityConfigSchema = z.object({
 
   /**
    * Replace old tool output (files read, command output) with a short note
-   * before each request, keeping the newest ~40k tokens of it word for word.
+   * before each request, keeping at least the newest 40k tokens of it word for word.
    *
    * OpenCode resends the whole chat on every step and the quota counts all of
    * it; in long agent chats most of that is old tool output. The agent can

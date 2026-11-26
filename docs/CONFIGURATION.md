@@ -49,12 +49,14 @@ Settings that affect how the model thinks and responds.
 OpenCode resends the whole chat on every step, and the quota counts every
 token of it. In long agent chats most of that is old tool output: files read
 and command output from many steps ago. With `trim_old_tool_output` the plugin
-keeps the newest ~40k tokens of tool output word for word and replaces older
-results with a note telling the agent to run the tool again if it needs them.
-Tool calls and their arguments are never changed. Replaying a morning of real
-chats, this cut the tokens sent by 77%. The trimmed part grows in steps of 20k
-tokens so the start of the chat, which Google caches, stays the same between
-steps. Set it to `false` to send every tool result in full.
+keeps at least the newest 40k tokens of tool output word for word and replaces
+older results with a note telling the agent to run the tool again if it needs
+them. Tool calls and their arguments are never changed. The trimmed part grows
+in steps of 80k tokens: each time it grows, Google re-reads everything after it
+without its cache, so it grows rarely (a 20k step did this every few steps and
+cost most of the saving). Replaying a morning of real chats, this sends about a
+quarter of the tokens with about as many uncached ones as no trimming. Set it to
+`false` to send every tool result in full.
 
 The `google_search` tool answers through Google Search grounding on your Antigravity quota. If
 its results are poor for your use, turn it off:
