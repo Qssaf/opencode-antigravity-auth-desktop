@@ -201,5 +201,36 @@ describe("Antigravity CLI wire format", () => {
       { output: JSON.stringify({ error: "missing" }) },
     ]);
   });
+
+  it("includes Antigravity 2.35.0 model_enum labels for Gemini 4 Argon and Hydrogen tiers", () => {
+    const cases: Array<[string, string]> = [
+      ["antigravity-gemini-4-argon-high", "MODEL_PLACEHOLDER_M417"],
+      ["antigravity-gemini-4-argon-medium", "MODEL_PLACEHOLDER_M418"],
+      ["antigravity-gemini-4-argon-low", "MODEL_PLACEHOLDER_M419"],
+      ["antigravity-gemini-4-hydrogen-high", "MODEL_PLACEHOLDER_M461"],
+      ["antigravity-gemini-4-hydrogen-medium", "MODEL_PLACEHOLDER_M462"],
+      ["antigravity-gemini-4-hydrogen-low", "MODEL_PLACEHOLDER_M463"],
+      ["antigravity-gemini-4-hydrogen-xhigh", "MODEL_PLACEHOLDER_M464"],
+    ];
+
+    for (const [model, expectedEnum] of cases) {
+      const prepared = prepareAntigravityRequest(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,
+        {
+          method: "POST",
+          headers: { "x-opencode-session": "ses_enum" },
+          body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "hi" }] }] }),
+        },
+        "token",
+        "aicode-consumers",
+        undefined,
+        "antigravity",
+        false,
+        { fingerprint: generateFingerprint() },
+      );
+      const body = JSON.parse(prepared.init.body as string);
+      expect(body.request.labels.model_enum).toBe(expectedEnum);
+    }
+  });
 });
 

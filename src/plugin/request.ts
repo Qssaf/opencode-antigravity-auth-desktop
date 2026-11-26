@@ -51,7 +51,6 @@ import {
   type AntigravityApiBody,
 } from "./request-helpers";
 import { agyRequestIds, agySessionId, agyToolCallIds, agyToolResults } from "./agy-wire";
-import { trimOldToolOutput } from "./tool-output-trim";
 import { TITLE_REQUEST_HEADER } from "../v2/request-kind";
 import {
   CLAUDE_TOOL_SYSTEM_INSTRUCTION,
@@ -1126,8 +1125,6 @@ export interface PrepareRequestOptions {
    * second call for it is sent as a retry (see agy-wire.ts).
    */
   pluginRequestId?: string;
-  /** Replace old tool output with a short note before sending (see tool-output-trim.ts). Default: false */
-  trimToolOutput?: boolean;
 }
 
 interface PreparedAntigravityRequest {
@@ -2261,7 +2258,6 @@ export function prepareAntigravityRequest(
           const wireModel = toAntigravityWireModel(effectiveModel);
           const { contents, systemInstruction, tools, generationConfig, ...rest } = requestPayload;
           agyToolCallIds(contents);
-          if (options?.trimToolOutput) trimOldToolOutput(contents);
           // Seen from agy on Gemini; Claude's translation needs results in a user turn.
           if (!isClaudeModel(effectiveModel)) agyToolResults(contents);
           const thinkingConfig = (generationConfig as { thinkingConfig?: Record<string, unknown> } | undefined)?.thinkingConfig;
@@ -2514,6 +2510,16 @@ export async function transformAntigravityResponse(
         onInjectDebug: injectDebugThinking,
         // onInjectSyntheticThinking removed - keep_thinking now uses debugText path
         transformThinkingParts: transformParts,
+        onUsageMetadata: effectiveModel
+          ? (usage) => {
+              logCacheStats(
+                effectiveModel,
+                usage.cachedContentTokenCount ?? 0,
+                usage.cacheCreationTokenCount ?? 0,
+                usage.promptTokenCount ?? usage.totalTokenCount ?? 0,
+              );
+            }
+          : undefined,
       },
       {
         signatureSessionKey: sessionId,

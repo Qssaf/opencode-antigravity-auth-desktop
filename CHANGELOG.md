@@ -4,7 +4,7 @@
 
 ### Added
 
-- **Old tool output is trimmed to save quota** (`trim_old_tool_output`, on by default) - OpenCode resends the whole chat on every step, and Antigravity's quota counts all of it. In a morning of real agent chats (2026-11-25) each step sent 400k-880k tokens, 62% of it old tool output, and three Pro accounts ran out in 40 minutes. The plugin now keeps at least the newest 40k tokens of tool output word for word and replaces older results with a note telling the agent to run the tool again if it needs them; replaying those chats, the tokens sent fell by 77%. Tool calls, their arguments and thought signatures are never changed. The trimmed part grows in steps of 80k tokens. Each time it grows, Google re-reads everything after it without its cache; the first version's 20k step did that every few steps (a third of steps missed the cache on 2026-11-25, against 6% before), which cost most of the saving. OpenCode 2.2.5 dropped its own `compaction.prune`, which did the same.
+- **Cache hits are logged for streamed answers** - The debug log's `[Cache] HIT/MISS` line now appears for streamed requests too (it used to be written only for non-streamed ones).
 
 - **Gemini 4 Hydrogen** (`antigravity-gemini-4-hydrogen`, variants `low`, `medium`, `high`, `xhigh`, `high` by default) - Google's new model, listed on Antigravity for free accounts too (seen 2026-11-24). It goes out as `gemini-4-hydrogen-<level>`, the tier-specific backend ids, with thinking level `XHIGH` for `xhigh`. The context window is 1M tokens and the output limit 262k. Gemini 4 Hydrogen Sonar, which it replaces, is no longer listed; a session still set to it is served by Gemini 4 Hydrogen at the same variant.
 

@@ -45,10 +45,6 @@
       "default": true,
       "type": "boolean"
     },
-    "trim_old_tool_output": {
-      "default": true,
-      "type": "boolean"
-    },
     "session_recovery": {
       "default": true,
       "type": "boolean",

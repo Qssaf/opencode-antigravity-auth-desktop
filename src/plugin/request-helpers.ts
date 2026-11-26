@@ -782,6 +782,7 @@ export interface AntigravityUsageMetadata {
   candidatesTokenCount?: number;
   cachedContentTokenCount?: number;
   thoughtsTokenCount?: number;
+  cacheCreationTokenCount?: number;
 }
 
 /**
@@ -1720,6 +1721,105 @@ export function extractUsageMetadata(body: AntigravityApiBody): AntigravityUsage
     candidatesTokenCount: toNumber(asRecord.candidatesTokenCount),
     cachedContentTokenCount: toNumber(asRecord.cachedContentTokenCount),
     thoughtsTokenCount: toNumber(asRecord.thoughtsTokenCount),
+  };
+}
+
+/**
+ * Extracts normalized usage metadata from either wrapped/unwrapped Gemini SSE
+ * chunks (`usageMetadata`) or Anthropic/Claude SSE events (`usage` / `message.usage`).
+ */
+export function extractStreamUsageMetadata(parsed: unknown): AntigravityUsageMetadata | null {
+  if (!parsed || typeof parsed !== "object") {
+    return null;
+  }
+
+  const record = parsed as Record<string, unknown>;
+  const geminiUsage =
+    extractUsageMetadata({ response: record.response }) ??
+    extractUsageMetadata({ response: record });
+  if (geminiUsage) {
+    return geminiUsage;
+  }
+
+  const responseObj =
+    record.response && typeof record.response === "object"
+      ? (record.response as Record<string, unknown>)
+      : record;
+  const messageObj =
+    responseObj.message && typeof responseObj.message === "object"
+      ? (responseObj.message as Record<string, unknown>)
+      : undefined;
+  const rawClaudeUsage =
+    (responseObj.usage && typeof responseObj.usage === "object"
+      ? (responseObj.usage as Record<string, unknown>)
+      : undefined) ??
+    (messageObj?.usage && typeof messageObj.usage === "object"
+      ? (messageObj.usage as Record<string, unknown>)
+      : undefined);
+
+  if (!rawClaudeUsage) {
+    return null;
+  }
+
+  const toNumber = (value: unknown): number | undefined =>
+    typeof value === "number" && Number.isFinite(value) ? value : undefined;
+
+  const inputTokens = toNumber(rawClaudeUsage.input_tokens);
+  const cacheRead = toNumber(rawClaudeUsage.cache_read_input_tokens);
+  const cacheCreation = toNumber(rawClaudeUsage.cache_creation_input_tokens);
+  const outputTokens = toNumber(rawClaudeUsage.output_tokens);
+
+  const hasPromptParts =
+    inputTokens !== undefined || cacheRead !== undefined || cacheCreation !== undefined;
+  if (!hasPromptParts && outputTokens === undefined) {
+    return null;
+  }
+
+  const promptTokenCount = hasPromptParts
+    ? (inputTokens ?? 0) + (cacheRead ?? 0) + (cacheCreation ?? 0)
+    : undefined;
+  const totalTokenCount =
+    promptTokenCount !== undefined && outputTokens !== undefined
+      ? promptTokenCount + outputTokens
+      : undefined;
+
+  return {
+    ...(totalTokenCount !== undefined ? { totalTokenCount } : {}),
+    ...(promptTokenCount !== undefined ? { promptTokenCount } : {}),
+    ...(outputTokens !== undefined ? { candidatesTokenCount: outputTokens } : {}),
+    ...(cacheRead !== undefined ? { cachedContentTokenCount: cacheRead } : {}),
+    ...(cacheCreation !== undefined ? { cacheCreationTokenCount: cacheCreation } : {}),
+  };
+}
+
+/**
+ * Merges usage chunks across a stream (`message_start` + `message_delta`, or partial Gemini frames).
+ */
+export function mergeUsageMetadata(
+  previous: AntigravityUsageMetadata | null,
+  next: AntigravityUsageMetadata | null,
+): AntigravityUsageMetadata | null {
+  if (!next) return previous;
+  if (!previous) return { ...next };
+
+  const promptTokenCount = next.promptTokenCount ?? previous.promptTokenCount;
+  const candidatesTokenCount = next.candidatesTokenCount ?? previous.candidatesTokenCount;
+  const cachedContentTokenCount = next.cachedContentTokenCount ?? previous.cachedContentTokenCount;
+  const thoughtsTokenCount = next.thoughtsTokenCount ?? previous.thoughtsTokenCount;
+  const cacheCreationTokenCount = next.cacheCreationTokenCount ?? previous.cacheCreationTokenCount;
+  const totalTokenCount =
+    next.totalTokenCount ??
+    (promptTokenCount !== undefined || candidatesTokenCount !== undefined
+      ? (promptTokenCount ?? 0) + (candidatesTokenCount ?? 0)
+      : previous.totalTokenCount);
+
+  return {
+    ...(totalTokenCount !== undefined ? { totalTokenCount } : {}),
+    ...(promptTokenCount !== undefined ? { promptTokenCount } : {}),
+    ...(candidatesTokenCount !== undefined ? { candidatesTokenCount } : {}),
+    ...(cachedContentTokenCount !== undefined ? { cachedContentTokenCount } : {}),
+    ...(thoughtsTokenCount !== undefined ? { thoughtsTokenCount } : {}),
+    ...(cacheCreationTokenCount !== undefined ? { cacheCreationTokenCount } : {}),
   };
 }
 

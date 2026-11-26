@@ -2783,7 +2783,6 @@ export const createAntigravityRuntime = (providerId: string) => async (
                   {
                     claudeToolHardening: config.claude_tool_hardening,
                     claudePromptAutoCaching: config.claude_prompt_auto_caching,
-                    trimToolOutput: config.trim_old_tool_output,
                     fingerprint: account.fingerprint,
                     pluginRequestId,
                   },
@@ -2885,7 +2884,6 @@ export const createAntigravityRuntime = (providerId: string) => async (
                           {
                             claudeToolHardening: config.claude_tool_hardening,
                             claudePromptAutoCaching: config.claude_prompt_auto_caching,
-                            trimToolOutput: config.trim_old_tool_output,
                             fingerprint: hedgeAccount.fingerprint,
                             pluginRequestId,
                           },

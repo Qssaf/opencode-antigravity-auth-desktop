@@ -1,5 +1,7 @@
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect, vi } from "vitest";
-import { TRIMMED_TOOL_OUTPUT } from "./tool-output-trim";
 import {
   prepareAntigravityRequest,
   transformAntigravityResponse,
@@ -9,7 +11,7 @@ import {
 } from "./request";
 import { DEFAULT_CONFIG } from "./config";
 import { stripRefusedSystemText } from "./request-helpers";
-import { initializeDebug } from "./debug";
+import { getLogFilePath, initializeDebug } from "./debug";
 import { ANTIGRAVITY_CLI_USER_AGENT, SKIP_THOUGHT_SIGNATURE } from "../constants";
 import { cacheSignature, getCachedSignature, clearSignatureCache } from "./cache";
 import * as config from "./config";
@@ -576,6 +578,72 @@ describe("request.ts", () => {
       expect(whole.output).toContain("héllo wörld ✓");
       // One piece for the whole input plus the synthetic usage metadata.
       expect(whole.enqueued).toBe(2);
+    });
+
+    it("reports accumulated Gemini and Claude SSE usageMetadata via onUsageMetadata on stream completion", async () => {
+      const encoder = new TextEncoder();
+      const observed: Array<Record<string, unknown>> = [];
+      const transformer = createStreamingTransformer(
+        createMockSignatureStore(),
+        {
+          ...defaultCallbacks,
+          onUsageMetadata: (usage) => observed.push(usage as Record<string, unknown>),
+        } as StreamingCallbacks,
+      );
+
+      const sse = [
+        `data: ${JSON.stringify({ response: { candidates: [{ content: { parts: [{ text: "hello" }] } }] } })}\n\n`,
+        `data: ${JSON.stringify({ response: { usageMetadata: { promptTokenCount: 10000, cachedContentTokenCount: 8500, candidatesTokenCount: 40, totalTokenCount: 10040 } } })}\n\n`,
+      ].join("");
+
+      const transformed = new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode(sse));
+            controller.close();
+          },
+        }).pipeThrough(transformer),
+      );
+      await transformed.text();
+
+      expect(observed).toHaveLength(1);
+      expect(observed[0]).toMatchObject({
+        promptTokenCount: 10000,
+        cachedContentTokenCount: 8500,
+        candidatesTokenCount: 40,
+        totalTokenCount: 10040,
+      });
+
+      // Also verify Anthropic/Claude SSE usage events without usageMetadata key
+      const claudeObserved: Array<Record<string, unknown>> = [];
+      const claudeTransformer = createStreamingTransformer(
+        createMockSignatureStore(),
+        {
+          ...defaultCallbacks,
+          onUsageMetadata: (usage) => claudeObserved.push(usage as Record<string, unknown>),
+        } as StreamingCallbacks,
+      );
+      const claudeSse = [
+        `event: message_start\ndata: ${JSON.stringify({ type: "message_start", message: { usage: { input_tokens: 1500, cache_read_input_tokens: 8000, cache_creation_input_tokens: 500 } } })}\n\n`,
+        `event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", usage: { output_tokens: 75 } })}\n\n`,
+      ].join("");
+      await new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(encoder.encode(claudeSse));
+            controller.close();
+          },
+        }).pipeThrough(claudeTransformer),
+      ).text();
+
+      expect(claudeObserved).toHaveLength(1);
+      expect(claudeObserved[0]).toMatchObject({
+        promptTokenCount: 10000,
+        cachedContentTokenCount: 8000,
+        cacheCreationTokenCount: 500,
+        candidatesTokenCount: 75,
+        totalTokenCount: 10075,
+      });
     });
   });
 
@@ -1299,33 +1367,6 @@ it("removes API key headers", () => {
       expect(send("low", "antigravity-gemini-4-hydrogen-sonar").model).toBe("gemini-4-hydrogen-low");
     });
 
-    it("trims old tool output on the wire when asked, and only then", () => {
-      const contents: unknown[] = [{ role: "user", parts: [{ text: "fix it" }] }];
-      for (let i = 0; i < 200; i++) {
-        contents.push({ role: "model", parts: [{ functionCall: { name: "read", args: { path: `f${i}` } } }] });
-        contents.push({ role: "user", parts: [{ functionResponse: { name: "read", response: { name: "read", content: `${i}:`.padEnd(3000, "x") } } }] });
-      }
-      const send = (trimToolOutput: boolean | undefined) => JSON.parse(prepareAntigravityRequest(
-        "https://generativelanguage.googleapis.com/v1beta/models/antigravity-gemini-4-hydrogen:streamGenerateContent?alt=sse",
-        { method: "POST", body: JSON.stringify({ contents }) },
-        mockAccessToken,
-        mockProjectId,
-        undefined,
-        "antigravity",
-        false,
-        { trimToolOutput },
-      ).init.body as string);
-      const outputs = (body: { request: { contents: Array<{ parts: Array<{ functionResponse?: { response: { output: string } } }> }> } }) =>
-        body.request.contents.flatMap((c) => c.parts).flatMap((p) => p.functionResponse ? [p.functionResponse.response.output] : []);
-
-      const trimmed = outputs(send(true));
-      // ~202k tokens of output: 40k kept, 160k trimmed in two 80k steps.
-      expect(trimmed.filter((o) => o === TRIMMED_TOOL_OUTPUT)).toHaveLength(159);
-      expect(trimmed[199]).toBe("199:".padEnd(3000, "x"));
-      expect(outputs(send(false)).filter((o) => o === TRIMMED_TOOL_OUTPUT)).toHaveLength(0);
-      expect(outputs(send(undefined)).filter((o) => o === TRIMMED_TOOL_OUTPUT)).toHaveLength(0);
-    });
-
     it("preserves headerStyle in response", () => {
       const result = prepareAntigravityRequest(
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent",
@@ -1828,6 +1869,54 @@ it("removes API key headers", () => {
       );
 
       await expect(transformed.text()).resolves.toContain("Request contains an invalid argument.");
+    });
+
+    it("logs streaming SSE [Cache] stats when transformed stream finishes", async () => {
+      const logDir = mkdtempSync(join(tmpdir(), "agy-stream-cache-"));
+      try {
+        initializeDebug({
+          ...DEFAULT_CONFIG,
+          debug: true,
+          debug_tui: false,
+          log_dir: logDir,
+        });
+        const logFile = getLogFilePath();
+        expect(logFile).toBeTruthy();
+
+        const sse = [
+          `data: ${JSON.stringify({ response: { candidates: [{ content: { parts: [{ text: "ok" }] } }] } })}\n\n`,
+          `data: ${JSON.stringify({ response: { usageMetadata: { promptTokenCount: 5000, cachedContentTokenCount: 4000, candidatesTokenCount: 10, totalTokenCount: 5010 } } })}\n\n`,
+        ].join("");
+        const response = new Response(sse, {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+
+        const transformed = await transformAntigravityResponse(
+          response,
+          true,
+          undefined,
+          "antigravity-gemini-4-hydrogen",
+          "test-project",
+          "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse",
+          "gemini-4-hydrogen-high",
+          "session-cache-stream",
+        );
+
+        await transformed.text();
+        let contents = "";
+        for (let attempt = 0; attempt < 25; attempt++) {
+          if (existsSync(logFile!)) {
+            contents = readFileSync(logFile!, "utf8");
+            if (contents.includes("[Cache] HIT")) break;
+          }
+          await new Promise((r) => setTimeout(r, 15));
+        }
+        expect(contents).toContain("[Cache] HIT model=gemini-4-hydrogen-high read=4000 write=0 total=5000 hitRate=80%");
+      } finally {
+        initializeDebug(DEFAULT_CONFIG);
+        rmSync(logDir, { recursive: true, force: true });
+      }
     });
   });
 });

@@ -5,6 +5,11 @@ import type {
   ThoughtBuffer,
 } from './types';
 import { processImageData } from '../../image-saver';
+import {
+  extractStreamUsageMetadata,
+  mergeUsageMetadata,
+  type AntigravityUsageMetadata,
+} from '../../request-helpers';
 
 /**
  * Upper bound on the number of thinking-text hashes retained per session.
@@ -223,6 +228,12 @@ export function transformSseLine(
 
   try {
     const parsed = JSON.parse(json) as { response?: unknown };
+    if (callbacks.onUsageMetadata && (line.includes('usageMetadata') || line.includes('"usage"'))) {
+      const usage = extractStreamUsageMetadata(parsed);
+      if (usage) {
+        callbacks.onUsageMetadata(usage);
+      }
+    }
     if (parsed.response !== undefined) {
       const hasInterestingData =
         line.includes('"thought"') ||
@@ -343,6 +354,15 @@ export function createStreamingTransformer(
   const sentThinkingBuffer = createThoughtBuffer();
   const debugState = { injected: false };
   let hasSeenUsageMetadata = false;
+  let latestUsage: AntigravityUsageMetadata | null = null;
+  const lineCallbacks: StreamingCallbacks = callbacks.onUsageMetadata
+    ? {
+        ...callbacks,
+        onUsageMetadata: (usage) => {
+          latestUsage = mergeUsageMetadata(latestUsage, usage);
+        },
+      }
+    : callbacks;
 
   return new TransformStream({
     transform(chunk, controller) {
@@ -373,7 +393,7 @@ export function createStreamingTransformer(
           signatureStore,
           thoughtBuffer,
           sentThinkingBuffer,
-          callbacks,
+          lineCallbacks,
           options,
           debugState,
         ) + '\n';
@@ -392,11 +412,15 @@ export function createStreamingTransformer(
           signatureStore,
           thoughtBuffer,
           sentThinkingBuffer,
-          callbacks,
+          lineCallbacks,
           options,
           debugState,
         );
         controller.enqueue(encoder.encode(transformedLine));
+      }
+
+      if (latestUsage && callbacks.onUsageMetadata) {
+        callbacks.onUsageMetadata(latestUsage);
       }
 
       // Inject synthetic usage metadata if missing (fixes "Context % used: 0%" issue)

@@ -284,7 +284,14 @@ import { createHash, randomUUID } from "node:crypto";
 var MODEL_ENUMS = {
   "gemini-3.8-flash-high": "MODEL_PLACEHOLDER_M318",
   "gemini-3.8-flash-medium": "MODEL_PLACEHOLDER_M319",
-  "gemini-3.8-flash-low": "MODEL_PLACEHOLDER_M320"
+  "gemini-3.8-flash-low": "MODEL_PLACEHOLDER_M320",
+  "gemini-4-argon-high": "MODEL_PLACEHOLDER_M417",
+  "gemini-4-argon-medium": "MODEL_PLACEHOLDER_M418",
+  "gemini-4-argon-low": "MODEL_PLACEHOLDER_M419",
+  "gemini-4-hydrogen-high": "MODEL_PLACEHOLDER_M461",
+  "gemini-4-hydrogen-medium": "MODEL_PLACEHOLDER_M462",
+  "gemini-4-hydrogen-low": "MODEL_PLACEHOLDER_M463",
+  "gemini-4-hydrogen-xhigh": "MODEL_PLACEHOLDER_M464"
 };
 var MAX_CONVERSATIONS = 1e3;
 var conversations = globalThis[/* @__PURE__ */ Symbol.for("opencode-antigravity-auth/agy-conversations/v2")] ??= /* @__PURE__ */ new Map();
@@ -3591,17 +3598,6 @@ var AntigravityConfigSchema = z2.object({
    * @default true
    */
   google_search_tool: z2.boolean().default(true),
-  /**
-   * Replace old tool output (files read, command output) with a short note
-   * before each request, keeping at least the newest 40k tokens of it word for word.
-   *
-   * OpenCode resends the whole chat on every step and the quota counts all of
-   * it; in long agent chats most of that is old tool output. The agent can
-   * run a tool again when it needs an old result.
-   *
-   * @default true
-   */
-  trim_old_tool_output: z2.boolean().default(true),
   // =========================================================================
   // Session Recovery
   // =========================================================================
@@ -3972,7 +3968,6 @@ var DEFAULT_CONFIG = {
   soft_quota_cache_ttl_minutes: "auto",
   auto_update: true,
   google_search_tool: true,
-  trim_old_tool_output: true,
   signature_cache: {
     enabled: true,
     memory_ttl_seconds: 3600,
@@ -4141,283 +4136,6 @@ To view: \`open "${filePath}"\``;
   }
   return `![Generated Image](data:${mimeType};base64,${data})`;
 }
-
-// src/plugin/core/streaming/transformer.ts
-var MAX_SESSION_THINKING_HASHES = 2e3;
-function addBoundedThinkingHash(hashes, hash) {
-  hashes.add(hash);
-  if (hashes.size > MAX_SESSION_THINKING_HASHES) {
-    const oldest = hashes.values().next().value;
-    if (oldest !== void 0) {
-      hashes.delete(oldest);
-    }
-  }
-}
-var MIN_REPLAY_DEDUP_CHARS = 64;
-function hashString(str) {
-  let hash = (5381 ^ str.length) >>> 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = (hash << 5) + hash + str.charCodeAt(i) >>> 0;
-  }
-  return hash.toString(16);
-}
-function resolveThinkingText(slot, fullText, shownBuffer, displayedThinkingHashes) {
-  if (displayedThinkingHashes && fullText.length >= MIN_REPLAY_DEDUP_CHARS) {
-    const hash = hashString(fullText);
-    if (displayedThinkingHashes.has(hash)) {
-      return null;
-    }
-    addBoundedThinkingHash(displayedThinkingHashes, hash);
-  }
-  const shown = shownBuffer.get(slot) ?? "";
-  if (shown.trim() && fullText.startsWith(shown)) {
-    shownBuffer.set(slot, fullText);
-    const delta = fullText.slice(shown.length);
-    return delta ? delta : null;
-  }
-  shownBuffer.set(slot, shown + fullText);
-  return void 0;
-}
-function createThoughtBuffer() {
-  const buffer = /* @__PURE__ */ new Map();
-  return {
-    get: (index) => buffer.get(index),
-    set: (index, text) => buffer.set(index, text),
-    clear: () => buffer.clear()
-  };
-}
-function deduplicateThinkingText(response, sentBuffer, displayedThinkingHashes) {
-  if (!response || typeof response !== "object") return response;
-  const resp = response;
-  if (Array.isArray(resp.candidates)) {
-    const newCandidates = resp.candidates.map((candidate, index) => {
-      const cand = candidate;
-      if (!cand?.content) return candidate;
-      const content = cand.content;
-      if (!Array.isArray(content.parts)) return candidate;
-      const newParts = content.parts.map((part) => {
-        const p = part;
-        if (p.inlineData) {
-          const inlineData = p.inlineData;
-          const result = processImageData({
-            mimeType: inlineData.mimeType,
-            data: inlineData.data
-          });
-          if (result) {
-            return { text: result };
-          }
-        }
-        if (p.thought === true || p.type === "thinking") {
-          const fullText = p.text || p.thinking || "";
-          const text = resolveThinkingText(index, fullText, sentBuffer, displayedThinkingHashes);
-          if (text === null) return null;
-          if (text === void 0) return part;
-          return { ...p, text, thinking: text };
-        }
-        return part;
-      });
-      const filteredParts = newParts.filter((p) => p !== null);
-      return {
-        ...cand,
-        content: { ...content, parts: filteredParts }
-      };
-    });
-    return { ...resp, candidates: newCandidates };
-  }
-  if (Array.isArray(resp.content)) {
-    let thinkingIndex = 0;
-    const newContent = resp.content.map((block) => {
-      const b = block;
-      if (b?.type === "thinking") {
-        const fullText = b.thinking || b.text || "";
-        const text = resolveThinkingText(thinkingIndex, fullText, sentBuffer, displayedThinkingHashes);
-        thinkingIndex++;
-        if (text === null) return null;
-        if (text === void 0) return block;
-        return { ...b, thinking: text, text };
-      }
-      return block;
-    });
-    const filteredContent = newContent.filter((b) => b !== null);
-    return { ...resp, content: filteredContent };
-  }
-  return response;
-}
-function transformSseLine(line, signatureStore, thoughtBuffer, sentThinkingBuffer, callbacks, options, debugState2) {
-  if (!line.startsWith("data:")) {
-    return line;
-  }
-  const json = line.slice(5).trim();
-  if (!json) {
-    return line;
-  }
-  try {
-    const parsed = JSON.parse(json);
-    if (parsed.response !== void 0) {
-      const hasInterestingData = line.includes('"thought"') || line.includes('"thinking"') || line.includes('"signature"') || line.includes('"inlineData"') || line.includes('"functionCall"');
-      if (!hasInterestingData && (!options.debugText || debugState2.injected)) {
-        return `data: ${JSON.stringify(parsed.response)}`;
-      }
-      if (options.cacheSignatures && options.signatureSessionKey) {
-        cacheThinkingSignaturesFromResponse(
-          parsed.response,
-          options.signatureSessionKey,
-          signatureStore,
-          thoughtBuffer,
-          callbacks.onCacheSignature
-        );
-      }
-      let response = deduplicateThinkingText(
-        parsed.response,
-        sentThinkingBuffer,
-        options.displayedThinkingHashes
-      );
-      if (options.debugText && callbacks.onInjectDebug && !debugState2.injected) {
-        response = callbacks.onInjectDebug(response, options.debugText);
-        debugState2.injected = true;
-      }
-      const transformed = callbacks.transformThinkingParts ? callbacks.transformThinkingParts(response) : response;
-      return `data: ${JSON.stringify(transformed)}`;
-    }
-  } catch (_) {
-  }
-  return line;
-}
-function cacheThinkingSignaturesFromResponse(response, signatureSessionKey, signatureStore, thoughtBuffer, onCacheSignature) {
-  if (!response || typeof response !== "object") return;
-  const resp = response;
-  if (Array.isArray(resp.candidates)) {
-    resp.candidates.forEach((candidate, index) => {
-      const cand = candidate;
-      if (!cand?.content) return;
-      const content = cand.content;
-      if (!Array.isArray(content.parts)) return;
-      content.parts.forEach((part) => {
-        const p = part;
-        if (p.thought === true || p.type === "thinking") {
-          const text = p.text || p.thinking || "";
-          if (text) {
-            const current = thoughtBuffer.get(index) ?? "";
-            thoughtBuffer.set(index, current + text);
-          }
-        }
-        if (p.thoughtSignature) {
-          const fullText = thoughtBuffer.get(index) ?? "";
-          if (fullText) {
-            const signature = p.thoughtSignature;
-            onCacheSignature?.(signatureSessionKey, fullText, signature);
-            signatureStore.set(signatureSessionKey, { text: fullText, signature });
-          }
-        }
-      });
-    });
-  }
-  if (Array.isArray(resp.content)) {
-    const CLAUDE_BUFFER_KEY = 0;
-    resp.content.forEach((block) => {
-      const b = block;
-      if (b?.type === "thinking") {
-        const text = b.thinking || b.text || "";
-        if (text) {
-          const current = thoughtBuffer.get(CLAUDE_BUFFER_KEY) ?? "";
-          thoughtBuffer.set(CLAUDE_BUFFER_KEY, current + text);
-        }
-      }
-      if (b?.signature) {
-        const fullText = thoughtBuffer.get(CLAUDE_BUFFER_KEY) ?? "";
-        if (fullText) {
-          const signature = b.signature;
-          onCacheSignature?.(signatureSessionKey, fullText, signature);
-          signatureStore.set(signatureSessionKey, { text: fullText, signature });
-        }
-      }
-    });
-  }
-}
-function createStreamingTransformer(signatureStore, callbacks, options = {}) {
-  const decoder = new TextDecoder();
-  const encoder = new TextEncoder();
-  let buffer = "";
-  const thoughtBuffer = createThoughtBuffer();
-  const sentThinkingBuffer = createThoughtBuffer();
-  const debugState2 = { injected: false };
-  let hasSeenUsageMetadata = false;
-  return new TransformStream({
-    transform(chunk, controller) {
-      const text = decoder.decode(chunk, { stream: true });
-      const lastNewline = text.lastIndexOf("\n");
-      if (lastNewline === -1) {
-        buffer += text;
-        return;
-      }
-      const complete = buffer + text.slice(0, lastNewline);
-      buffer = text.slice(lastNewline + 1);
-      let output3 = "";
-      for (const line of complete.split("\n")) {
-        if (line.includes("usageMetadata")) {
-          hasSeenUsageMetadata = true;
-        }
-        output3 += transformSseLine(
-          line,
-          signatureStore,
-          thoughtBuffer,
-          sentThinkingBuffer,
-          callbacks,
-          options,
-          debugState2
-        ) + "\n";
-      }
-      controller.enqueue(encoder.encode(output3));
-    },
-    flush(controller) {
-      buffer += decoder.decode();
-      if (buffer) {
-        if (buffer.includes("usageMetadata")) {
-          hasSeenUsageMetadata = true;
-        }
-        const transformedLine = transformSseLine(
-          buffer,
-          signatureStore,
-          thoughtBuffer,
-          sentThinkingBuffer,
-          callbacks,
-          options,
-          debugState2
-        );
-        controller.enqueue(encoder.encode(transformedLine));
-      }
-      if (!hasSeenUsageMetadata) {
-        const syntheticUsage = {
-          usageMetadata: {
-            promptTokenCount: 0,
-            candidatesTokenCount: 0,
-            totalTokenCount: 0
-          }
-        };
-        controller.enqueue(encoder.encode(`
-data: ${JSON.stringify(syntheticUsage)}
-
-`));
-      }
-    }
-  });
-}
-
-// src/plugin/stores/signature-store.ts
-function createSignatureStore() {
-  const store = /* @__PURE__ */ new Map();
-  return {
-    get: (key) => store.get(key),
-    set: (key, value) => {
-      store.set(key, value);
-    },
-    has: (key) => store.has(key),
-    delete: (key) => {
-      store.delete(key);
-    }
-  };
-}
-var defaultSignatureStore = createSignatureStore();
 
 // src/plugin/request-helpers.ts
 var log6 = createLogger("request-helpers");
@@ -5464,6 +5182,58 @@ function extractUsageMetadata(body) {
     thoughtsTokenCount: toNumber(asRecord.thoughtsTokenCount)
   };
 }
+function extractStreamUsageMetadata(parsed) {
+  if (!parsed || typeof parsed !== "object") {
+    return null;
+  }
+  const record = parsed;
+  const geminiUsage = extractUsageMetadata({ response: record.response }) ?? extractUsageMetadata({ response: record });
+  if (geminiUsage) {
+    return geminiUsage;
+  }
+  const responseObj = record.response && typeof record.response === "object" ? record.response : record;
+  const messageObj = responseObj.message && typeof responseObj.message === "object" ? responseObj.message : void 0;
+  const rawClaudeUsage = (responseObj.usage && typeof responseObj.usage === "object" ? responseObj.usage : void 0) ?? (messageObj?.usage && typeof messageObj.usage === "object" ? messageObj.usage : void 0);
+  if (!rawClaudeUsage) {
+    return null;
+  }
+  const toNumber = (value) => typeof value === "number" && Number.isFinite(value) ? value : void 0;
+  const inputTokens = toNumber(rawClaudeUsage.input_tokens);
+  const cacheRead = toNumber(rawClaudeUsage.cache_read_input_tokens);
+  const cacheCreation = toNumber(rawClaudeUsage.cache_creation_input_tokens);
+  const outputTokens = toNumber(rawClaudeUsage.output_tokens);
+  const hasPromptParts = inputTokens !== void 0 || cacheRead !== void 0 || cacheCreation !== void 0;
+  if (!hasPromptParts && outputTokens === void 0) {
+    return null;
+  }
+  const promptTokenCount = hasPromptParts ? (inputTokens ?? 0) + (cacheRead ?? 0) + (cacheCreation ?? 0) : void 0;
+  const totalTokenCount = promptTokenCount !== void 0 && outputTokens !== void 0 ? promptTokenCount + outputTokens : void 0;
+  return {
+    ...totalTokenCount !== void 0 ? { totalTokenCount } : {},
+    ...promptTokenCount !== void 0 ? { promptTokenCount } : {},
+    ...outputTokens !== void 0 ? { candidatesTokenCount: outputTokens } : {},
+    ...cacheRead !== void 0 ? { cachedContentTokenCount: cacheRead } : {},
+    ...cacheCreation !== void 0 ? { cacheCreationTokenCount: cacheCreation } : {}
+  };
+}
+function mergeUsageMetadata(previous, next) {
+  if (!next) return previous;
+  if (!previous) return { ...next };
+  const promptTokenCount = next.promptTokenCount ?? previous.promptTokenCount;
+  const candidatesTokenCount = next.candidatesTokenCount ?? previous.candidatesTokenCount;
+  const cachedContentTokenCount = next.cachedContentTokenCount ?? previous.cachedContentTokenCount;
+  const thoughtsTokenCount = next.thoughtsTokenCount ?? previous.thoughtsTokenCount;
+  const cacheCreationTokenCount = next.cacheCreationTokenCount ?? previous.cacheCreationTokenCount;
+  const totalTokenCount = next.totalTokenCount ?? (promptTokenCount !== void 0 || candidatesTokenCount !== void 0 ? (promptTokenCount ?? 0) + (candidatesTokenCount ?? 0) : previous.totalTokenCount);
+  return {
+    ...totalTokenCount !== void 0 ? { totalTokenCount } : {},
+    ...promptTokenCount !== void 0 ? { promptTokenCount } : {},
+    ...candidatesTokenCount !== void 0 ? { candidatesTokenCount } : {},
+    ...cachedContentTokenCount !== void 0 ? { cachedContentTokenCount } : {},
+    ...thoughtsTokenCount !== void 0 ? { thoughtsTokenCount } : {},
+    ...cacheCreationTokenCount !== void 0 ? { cacheCreationTokenCount } : {}
+  };
+}
 function extractUsageFromSsePayload(payload) {
   const lines = payload.split("\n");
   for (const line of lines) {
@@ -6353,42 +6123,298 @@ function stripRefusedSystemParts(parts) {
   });
 }
 
-// src/plugin/tool-output-trim.ts
-var TRIMMED_TOOL_OUTPUT = "[Older tool output removed by the plugin to save quota. Run the tool again if you need it.]";
-var TOOL_OUTPUT_KEEP_TOKENS = 4e4;
-var TOOL_OUTPUT_TRIM_STEP_TOKENS = 8e4;
-var KEPT_TOOLS = /* @__PURE__ */ new Set(["skill"]);
-var estimateTokens = (value) => Math.ceil(JSON.stringify(value).length / 3);
-function trimOldToolOutput(contents, keepTokens = TOOL_OUTPUT_KEEP_TOKENS, stepTokens = TOOL_OUTPUT_TRIM_STEP_TOKENS) {
-  if (!Array.isArray(contents)) return 0;
-  const results = [];
-  for (const turn of contents) {
-    const parts = turn?.parts;
-    if (!Array.isArray(parts)) continue;
-    for (const part of parts) {
-      const result = part?.functionResponse;
-      const response = result?.response;
-      if (!response || typeof response !== "object" || !("content" in response)) continue;
-      if (typeof result.name === "string" && KEPT_TOOLS.has(result.name)) continue;
-      const record = response;
-      const tokens = estimateTokens(record);
-      if (tokens <= estimateTokens({ ...record, content: TRIMMED_TOOL_OUTPUT })) continue;
-      results.push({ response: record, tokens });
+// src/plugin/core/streaming/transformer.ts
+var MAX_SESSION_THINKING_HASHES = 2e3;
+function addBoundedThinkingHash(hashes, hash) {
+  hashes.add(hash);
+  if (hashes.size > MAX_SESSION_THINKING_HASHES) {
+    const oldest = hashes.values().next().value;
+    if (oldest !== void 0) {
+      hashes.delete(oldest);
     }
   }
-  const total = results.reduce((sum, result) => sum + result.tokens, 0);
-  const budget = Math.floor((total - keepTokens) / stepTokens) * stepTokens;
-  if (budget <= 0) return 0;
-  let trimmedTokens = 0;
-  let trimmed = 0;
-  for (const result of results) {
-    if (trimmedTokens >= budget) break;
-    result.response.content = TRIMMED_TOOL_OUTPUT;
-    trimmedTokens += result.tokens;
-    trimmed++;
-  }
-  return trimmed;
 }
+var MIN_REPLAY_DEDUP_CHARS = 64;
+function hashString(str) {
+  let hash = (5381 ^ str.length) >>> 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = (hash << 5) + hash + str.charCodeAt(i) >>> 0;
+  }
+  return hash.toString(16);
+}
+function resolveThinkingText(slot, fullText, shownBuffer, displayedThinkingHashes) {
+  if (displayedThinkingHashes && fullText.length >= MIN_REPLAY_DEDUP_CHARS) {
+    const hash = hashString(fullText);
+    if (displayedThinkingHashes.has(hash)) {
+      return null;
+    }
+    addBoundedThinkingHash(displayedThinkingHashes, hash);
+  }
+  const shown = shownBuffer.get(slot) ?? "";
+  if (shown.trim() && fullText.startsWith(shown)) {
+    shownBuffer.set(slot, fullText);
+    const delta = fullText.slice(shown.length);
+    return delta ? delta : null;
+  }
+  shownBuffer.set(slot, shown + fullText);
+  return void 0;
+}
+function createThoughtBuffer() {
+  const buffer = /* @__PURE__ */ new Map();
+  return {
+    get: (index) => buffer.get(index),
+    set: (index, text) => buffer.set(index, text),
+    clear: () => buffer.clear()
+  };
+}
+function deduplicateThinkingText(response, sentBuffer, displayedThinkingHashes) {
+  if (!response || typeof response !== "object") return response;
+  const resp = response;
+  if (Array.isArray(resp.candidates)) {
+    const newCandidates = resp.candidates.map((candidate, index) => {
+      const cand = candidate;
+      if (!cand?.content) return candidate;
+      const content = cand.content;
+      if (!Array.isArray(content.parts)) return candidate;
+      const newParts = content.parts.map((part) => {
+        const p = part;
+        if (p.inlineData) {
+          const inlineData = p.inlineData;
+          const result = processImageData({
+            mimeType: inlineData.mimeType,
+            data: inlineData.data
+          });
+          if (result) {
+            return { text: result };
+          }
+        }
+        if (p.thought === true || p.type === "thinking") {
+          const fullText = p.text || p.thinking || "";
+          const text = resolveThinkingText(index, fullText, sentBuffer, displayedThinkingHashes);
+          if (text === null) return null;
+          if (text === void 0) return part;
+          return { ...p, text, thinking: text };
+        }
+        return part;
+      });
+      const filteredParts = newParts.filter((p) => p !== null);
+      return {
+        ...cand,
+        content: { ...content, parts: filteredParts }
+      };
+    });
+    return { ...resp, candidates: newCandidates };
+  }
+  if (Array.isArray(resp.content)) {
+    let thinkingIndex = 0;
+    const newContent = resp.content.map((block) => {
+      const b = block;
+      if (b?.type === "thinking") {
+        const fullText = b.thinking || b.text || "";
+        const text = resolveThinkingText(thinkingIndex, fullText, sentBuffer, displayedThinkingHashes);
+        thinkingIndex++;
+        if (text === null) return null;
+        if (text === void 0) return block;
+        return { ...b, thinking: text, text };
+      }
+      return block;
+    });
+    const filteredContent = newContent.filter((b) => b !== null);
+    return { ...resp, content: filteredContent };
+  }
+  return response;
+}
+function transformSseLine(line, signatureStore, thoughtBuffer, sentThinkingBuffer, callbacks, options, debugState2) {
+  if (!line.startsWith("data:")) {
+    return line;
+  }
+  const json = line.slice(5).trim();
+  if (!json) {
+    return line;
+  }
+  try {
+    const parsed = JSON.parse(json);
+    if (callbacks.onUsageMetadata && (line.includes("usageMetadata") || line.includes('"usage"'))) {
+      const usage = extractStreamUsageMetadata(parsed);
+      if (usage) {
+        callbacks.onUsageMetadata(usage);
+      }
+    }
+    if (parsed.response !== void 0) {
+      const hasInterestingData = line.includes('"thought"') || line.includes('"thinking"') || line.includes('"signature"') || line.includes('"inlineData"') || line.includes('"functionCall"');
+      if (!hasInterestingData && (!options.debugText || debugState2.injected)) {
+        return `data: ${JSON.stringify(parsed.response)}`;
+      }
+      if (options.cacheSignatures && options.signatureSessionKey) {
+        cacheThinkingSignaturesFromResponse(
+          parsed.response,
+          options.signatureSessionKey,
+          signatureStore,
+          thoughtBuffer,
+          callbacks.onCacheSignature
+        );
+      }
+      let response = deduplicateThinkingText(
+        parsed.response,
+        sentThinkingBuffer,
+        options.displayedThinkingHashes
+      );
+      if (options.debugText && callbacks.onInjectDebug && !debugState2.injected) {
+        response = callbacks.onInjectDebug(response, options.debugText);
+        debugState2.injected = true;
+      }
+      const transformed = callbacks.transformThinkingParts ? callbacks.transformThinkingParts(response) : response;
+      return `data: ${JSON.stringify(transformed)}`;
+    }
+  } catch (_) {
+  }
+  return line;
+}
+function cacheThinkingSignaturesFromResponse(response, signatureSessionKey, signatureStore, thoughtBuffer, onCacheSignature) {
+  if (!response || typeof response !== "object") return;
+  const resp = response;
+  if (Array.isArray(resp.candidates)) {
+    resp.candidates.forEach((candidate, index) => {
+      const cand = candidate;
+      if (!cand?.content) return;
+      const content = cand.content;
+      if (!Array.isArray(content.parts)) return;
+      content.parts.forEach((part) => {
+        const p = part;
+        if (p.thought === true || p.type === "thinking") {
+          const text = p.text || p.thinking || "";
+          if (text) {
+            const current = thoughtBuffer.get(index) ?? "";
+            thoughtBuffer.set(index, current + text);
+          }
+        }
+        if (p.thoughtSignature) {
+          const fullText = thoughtBuffer.get(index) ?? "";
+          if (fullText) {
+            const signature = p.thoughtSignature;
+            onCacheSignature?.(signatureSessionKey, fullText, signature);
+            signatureStore.set(signatureSessionKey, { text: fullText, signature });
+          }
+        }
+      });
+    });
+  }
+  if (Array.isArray(resp.content)) {
+    const CLAUDE_BUFFER_KEY = 0;
+    resp.content.forEach((block) => {
+      const b = block;
+      if (b?.type === "thinking") {
+        const text = b.thinking || b.text || "";
+        if (text) {
+          const current = thoughtBuffer.get(CLAUDE_BUFFER_KEY) ?? "";
+          thoughtBuffer.set(CLAUDE_BUFFER_KEY, current + text);
+        }
+      }
+      if (b?.signature) {
+        const fullText = thoughtBuffer.get(CLAUDE_BUFFER_KEY) ?? "";
+        if (fullText) {
+          const signature = b.signature;
+          onCacheSignature?.(signatureSessionKey, fullText, signature);
+          signatureStore.set(signatureSessionKey, { text: fullText, signature });
+        }
+      }
+    });
+  }
+}
+function createStreamingTransformer(signatureStore, callbacks, options = {}) {
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  let buffer = "";
+  const thoughtBuffer = createThoughtBuffer();
+  const sentThinkingBuffer = createThoughtBuffer();
+  const debugState2 = { injected: false };
+  let hasSeenUsageMetadata = false;
+  let latestUsage = null;
+  const lineCallbacks = callbacks.onUsageMetadata ? {
+    ...callbacks,
+    onUsageMetadata: (usage) => {
+      latestUsage = mergeUsageMetadata(latestUsage, usage);
+    }
+  } : callbacks;
+  return new TransformStream({
+    transform(chunk, controller) {
+      const text = decoder.decode(chunk, { stream: true });
+      const lastNewline = text.lastIndexOf("\n");
+      if (lastNewline === -1) {
+        buffer += text;
+        return;
+      }
+      const complete = buffer + text.slice(0, lastNewline);
+      buffer = text.slice(lastNewline + 1);
+      let output3 = "";
+      for (const line of complete.split("\n")) {
+        if (line.includes("usageMetadata")) {
+          hasSeenUsageMetadata = true;
+        }
+        output3 += transformSseLine(
+          line,
+          signatureStore,
+          thoughtBuffer,
+          sentThinkingBuffer,
+          lineCallbacks,
+          options,
+          debugState2
+        ) + "\n";
+      }
+      controller.enqueue(encoder.encode(output3));
+    },
+    flush(controller) {
+      buffer += decoder.decode();
+      if (buffer) {
+        if (buffer.includes("usageMetadata")) {
+          hasSeenUsageMetadata = true;
+        }
+        const transformedLine = transformSseLine(
+          buffer,
+          signatureStore,
+          thoughtBuffer,
+          sentThinkingBuffer,
+          lineCallbacks,
+          options,
+          debugState2
+        );
+        controller.enqueue(encoder.encode(transformedLine));
+      }
+      if (latestUsage && callbacks.onUsageMetadata) {
+        callbacks.onUsageMetadata(latestUsage);
+      }
+      if (!hasSeenUsageMetadata) {
+        const syntheticUsage = {
+          usageMetadata: {
+            promptTokenCount: 0,
+            candidatesTokenCount: 0,
+            totalTokenCount: 0
+          }
+        };
+        controller.enqueue(encoder.encode(`
+data: ${JSON.stringify(syntheticUsage)}
+
+`));
+      }
+    }
+  });
+}
+
+// src/plugin/stores/signature-store.ts
+function createSignatureStore() {
+  const store = /* @__PURE__ */ new Map();
+  return {
+    get: (key) => store.get(key),
+    set: (key, value) => {
+      store.set(key, value);
+    },
+    has: (key) => store.has(key),
+    delete: (key) => {
+      store.delete(key);
+    }
+  };
+}
+var defaultSignatureStore = createSignatureStore();
 
 // src/v2/request-kind.ts
 var TITLE_REQUEST_HEADER = "x-opencode-antigravity-title";
@@ -9056,7 +9082,6 @@ ${hint}`;
           const wireModel = toAntigravityWireModel(effectiveModel);
           const { contents, systemInstruction, tools, generationConfig, ...rest } = requestPayload;
           agyToolCallIds(contents);
-          if (options?.trimToolOutput) trimOldToolOutput(contents);
           if (!isClaudeModel(effectiveModel)) agyToolResults(contents);
           const thinkingConfig = generationConfig?.thinkingConfig;
           if (typeof thinkingConfig?.thinkingLevel === "string") {
@@ -9226,7 +9251,15 @@ async function transformAntigravityResponse(response, streaming, debugContext, r
         onCacheSignature: cacheSignature,
         onInjectDebug: injectDebugThinking,
         // onInjectSyntheticThinking removed - keep_thinking now uses debugText path
-        transformThinkingParts: transformParts
+        transformThinkingParts: transformParts,
+        onUsageMetadata: effectiveModel ? (usage) => {
+          logCacheStats(
+            effectiveModel,
+            usage.cachedContentTokenCount ?? 0,
+            usage.cacheCreationTokenCount ?? 0,
+            usage.promptTokenCount ?? usage.totalTokenCount ?? 0
+          );
+        } : void 0
       },
       {
         signatureSessionKey: sessionId,
@@ -14762,7 +14795,6 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                       {
                         claudeToolHardening: config.claude_tool_hardening,
                         claudePromptAutoCaching: config.claude_prompt_auto_caching,
-                        trimToolOutput: config.trim_old_tool_output,
                         fingerprint: account.fingerprint,
                         pluginRequestId
                       }
@@ -14844,7 +14876,6 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                           {
                             claudeToolHardening: config.claude_tool_hardening,
                             claudePromptAutoCaching: config.claude_prompt_auto_caching,
-                            trimToolOutput: config.trim_old_tool_output,
                             fingerprint: hedgeAccount.fingerprint,
                             pluginRequestId
                           }

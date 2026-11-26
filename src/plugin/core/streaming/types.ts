@@ -1,3 +1,5 @@
+import type { AntigravityUsageMetadata } from '../../request-helpers';
+
 export interface SignedThinking {
   text: string;
   signature: string;
@@ -15,6 +17,7 @@ export interface StreamingCallbacks {
   onInjectDebug?: (response: unknown, debugText: string) => unknown;
   // Note: onInjectSyntheticThinking removed - keep_thinking now unified with debug via debugText
   transformThinkingParts?: (parts: unknown) => unknown;
+  onUsageMetadata?: (usage: AntigravityUsageMetadata) => void;
 }
 
 export interface StreamingOptions {

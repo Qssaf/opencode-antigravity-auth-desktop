@@ -22,11 +22,18 @@
 
 import { createHash, randomUUID } from "node:crypto";
 
-/** `model` of each id in Antigravity's fetchAvailableModels answer (2026-11-07). */
+/** `model` of each id in Antigravity's fetchAvailableModels answer (Gemini 4 ids read from Antigravity 2.35.0's language server, not yet seen in a live answer). */
 const MODEL_ENUMS: Record<string, string> = {
   "gemini-3.8-flash-high": "MODEL_PLACEHOLDER_M318",
   "gemini-3.8-flash-medium": "MODEL_PLACEHOLDER_M319",
   "gemini-3.8-flash-low": "MODEL_PLACEHOLDER_M320",
+  "gemini-4-argon-high": "MODEL_PLACEHOLDER_M417",
+  "gemini-4-argon-medium": "MODEL_PLACEHOLDER_M418",
+  "gemini-4-argon-low": "MODEL_PLACEHOLDER_M419",
+  "gemini-4-hydrogen-high": "MODEL_PLACEHOLDER_M461",
+  "gemini-4-hydrogen-medium": "MODEL_PLACEHOLDER_M462",
+  "gemini-4-hydrogen-low": "MODEL_PLACEHOLDER_M463",
+  "gemini-4-hydrogen-xhigh": "MODEL_PLACEHOLDER_M464",
 };
 
 const MAX_CONVERSATIONS = 1000;
