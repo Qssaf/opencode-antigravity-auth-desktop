@@ -61,7 +61,7 @@ import { accountState } from "./plugin/account-admin";
 import { createAutoUpdateCheckerHook } from "./hooks/auto-update-checker";
 import { loadConfig, initRuntimeConfig, type AntigravityConfig } from "./plugin/config";
 import { createSessionRecoveryHook, getRecoverySuccessToast } from "./plugin/recovery";
-import { checkAccountsQuota, fetchAvailableModels } from "./plugin/quota";
+import { checkAccountsQuota, fetchAvailableModels, rateLimitGroupHasRoom } from "./plugin/quota";
 import { initDiskSignatureCache, shutdownDiskSignatureCache } from "./plugin/cache";
 import { createProactiveRefreshQueue, type ProactiveRefreshQueue } from "./plugin/refresh-queue";
 import { initLogger, createLogger } from "./plugin/logger";
@@ -432,6 +432,54 @@ async function tryAgySdkFallbackForRequest(
     credentials,
     defaultRetryMsForConfig(config),
   );
+}
+
+/** A limit younger than this is trusted as Google set it. */
+const STALE_LIMIT_MIN_AGE_MS = 5 * 60_000;
+/** How often one account's old limit may be checked against Google's quota summary. */
+const STALE_LIMIT_RECHECK_INTERVAL_MS = 10 * 60_000;
+
+/**
+ * Lifts limits Google's quota summary no longer shows. "Individual quota reached"
+ * holds an account until the reset its 429 names, days off for the weekly window,
+ * and Google can reset that window sooner (2026-11-27: an account held until
+ * Dec 1 had 78% weekly left, and nothing ever re-read it). Returns whether an
+ * account was freed.
+ */
+async function releaseLiftedRateLimits(
+  accountManager: AccountManager,
+  client: PluginClient,
+  providerId: string,
+  family: ModelFamily,
+  model: string | null | undefined,
+): Promise<boolean> {
+  const candidates = accountManager.takeStaleRateLimitChecks(
+    family,
+    model,
+    STALE_LIMIT_MIN_AGE_MS,
+    STALE_LIMIT_RECHECK_INTERVAL_MS,
+  );
+  if (candidates.length === 0) return false;
+  const metadata = accountManager.getAccountsForQuotaCheck();
+  const checked = candidates.filter((account) => metadata[account.index] !== undefined);
+  const results = await checkAccountsQuota(checked.map((account) => metadata[account.index]!), client, providerId);
+  let freed = false;
+  results.forEach((result, i) => {
+    const account = checked[i]!;
+    const label = account.email ?? `account ${account.index + 1}`;
+    if (result.status !== "ok" || !rateLimitGroupHasRoom(result.rateLimits, family)) {
+      debugLogToFile(`[RateLimit] recheck ${label} family=${family}: still limited (${result.error ?? result.rateLimits?.error ?? "no room in Google's summary"})`);
+      return;
+    }
+    accountManager.clearRateLimitsForAccount(account, family, model);
+    if (result.quota?.groups && !result.quota.error) {
+      accountManager.updateQuotaCache(account.index, result.quota.groups);
+    }
+    debugLogToFile(`[RateLimit] recheck ${label} family=${family}: Google shows quota left, old limit lifted`);
+    freed = true;
+  });
+  if (freed) accountManager.requestSaveToDisk();
+  return freed;
 }
 
 async function triggerAsyncQuotaRefreshForAccount(
@@ -2395,6 +2443,10 @@ export const createAntigravityRuntime = (providerId: string) => async (
                 
                 triedSwitchIndices.clear();
                 await sleep(softQuotaWaitMs, abortSignal);
+                continue;
+              }
+
+              if (await releaseLiftedRateLimits(accountManager, client, providerId, family, model)) {
                 continue;
               }
 

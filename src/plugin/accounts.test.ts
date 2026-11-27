@@ -2172,3 +2172,50 @@ describe("resolveQuotaGroup", () => {
     expect(resolveQuotaGroup("gemini", "gemini-3-pro")).toBe("gemini-pro");
   });
 });
+
+describe("rechecking an old limit", () => {
+  const KEY = "gemini-antigravity:antigravity-gemini-4-hydrogen";
+  const MODEL = "antigravity-gemini-4-hydrogen";
+  const HOUR = 3_600_000;
+
+  function managerWith(mark: { setAgoMs: number; capacity?: boolean }) {
+    const now = Date.now();
+    const reset = now + 96 * HOUR;
+    return new AccountManager(undefined, {
+      version: 4,
+      accounts: [{
+        refreshToken: "r1",
+        projectId: "p1",
+        addedAt: 1,
+        lastUsed: 0,
+        rateLimitResetTimes: { [KEY]: reset },
+        rateLimitSetTimes: { [KEY]: now - mark.setAgoMs },
+        ...(mark.capacity ? { noCapacityUntil: { [KEY]: reset } } : {}),
+      }],
+      activeIndex: 0,
+    });
+  }
+
+  it("never offers an out-of-capacity hold for a quota recheck", () => {
+    const manager = managerWith({ setAgoMs: 2 * HOUR, capacity: true });
+
+    expect(manager.takeStaleRateLimitChecks("gemini", MODEL, 5 * 60_000, 10 * 60_000)).toEqual([]);
+  });
+
+  it("saves a lifted limit as a tombstone of the limit it cleared, and frees the account", async () => {
+    const manager = managerWith({ setAgoMs: 2 * HOUR });
+    const account = manager.getAccounts()[0]!;
+    const setAt = account.rateLimitSetTimes[KEY]!;
+
+    manager.clearRateLimitsForAccount(account, "gemini", MODEL);
+    const saveSpy = vi.mocked(storageModule.saveAccounts);
+    saveSpy.mockClear();
+    await manager.saveToDisk();
+
+    expect(manager.getMinWaitTimeForFamily("gemini", MODEL)).toBe(0);
+    const persisted = saveSpy.mock.calls[0]![0].accounts[0]!;
+    expect(persisted.rateLimitResetTimes?.[KEY]).toBeUndefined();
+    // Versioned with the cleared limit's setAt, so another process's copy of that limit loses the merge.
+    expect(persisted.clearedSetTimes?.[KEY]).toBe(setAt);
+  });
+});

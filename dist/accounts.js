@@ -10525,6 +10525,11 @@ function getQuotaKey(family, headerStyle, model) {
   }
   return base;
 }
+function familyQuotaKeys(family, model) {
+  if (family === "claude") return ["claude"];
+  const base = getQuotaKey(family, "antigravity");
+  return model ? [getQuotaKey(family, "antigravity", model), base] : [base];
+}
 function isRateLimitedForQuotaKey(account, key) {
   const resetTime = account.rateLimitResetTimes[key];
   return resetTime !== void 0 && nowMs() < resetTime;
@@ -11033,6 +11038,39 @@ var AccountManager = class _AccountManager {
         }
       }
       account.consecutiveFailures = 0;
+    }
+  }
+  /**
+   * Enabled accounts held back from this model only by limits set at least
+   * `minAgeMs` ago, not asked about in the last `intervalMs`. They are stamped as
+   * asked, so concurrent requests do not ask Google about the same account twice.
+   * Out-of-capacity marks are Google's state, not the account's, and disqualify it.
+   */
+  takeStaleRateLimitChecks(family, model, minAgeMs, intervalMs) {
+    const now = nowMs();
+    const keys = familyQuotaKeys(family, model);
+    const taken = [];
+    for (const account of this.accounts) {
+      if (account.enabled === false) continue;
+      if (now - (account.rateLimitRecheckedAt ?? 0) < intervalMs) continue;
+      const live = keys.filter((key) => (account.rateLimitResetTimes[key] ?? 0) > now);
+      const stale = live.length > 0 && live.every(
+        (key) => now - (account.rateLimitSetTimes[key] ?? 0) >= minAgeMs && account.noCapacityUntil?.[key] !== account.rateLimitResetTimes[key]
+      );
+      if (!stale) continue;
+      account.rateLimitRecheckedAt = now;
+      taken.push(account);
+    }
+    return taken;
+  }
+  /** Lifts this account's limits for the model, leaving a tombstone so disk merges drop them too. */
+  clearRateLimitsForAccount(account, family, model) {
+    const now = nowMs();
+    for (const key of familyQuotaKeys(family, model)) {
+      if (account.rateLimitResetTimes[key] === void 0) continue;
+      recordClearedQuotaKey(account, key, now);
+      delete account.rateLimitResetTimes[key];
+      delete account.noCapacityUntil?.[key];
     }
   }
   shouldTryOptimisticReset(family, model) {
@@ -11752,6 +11790,12 @@ function normalizeRateLimitSummary(payload) {
 }
 function isGeminiRateLimitGroup(group) {
   return /gemini/i.test(group.displayName);
+}
+function rateLimitGroupHasRoom(summary, family) {
+  if (!summary || summary.error) return false;
+  const group = summary.groups.find((g) => isGeminiRateLimitGroup(g) === (family === "gemini"));
+  if (!group || group.buckets.length === 0) return false;
+  return group.buckets.every((bucket) => !bucket.disabled && bucket.remainingFraction > 0);
 }
 function findRateLimitBucket(summary, matches, window) {
   const group = summary?.groups.find(matches);
@@ -13605,6 +13649,37 @@ async function tryAgySdkFallbackForRequest(input3, init, config, credentials, ur
     defaultRetryMsForConfig(config)
   );
 }
+var STALE_LIMIT_MIN_AGE_MS = 5 * 6e4;
+var STALE_LIMIT_RECHECK_INTERVAL_MS = 10 * 6e4;
+async function releaseLiftedRateLimits(accountManager, client2, providerId, family, model) {
+  const candidates = accountManager.takeStaleRateLimitChecks(
+    family,
+    model,
+    STALE_LIMIT_MIN_AGE_MS,
+    STALE_LIMIT_RECHECK_INTERVAL_MS
+  );
+  if (candidates.length === 0) return false;
+  const metadata = accountManager.getAccountsForQuotaCheck();
+  const checked = candidates.filter((account) => metadata[account.index] !== void 0);
+  const results = await checkAccountsQuota(checked.map((account) => metadata[account.index]), client2, providerId);
+  let freed = false;
+  results.forEach((result, i) => {
+    const account = checked[i];
+    const label = account.email ?? `account ${account.index + 1}`;
+    if (result.status !== "ok" || !rateLimitGroupHasRoom(result.rateLimits, family)) {
+      debugLogToFile(`[RateLimit] recheck ${label} family=${family}: still limited (${result.error ?? result.rateLimits?.error ?? "no room in Google's summary"})`);
+      return;
+    }
+    accountManager.clearRateLimitsForAccount(account, family, model);
+    if (result.quota?.groups && !result.quota.error) {
+      accountManager.updateQuotaCache(account.index, result.quota.groups);
+    }
+    debugLogToFile(`[RateLimit] recheck ${label} family=${family}: Google shows quota left, old limit lifted`);
+    freed = true;
+  });
+  if (freed) accountManager.requestSaveToDisk();
+  return freed;
+}
 async function triggerAsyncQuotaRefreshForAccount(accountManager, accountIndex, client2, providerId, intervalMinutes) {
   if (intervalMinutes <= 0) return;
   const accounts = accountManager.getAccounts();
@@ -14941,6 +15016,9 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                   }
                   triedSwitchIndices.clear();
                   await sleep(softQuotaWaitMs, abortSignal);
+                  continue;
+                }
+                if (await releaseLiftedRateLimits(accountManager, client2, providerId, family, model)) {
                   continue;
                 }
                 const waitMs = accountManager.getMinWaitTimeForFamily(

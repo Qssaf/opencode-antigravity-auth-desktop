@@ -427,6 +427,18 @@ export function isGeminiRateLimitGroup(group: RateLimitGroup): boolean {
   return /gemini/i.test(group.displayName);
 }
 
+/**
+ * True only when Google's summary shows every window of the family's group with
+ * room left (a bucket can read 3% and still be marked exhausted). No group, no
+ * buckets or a failed read is not evidence of room.
+ */
+export function rateLimitGroupHasRoom(summary: RateLimitSummary | undefined, family: "claude" | "gemini"): boolean {
+  if (!summary || summary.error) return false;
+  const group = summary.groups.find((g) => isGeminiRateLimitGroup(g) === (family === "gemini"));
+  if (!group || group.buckets.length === 0) return false;
+  return group.buckets.every((bucket) => !bucket.disabled && bucket.remainingFraction > 0);
+}
+
 /** Finds one window's bucket (`weekly`, `5h`) in the first matching group. */
 export function findRateLimitBucket(
   summary: RateLimitSummary | undefined,

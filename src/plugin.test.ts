@@ -2394,3 +2394,149 @@ describe("google_search runs on the chat's account", () => {
   });
 });
 
+
+describe("a rate limit Google has since lifted", () => {
+  let tmpConfigDir: string;
+  const savedEnv: Record<string, string | undefined> = {};
+  const SSE_OK =
+    'data: {"candidates":[{"content":{"parts":[{"text":"hi"}],"role":"model"},"finishReason":"STOP","index":0}]}\n\n';
+  const KEY = "gemini-antigravity:antigravity-gemini-3.8-flash";
+  const DAY = 24 * 60 * 60 * 1000;
+
+  /** Google's quota summary: the Gemini group's weekly and 5-hour buckets. */
+  function summary(weekly: number, fiveHour: number, disabled = false) {
+    return {
+      groups: [
+        {
+          displayName: "Gemini Models",
+          buckets: [
+            { bucketId: "g-w", window: "weekly", remainingFraction: weekly, disabled },
+            { bucketId: "g-5", window: "5h", remainingFraction: fiveHour, disabled },
+          ],
+        },
+        { displayName: "Claude and GPT models", buckets: [{ bucketId: "c-w", window: "weekly", remainingFraction: 1 }] },
+      ],
+    };
+  }
+
+  beforeEach(() => {
+    tmpConfigDir = join(tmpdir(), `opencode-antigravity-lifted-${process.pid}-${Date.now()}`);
+    mkdirSync(tmpConfigDir, { recursive: true });
+    for (const key of ["OPENCODE_CONFIG_DIR", "OPENCODE_ANTIGRAVITY_API_KEYS", "GEMINI_API_KEY", "GOOGLE_API_KEY"]) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+    process.env.OPENCODE_CONFIG_DIR = tmpConfigDir;
+    writeFileSync(join(tmpConfigDir, "antigravity.json"), "{}");
+    vi.mocked(storageModule.loadAccounts).mockReset();
+    vi.mocked(storageModule.saveAccounts).mockReset();
+    loopEscapeTestHooks.resetAllInternalState();
+  });
+
+  afterEach(() => {
+    for (const [key, val] of Object.entries(savedEnv)) {
+      if (val === undefined) delete process.env[key];
+      else process.env[key] = val;
+    }
+    vi.unstubAllGlobals();
+    rmSync(tmpConfigDir, { recursive: true, force: true });
+  });
+
+  /**
+   * Two accounts, both held back from the model for days by an old 429. Google's
+   * quota summary for each account is `summaries[refreshToken]`.
+   */
+  async function run(summaries: Record<string, unknown>, options: { markedAgoMs?: number; requests?: number } = {}) {
+    const now = Date.now();
+    const markedAt = now - (options.markedAgoMs ?? 2 * DAY);
+    const account = (token: string) => ({
+      email: `${token}@example.com`,
+      refreshToken: token,
+      projectId: `p-${token}`,
+      managedProjectId: `p-${token}`,
+      addedAt: 0,
+      lastUsed: 0,
+      enabled: true,
+      rateLimitResetTimes: { [KEY]: now + 4 * DAY },
+      rateLimitSetTimes: { [KEY]: markedAt },
+    });
+    vi.mocked(storageModule.loadAccounts).mockResolvedValue({
+      version: 4,
+      accounts: [account("a"), account("b")],
+      activeIndex: 0,
+    });
+    const modelCalls: string[] = [];
+    const summaryCalls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : (input as Request).url;
+      const authorization = new Headers(init?.headers as HeadersInit | undefined).get("authorization") ?? "";
+      if (url.includes("oauth2.googleapis.com")) {
+        const token = new URLSearchParams(String(init?.body)).get("refresh_token");
+        return new Response(JSON.stringify({ access_token: `access-${token}`, expires_in: 3600 }), { status: 200 });
+      }
+      if (url.includes("retrieveUserQuotaSummary")) {
+        const token = authorization.replace("Bearer access-", "");
+        summaryCalls.push(token);
+        return new Response(JSON.stringify(summaries[token] ?? {}), { status: 200 });
+      }
+      if (url.includes("GenerateContent")) {
+        modelCalls.push(authorization);
+        return new Response(SSE_OK, { status: 200, headers: { "content-type": "text/event-stream" } });
+      }
+      return new Response(JSON.stringify({ models: {} }), { status: 200, headers: { "content-type": "application/json" } });
+    }));
+
+    const plugin = await createAntigravityPlugin("google")({ client, directory: tmpConfigDir });
+    const loader = await plugin.auth.loader(async () => ({
+      type: "oauth" as const,
+      refresh: formatRefreshParts({ refreshToken: "a", projectId: "p-a", managedProjectId: "p-a" }),
+      access: "access-a",
+      expires: Date.now() + 3_600_000,
+    }), { id: "google", api: "https://generativelanguage.googleapis.com/v1beta", npm: "@ai-sdk/google", models: {} });
+    const outcomes: Array<number | string> = [];
+    for (let n = 0; n < (options.requests ?? 1); n++) {
+      try {
+        const res = await (loader as { fetch: typeof fetch }).fetch(
+          "https://generativelanguage.googleapis.com/v1beta/models/antigravity-gemini-3.8-flash:streamGenerateContent?alt=sse",
+          {
+            method: "POST",
+            headers: { "x-opencode-session": "ses_lifted" },
+            body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "hi" }] }] }),
+          },
+        );
+        await res.text();
+        outcomes.push(res.status);
+      } catch (error) {
+        outcomes.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+    return { outcomes, modelCalls, summaryCalls };
+  }
+
+  it("uses an account whose old limit Google no longer reports", async () => {
+    const { outcomes, modelCalls } = await run({ a: summary(0, 0.03, true), b: summary(0.78, 1) });
+
+    expect(outcomes).toEqual([200]);
+    expect(modelCalls).toEqual(["Bearer access-b"]);
+  });
+
+  it("keeps an account limited while either of its windows is empty", async () => {
+    const { outcomes, modelCalls } = await run({ a: summary(0.09, 0), b: summary(0, 0.5) });
+
+    expect(outcomes).toEqual([expect.stringContaining("rate-limited")]);
+    expect(modelCalls).toEqual([]);
+  });
+
+  it("asks Google about each account at most once in a while", async () => {
+    const { summaryCalls } = await run({ a: summary(0, 1), b: summary(0, 1) }, { requests: 3 });
+
+    expect([...summaryCalls].sort()).toEqual(["a", "b"]);
+  });
+
+  it("trusts a limit Google set only minutes ago", async () => {
+    const { outcomes, summaryCalls } = await run({ a: summary(1, 1), b: summary(1, 1) }, { markedAgoMs: 60_000 });
+
+    expect(outcomes).toEqual([expect.stringContaining("rate-limited")]);
+    expect(summaryCalls).toEqual([]);
+  });
+});

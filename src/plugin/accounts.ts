@@ -174,6 +174,8 @@ export interface ManagedAccount {
   coolingDownUntil?: number;
   cooldownReason?: CooldownReason;
   touchedForQuota: Record<string, number>;
+  /** When Google's quota summary was last asked whether this account's old limit still holds. In memory only. */
+  rateLimitRecheckedAt?: number;
   consecutiveFailures?: number;
   /** Timestamp of last failure for TTL-based reset of consecutiveFailures */
   lastFailureTime?: number;
@@ -210,6 +212,13 @@ function getQuotaKey(family: ModelFamily, headerStyle: HeaderStyle, model?: stri
     return `${base}:${model}`;
   }
   return base;
+}
+
+/** The keys whose limits hold an account back from this model (as isRateLimitedForHeaderStyle checks them). */
+function familyQuotaKeys(family: ModelFamily, model?: string | null): QuotaKey[] {
+  if (family === "claude") return ["claude"];
+  const base = getQuotaKey(family, "antigravity");
+  return model ? [getQuotaKey(family, "antigravity", model), base] : [base];
 }
 
 function isRateLimitedForQuotaKey(account: ManagedAccount, key: QuotaKey): boolean {
@@ -932,6 +941,47 @@ export class AccountManager {
         }
       }
       account.consecutiveFailures = 0;
+    }
+  }
+
+  /**
+   * Enabled accounts held back from this model only by limits set at least
+   * `minAgeMs` ago, not asked about in the last `intervalMs`. They are stamped as
+   * asked, so concurrent requests do not ask Google about the same account twice.
+   * Out-of-capacity marks are Google's state, not the account's, and disqualify it.
+   */
+  takeStaleRateLimitChecks(
+    family: ModelFamily,
+    model: string | null | undefined,
+    minAgeMs: number,
+    intervalMs: number,
+  ): ManagedAccount[] {
+    const now = nowMs();
+    const keys = familyQuotaKeys(family, model);
+    const taken: ManagedAccount[] = [];
+    for (const account of this.accounts) {
+      if (account.enabled === false) continue;
+      if (now - (account.rateLimitRecheckedAt ?? 0) < intervalMs) continue;
+      const live = keys.filter((key) => (account.rateLimitResetTimes[key] ?? 0) > now);
+      const stale = live.length > 0 && live.every((key) =>
+        now - (account.rateLimitSetTimes[key] ?? 0) >= minAgeMs &&
+        account.noCapacityUntil?.[key] !== account.rateLimitResetTimes[key],
+      );
+      if (!stale) continue;
+      account.rateLimitRecheckedAt = now;
+      taken.push(account);
+    }
+    return taken;
+  }
+
+  /** Lifts this account's limits for the model, leaving a tombstone so disk merges drop them too. */
+  clearRateLimitsForAccount(account: ManagedAccount, family: ModelFamily, model?: string | null): void {
+    const now = nowMs();
+    for (const key of familyQuotaKeys(family, model)) {
+      if (account.rateLimitResetTimes[key] === undefined) continue;
+      recordClearedQuotaKey(account, key, now);
+      delete account.rateLimitResetTimes[key];
+      delete account.noCapacityUntil?.[key];
     }
   }
 
