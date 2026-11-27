@@ -40,7 +40,7 @@ function send(
 }
 
 describe("Antigravity CLI wire format", () => {
-  it("lays the request out as agy 1.5.3 does", () => {
+  it("lays the request out as agy 1.5.18 does", () => {
     const { body, headers } = send("ses_layout", 1);
 
     expect(Object.keys(body)).toEqual(["project", "requestId", "request", "model", "userAgent", "requestType"]);
@@ -58,6 +58,7 @@ describe("Antigravity CLI wire format", () => {
       request_id: `${trajectory}-0`,
       root_cascade_id: cascade,
       trajectory_id: trajectory,
+      trajectory_source: "CORTEX_TRAJECTORY_SOURCE_CLI",
       used_claude: "false",
       used_claude_conservative: "false",
       used_non_gemini_model: "false",
@@ -110,19 +111,14 @@ describe("Antigravity CLI wire format", () => {
     expect(next.request.labels.request_id.endsWith("-1")).toBe(true);
   });
 
-  it("gives each function its own tools entry, as agy does", () => {
+  it("puts the system prompt's role before its parts, as agy does", () => {
     const prepared = prepareAntigravityRequest(
       URL_38,
       {
         method: "POST",
         body: JSON.stringify({
+          systemInstruction: { parts: [{ text: "You are a coding agent." }] },
           contents: [{ role: "user", parts: [{ text: "hi" }] }],
-          tools: [{
-            functionDeclarations: [
-              { name: "read", description: "Read", parameters: { type: "object", properties: { path: { type: "string" } } } },
-              { name: "write", description: "Write", parameters: { type: "object", properties: { path: { type: "string" } } } },
-            ],
-          }],
         }),
       },
       "token",
@@ -130,8 +126,72 @@ describe("Antigravity CLI wire format", () => {
       undefined,
       "antigravity",
     );
-    const tools = JSON.parse(prepared.init.body as string).request.tools as Array<{ functionDeclarations: Array<{ name: string }> }>;
-    expect(tools.map((tool) => tool.functionDeclarations.map((declaration) => declaration.name))).toEqual([["read"], ["write"]]);
+    expect(Object.keys(JSON.parse(prepared.init.body as string).request.systemInstruction)).toEqual(["role", "parts"]);
+  });
+
+  it("counts every tool result as a step, as agy does", () => {
+    const prepared = prepareAntigravityRequest(
+      URL_38,
+      {
+        method: "POST",
+        headers: { "x-opencode-session": "ses_steps" },
+        body: JSON.stringify({
+          contents: [
+            { role: "user", parts: [{ text: "read both" }] },
+            { role: "model", parts: [{ functionCall: { id: "a", name: "read", args: {} } }, { functionCall: { id: "b", name: "read", args: {} } }] },
+            {
+              role: "user",
+              parts: [
+                { functionResponse: { id: "a", name: "read", response: { content: "one" } } },
+                { functionResponse: { id: "b", name: "read", response: { content: "two" } } },
+              ],
+            },
+          ],
+        }),
+      },
+      "token",
+      "aicode-consumers",
+      undefined,
+      "antigravity",
+      false,
+      { fingerprint: generateFingerprint() },
+    );
+    // agy numbers them: the request (0), the model's answer (1), each tool run (2, 3).
+    const body = JSON.parse(prepared.init.body as string);
+    expect(body.request.labels.last_step_index).toBe("3");
+    expect(body.requestId.endsWith("/4")).toBe(true);
+  });
+
+  it("sends every function in one tools entry, as agy 1.5.18 does", () => {
+    const prepared = prepareAntigravityRequest(
+      URL_38,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: "hi" }] }],
+          tools: [
+            {
+              functionDeclarations: [
+                { name: "read", description: "Read", parameters: { type: "object", properties: { path: { type: "string" } } } },
+                { name: "write", description: "Write", parameters: { type: "object", properties: { path: { type: "string" } } } },
+              ],
+            },
+            { googleSearch: {} },
+            { functionDeclarations: [{ name: "edit", description: "Edit", parameters: { type: "object", properties: { path: { type: "string" } } } }] },
+          ],
+        }),
+      },
+      "token",
+      "aicode-consumers",
+      undefined,
+      "antigravity",
+    );
+    const tools = JSON.parse(prepared.init.body as string).request.tools as Array<{ functionDeclarations?: Array<{ name: string }> }>;
+    // A tool that is not a function keeps its place after the merged entry.
+    expect(tools.map((tool) => tool.functionDeclarations?.map((declaration) => declaration.name) ?? Object.keys(tool))).toEqual([
+      ["read", "write", "edit"],
+      ["googleSearch"],
+    ]);
   });
 
   it("names tool calls with stable UUIDs, as agy does", () => {

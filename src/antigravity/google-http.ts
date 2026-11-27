@@ -1,11 +1,13 @@
 /**
- * HTTP/2 requests to Google, sent the way the Antigravity CLI sends them.
+ * Requests to Google, sent the way the Antigravity CLI sends them.
  *
- * Antigravity is a Go program: every request it makes (OAuth, project and
- * quota lookups, model calls) goes over HTTP/2 with Go's client, which adds
- * only `Accept-Encoding: gzip` (and `User-Agent: Go-http-client/2.0` when the
- * caller sets none). `fetch` in Bun and Node speaks HTTP/1.1 and adds `Accept`
- * and `Connection`, so requests to Google use `node:http2` instead.
+ * Antigravity is a Go program. Its sign-in requests (token exchange, refresh,
+ * userinfo) go over HTTP/2 with Go's client, which adds only
+ * `Accept-Encoding: gzip` (and `User-Agent: Go-http-client/2.0` when the caller
+ * sets none); `fetch` in Bun and Node speaks HTTP/1.1 and adds `Accept` and
+ * `Connection`, so those use `node:http2`. Its backend requests (project and
+ * quota lookups, model calls) go over HTTP/1.1 since agy 1.5.18: see
+ * `google-http1.ts`.
  *
  * Connections are reused per origin and credential, so two accounts never
  * share one (a single agy install only ever carries one account), and closed
@@ -16,6 +18,8 @@ import { connect, constants } from "node:http2";
 import type { ClientHttp2Session, IncomingHttpHeaders, OutgoingHttpHeaders } from "node:http2";
 import type { Socket } from "node:net";
 import { createGunzip } from "node:zlib";
+
+import { googleHttp1Fetch } from "./google-http1";
 
 /** What Go's HTTP/2 client sends when the caller sets no User-Agent. */
 export const GO_HTTP2_USER_AGENT = "Go-http-client/2.0";
@@ -34,12 +38,12 @@ const DROPPED_HEADERS = new Set([
 /** The `fetch` options this client honours: method, headers, a string or byte body, signal. */
 export type GoogleRequestInit = Pick<RequestInit, "method" | "headers" | "body" | "signal">;
 
-function toPayload(body: RequestInit["body"]): Buffer | undefined {
+export function toPayload(body: RequestInit["body"]): Buffer | undefined {
   if (body === undefined || body === null) return undefined;
   if (typeof body === "string") return Buffer.from(body, "utf8");
   if (body instanceof ArrayBuffer) return Buffer.from(body);
   if (ArrayBuffer.isView(body)) return Buffer.from(body.buffer, body.byteOffset, body.byteLength);
-  throw new TypeError("Unsupported request body for an HTTP/2 request to Google");
+  throw new TypeError("Unsupported request body for a request to Google");
 }
 
 interface PooledSession {
@@ -152,9 +156,7 @@ function attempt(
       ":path": `${url.pathname}${url.search}`,
     };
     for (const [name, value] of toHeaderList(init.headers)) outgoing[name] = value;
-    // agy streams the body of a model call (no length up front) and sends the
-    // length on every other request.
-    if (payload && !url.pathname.endsWith(":streamGenerateContent")) outgoing["content-length"] = String(payload.length);
+    if (payload) outgoing["content-length"] = String(payload.length);
     outgoing["accept-encoding"] = "gzip";
     outgoing["user-agent"] ??= GO_HTTP2_USER_AGENT;
 
@@ -276,8 +278,13 @@ function attempt(
   });
 }
 
+/** agy's backend client speaks HTTP/1.1 and its sign-in client HTTP/2 (seen in agy 1.5.18's TLS handshakes). */
+export function usesHttp1(url: URL): boolean {
+  return /(?:^|[.-])cloudcode-pa\.googleapis\.com$/.test(url.hostname);
+}
+
 /**
- * `fetch` over HTTP/2, as Go's client sends it. With `reuse`, the connection is
+ * `fetch` as agy's Go client sends it: HTTP/1.1 to the Antigravity backend, HTTP/2 elsewhere. With `reuse`, the connection is
  * kept for later requests with the same origin and `Authorization`; without,
  * each request gets its own.
  */
@@ -288,6 +295,7 @@ export async function googleFetch(
 ): Promise<Response> {
   init.signal?.throwIfAborted();
   const url = new URL(input instanceof Request ? input.url : input);
+  if (usesHttp1(url)) return googleHttp1Fetch(url, init, reuse);
   const body = toPayload(init.body);
   const key = reuse ? `${url.origin}\n${new Headers(init.headers).get("authorization") ?? ""}` : undefined;
   const reused = key ? pool.get(key) : undefined;

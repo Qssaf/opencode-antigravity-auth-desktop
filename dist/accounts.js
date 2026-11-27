@@ -27,7 +27,7 @@ var ANTIGRAVITY_ENDPOINT_DAILY = "https://daily-cloudcode-pa.googleapis.com";
 var ANTIGRAVITY_ENDPOINT_FALLBACKS = [ANTIGRAVITY_ENDPOINT_DAILY];
 var ANTIGRAVITY_ENDPOINT = ANTIGRAVITY_ENDPOINT_DAILY;
 var ANTIGRAVITY_DEFAULT_PROJECT_ID = "default-cli-project";
-var ANTIGRAVITY_CLI_USER_AGENT = "antigravity/cli/1.5.3 (aidev_client; os_type=linux; arch=amd64; cl=1016078699; auth_method=consumer)";
+var ANTIGRAVITY_CLI_USER_AGENT = "antigravity/cli/1.5.18 (aidev_client; os_type=linux; arch=amd64; cl=1030252320; auth_method=consumer)";
 var ANTIGRAVITY_VERSION_FALLBACK = "1.18.3";
 function getAntigravityVersion() {
   return ANTIGRAVITY_VERSION_FALLBACK;
@@ -74,9 +74,386 @@ tool.schema = z;
 
 // src/antigravity/google-http.ts
 import { connect, constants } from "node:http2";
+import { createGunzip as createGunzip2 } from "node:zlib";
+
+// src/antigravity/google-http1.ts
+import { connect as connectTcp } from "node:net";
+import { connect as connectTls } from "node:tls";
 import { createGunzip } from "node:zlib";
-var GO_HTTP2_USER_AGENT = "Go-http-client/2.0";
+var GO_HTTP1_USER_AGENT = "Go-http-client/1.1";
 var IDLE_CLOSE_MS = 9e4;
+var MAX_HEAD_BYTES = 256 * 1024;
+var OWN_HEADERS = /* @__PURE__ */ new Set([
+  "host",
+  "user-agent",
+  "content-length",
+  "accept-encoding",
+  "connection",
+  "keep-alive",
+  "proxy-connection",
+  "transfer-encoding",
+  "upgrade"
+]);
+var idleConnections = /* @__PURE__ */ new Map();
+var StaleConnectionError = class extends Error {
+  constructor(options) {
+    super("Kept connection closed before any answer", options);
+    this.name = "StaleConnectionError";
+  }
+};
+function canonicalHeaderName(name) {
+  return name.toLowerCase().replace(/(^|-)([a-z])/g, (_match, dash, letter) => dash + letter.toUpperCase());
+}
+function requestHead(url, method, headers, payloadLength) {
+  const lines = [
+    `${method} ${url.pathname}${url.search} HTTP/1.1`,
+    `Host: ${url.host}`,
+    `User-Agent: ${headers.get("user-agent") ?? GO_HTTP1_USER_AGENT}`
+  ];
+  const length = payloadLength ?? (method === "POST" || method === "PUT" || method === "PATCH" ? 0 : void 0);
+  if (length !== void 0) lines.push(`Content-Length: ${length}`);
+  const rest = [];
+  headers.forEach((value, name) => {
+    if (!OWN_HEADERS.has(name)) rest.push([canonicalHeaderName(name), value]);
+  });
+  rest.sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+  for (const [name, value] of rest) lines.push(`${name}: ${value}`);
+  lines.push("Accept-Encoding: gzip");
+  return `${lines.join("\r\n")}\r
+\r
+`;
+}
+var AnswerReader = class {
+  constructor(method, events) {
+    this.method = method;
+    this.events = events;
+  }
+  method;
+  events;
+  buffer = Buffer.alloc(0);
+  state = "head";
+  remaining = 0;
+  keepAlive = false;
+  /** Any byte of the answer has arrived. */
+  started = false;
+  push(chunk) {
+    this.started = true;
+    this.buffer = this.buffer.length > 0 ? Buffer.concat([this.buffer, chunk]) : chunk;
+    while (this.step()) {
+    }
+  }
+  /** The connection closed. */
+  closed(error) {
+    if (this.state === "done") return;
+    if (this.state === "until-close" && !error) {
+      this.state = "done";
+      this.events.end(false);
+      return;
+    }
+    this.state = "done";
+    this.events.fail(error ?? new Error("Connection closed before the answer was complete"));
+  }
+  finish() {
+    this.state = "done";
+    this.events.end(this.keepAlive && this.buffer.length === 0);
+  }
+  takeLine() {
+    const end = this.buffer.indexOf("\r\n");
+    if (end < 0) return void 0;
+    const line = this.buffer.subarray(0, end).toString("latin1");
+    this.buffer = this.buffer.subarray(end + 2);
+    return line;
+  }
+  /** Hands over up to `remaining` body bytes; true once they are all through. */
+  takeBody() {
+    const size = Math.min(this.buffer.length, this.remaining);
+    if (size > 0) {
+      this.events.data(this.buffer.subarray(0, size));
+      this.buffer = this.buffer.subarray(size);
+      this.remaining -= size;
+    }
+    return this.remaining === 0;
+  }
+  /** Returns false when it needs more bytes or the answer is over. */
+  step() {
+    switch (this.state) {
+      case "head":
+        return this.readHead();
+      case "length":
+        if (!this.takeBody()) return false;
+        this.finish();
+        return false;
+      case "chunk-size": {
+        const line = this.takeLine();
+        if (line === void 0) return false;
+        const size = Number.parseInt(line.split(";")[0].trim(), 16);
+        if (!Number.isInteger(size) || size < 0) {
+          this.state = "done";
+          this.events.fail(new Error(`Malformed chunk size in the answer: ${line.slice(0, 40)}`));
+          return false;
+        }
+        this.remaining = size;
+        this.state = size === 0 ? "trailers" : "chunk-data";
+        return true;
+      }
+      case "chunk-data":
+        if (!this.takeBody()) return false;
+        this.state = "chunk-end";
+        return true;
+      case "chunk-end":
+        if (this.buffer.length < 2) return false;
+        this.buffer = this.buffer.subarray(2);
+        this.state = "chunk-size";
+        return true;
+      case "trailers": {
+        const line = this.takeLine();
+        if (line === void 0) return false;
+        if (line.length > 0) return true;
+        this.finish();
+        return false;
+      }
+      case "until-close":
+        if (this.buffer.length > 0) {
+          this.events.data(this.buffer);
+          this.buffer = Buffer.alloc(0);
+        }
+        return false;
+      case "done":
+        return false;
+    }
+  }
+  readHead() {
+    const end = this.buffer.indexOf("\r\n\r\n");
+    if (end < 0) {
+      if (this.buffer.length > MAX_HEAD_BYTES) {
+        this.state = "done";
+        this.events.fail(new Error("The answer's headers are too large"));
+      }
+      return false;
+    }
+    const [statusLine = "", ...headerLines] = this.buffer.subarray(0, end).toString("latin1").split("\r\n");
+    this.buffer = this.buffer.subarray(end + 4);
+    const match = /^HTTP\/(1\.[01]) (\d{3})/.exec(statusLine);
+    if (!match) {
+      this.state = "done";
+      this.events.fail(new Error(`Not an HTTP/1.1 answer: ${statusLine.slice(0, 60)}`));
+      return false;
+    }
+    const status = Number(match[2]);
+    if (status < 200) return true;
+    const headers = new Headers();
+    for (const line of headerLines) {
+      const colon = line.indexOf(":");
+      if (colon > 0) headers.append(line.slice(0, colon).trim(), line.slice(colon + 1).trim());
+    }
+    const connection = headers.get("connection")?.toLowerCase() ?? "";
+    this.keepAlive = match[1] === "1.1" ? !connection.includes("close") : connection.includes("keep-alive");
+    if (this.method === "HEAD" || status === 204 || status === 304) {
+      this.events.head(status, headers, false);
+      this.finish();
+      return false;
+    }
+    const chunked = headers.get("transfer-encoding")?.toLowerCase().includes("chunked") ?? false;
+    const length = headers.get("content-length");
+    this.events.head(status, headers, true);
+    if (chunked) {
+      this.state = "chunk-size";
+    } else if (length !== null && /^\d+$/.test(length)) {
+      this.remaining = Number(length);
+      this.state = "length";
+    } else {
+      this.state = "until-close";
+    }
+    return true;
+  }
+};
+function openConnection(url) {
+  const secure = url.protocol === "https:";
+  const port = Number(url.port) || (secure ? 443 : 80);
+  const socket = secure ? connectTls({ host: url.hostname, port, servername: url.hostname, ALPNProtocols: ["http/1.1"] }) : connectTcp({ host: url.hostname, port });
+  socket.setNoDelay(true);
+  return { socket, used: false };
+}
+function takeIdle(key) {
+  const list = idleConnections.get(key);
+  while (list && list.length > 0) {
+    const connection = list.pop();
+    connection.forget?.();
+    if (!connection.socket.destroyed && connection.socket.writable) return connection;
+    connection.socket.destroy();
+  }
+  return void 0;
+}
+function keepIdle(key, connection) {
+  const { socket } = connection;
+  const list = idleConnections.get(key) ?? [];
+  idleConnections.set(key, list);
+  const drop = () => {
+    connection.forget?.();
+    socket.destroy();
+  };
+  const timer = setTimeout(drop, IDLE_CLOSE_MS);
+  timer.unref?.();
+  socket.on("close", drop);
+  socket.on("end", drop);
+  socket.on("error", drop);
+  socket.on("data", drop);
+  connection.forget = () => {
+    connection.forget = void 0;
+    clearTimeout(timer);
+    socket.off("close", drop);
+    socket.off("end", drop);
+    socket.off("error", drop);
+    socket.off("data", drop);
+    const index = list.indexOf(connection);
+    if (index >= 0) list.splice(index, 1);
+    if (list.length === 0 && idleConnections.get(key) === list) idleConnections.delete(key);
+  };
+  connection.used = true;
+  list.push(connection);
+  socket.unref();
+}
+function attempt(head, method, payload, connection, key, signal) {
+  return new Promise((resolve, reject) => {
+    const { socket } = connection;
+    socket.ref();
+    let settled = false;
+    let finished = false;
+    let socketError;
+    let body;
+    const finish = (reusable) => {
+      if (finished) return;
+      finished = true;
+      signal?.removeEventListener("abort", onAbort);
+      socket.off("data", onData);
+      socket.off("error", onError);
+      socket.off("close", onClose);
+      if (reusable && key && !socket.destroyed && socket.writableLength === 0) keepIdle(key, connection);
+      else socket.destroy();
+    };
+    const fail = (error) => {
+      finish(false);
+      body?.error(error);
+      if (!settled) {
+        settled = true;
+        reject(error);
+      }
+    };
+    const reader = new AnswerReader(method, {
+      head(status, headers, hasBody) {
+        const answer = (responseBody2) => {
+          const response = new Response(responseBody2, { status, headers });
+          settled = true;
+          resolve(response);
+        };
+        if (!hasBody) {
+          answer(null);
+          return;
+        }
+        const gunzip = headers.get("content-encoding")?.toLowerCase() === "gzip" ? createGunzip() : void 0;
+        if (gunzip) {
+          headers.delete("content-encoding");
+          headers.delete("content-length");
+        }
+        const responseBody = new ReadableStream({
+          start(controller) {
+            const close = () => {
+              try {
+                controller.close();
+              } catch {
+              }
+            };
+            const error = (reason) => {
+              try {
+                controller.error(reason);
+              } catch {
+              }
+            };
+            let received = false;
+            if (gunzip) {
+              gunzip.on("data", (chunk) => controller.enqueue(new Uint8Array(chunk)));
+              gunzip.on("end", close);
+              gunzip.on("error", fail);
+            }
+            body = {
+              data: (chunk) => {
+                received = true;
+                if (gunzip) gunzip.write(chunk);
+                else controller.enqueue(new Uint8Array(chunk));
+              },
+              // An empty body is not a gzip stream.
+              end: () => gunzip && received ? gunzip.end() : close(),
+              error: (reason) => {
+                gunzip?.destroy();
+                error(reason);
+              }
+            };
+          },
+          cancel() {
+            gunzip?.destroy();
+            finish(false);
+          }
+        });
+        answer(responseBody);
+      },
+      data: (chunk) => body?.data(chunk),
+      end(reusable) {
+        finish(reusable);
+        body?.end();
+      },
+      fail
+    });
+    const onData = (chunk) => {
+      try {
+        reader.push(chunk);
+      } catch (error) {
+        fail(error);
+      }
+    };
+    const onError = (error) => {
+      socketError = error;
+    };
+    const onClose = () => {
+      if (finished) return;
+      const replayable = method === "GET" || method === "HEAD";
+      if (replayable && connection.used && !reader.started && !signal?.aborted) fail(new StaleConnectionError({ cause: socketError }));
+      else reader.closed(socketError);
+    };
+    const onAbort = () => fail(signal?.reason ?? new Error("Aborted"));
+    socket.on("data", onData);
+    socket.on("error", onError);
+    socket.on("close", onClose);
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+    const headBytes = Buffer.from(head, "latin1");
+    socket.write(payload ? Buffer.concat([headBytes, payload]) : headBytes);
+  });
+}
+async function googleHttp1Fetch(input3, init = {}, reuse = true) {
+  init.signal?.throwIfAborted();
+  const url = new URL(input3);
+  const method = (init.method ?? "GET").toUpperCase();
+  const headers = new Headers(init.headers);
+  const payload = toPayload(init.body);
+  const head = requestHead(url, method, headers, payload?.length);
+  const key = reuse ? `${url.origin}
+${headers.get("authorization") ?? ""}` : void 0;
+  const signal = init.signal ?? void 0;
+  const kept = key ? takeIdle(key) : void 0;
+  try {
+    return await attempt(head, method, payload, kept ?? openConnection(url), key, signal);
+  } catch (error) {
+    if (!(error instanceof StaleConnectionError)) throw error;
+    return attempt(head, method, payload, openConnection(url), key, signal);
+  }
+}
+
+// src/antigravity/google-http.ts
+var GO_HTTP2_USER_AGENT = "Go-http-client/2.0";
+var IDLE_CLOSE_MS2 = 9e4;
 var CLOSE_GRACE_MS = 1e3;
 var DROPPED_HEADERS = /* @__PURE__ */ new Set([
   "connection",
@@ -93,7 +470,7 @@ function toPayload(body) {
   if (typeof body === "string") return Buffer.from(body, "utf8");
   if (body instanceof ArrayBuffer) return Buffer.from(body);
   if (ArrayBuffer.isView(body)) return Buffer.from(body.buffer, body.byteOffset, body.byteLength);
-  throw new TypeError("Unsupported request body for an HTTP/2 request to Google");
+  throw new TypeError("Unsupported request body for a request to Google");
 }
 var pool = /* @__PURE__ */ new Map();
 var UnsentRequestError = class extends Error {
@@ -141,7 +518,7 @@ function release(entry, pooled) {
   if (entry.active > 0) return;
   entry.session.unref();
   clearTimeout(entry.idleTimer);
-  entry.idleTimer = setTimeout(() => closeSession(entry), IDLE_CLOSE_MS);
+  entry.idleTimer = setTimeout(() => closeSession(entry), IDLE_CLOSE_MS2);
   entry.idleTimer.unref?.();
 }
 function toHeaderList(headers) {
@@ -159,7 +536,7 @@ function responseHeaders(raw) {
   }
   return headers;
 }
-function attempt(url, init, payload, entry, pooled) {
+function attempt2(url, init, payload, entry, pooled) {
   return new Promise((resolve, reject) => {
     const signal = init.signal ?? void 0;
     entry.active += 1;
@@ -172,7 +549,7 @@ function attempt(url, init, payload, entry, pooled) {
       ":path": `${url.pathname}${url.search}`
     };
     for (const [name, value] of toHeaderList(init.headers)) outgoing[name] = value;
-    if (payload && !url.pathname.endsWith(":streamGenerateContent")) outgoing["content-length"] = String(payload.length);
+    if (payload) outgoing["content-length"] = String(payload.length);
     outgoing["accept-encoding"] = "gzip";
     outgoing["user-agent"] ??= GO_HTTP2_USER_AGENT;
     let stream;
@@ -235,7 +612,7 @@ function attempt(url, init, payload, entry, pooled) {
       const headers = responseHeaders(raw);
       const gzipped = headers.get("content-encoding") === "gzip";
       if (gzipped) headers.delete("content-encoding");
-      const source = gzipped ? stream.pipe(createGunzip()) : stream;
+      const source = gzipped ? stream.pipe(createGunzip2()) : stream;
       if (status === 204 || status === 304 || init.method === "HEAD") {
         stream.on("end", () => {
           sourceEnded = true;
@@ -278,9 +655,13 @@ function attempt(url, init, payload, entry, pooled) {
     stream.end(payload);
   });
 }
+function usesHttp1(url) {
+  return /(?:^|[.-])cloudcode-pa\.googleapis\.com$/.test(url.hostname);
+}
 async function googleFetch(input3, init = {}, reuse = true) {
   init.signal?.throwIfAborted();
   const url = new URL(input3 instanceof Request ? input3.url : input3);
+  if (usesHttp1(url)) return googleHttp1Fetch(url, init, reuse);
   const body = toPayload(init.body);
   const key = reuse ? `${url.origin}
 ${new Headers(init.headers).get("authorization") ?? ""}` : void 0;
@@ -288,12 +669,12 @@ ${new Headers(init.headers).get("authorization") ?? ""}` : void 0;
   const live = reused && !reused.session.closed && !reused.session.destroyed ? reused : void 0;
   const entry = live ?? openSession(url.origin, key);
   try {
-    return await attempt(url, init, body, entry, reuse);
+    return await attempt2(url, init, body, entry, reuse);
   } catch (error) {
     if (!(error instanceof UnsentRequestError) || init.signal?.aborted) throw error;
     if (key && pool.get(key) === entry) pool.delete(key);
     entry.session.close();
-    return attempt(url, init, body, openSession(url.origin, key), reuse);
+    return attempt2(url, init, body, openSession(url.origin, key), reuse);
   }
 }
 function googleRequest(url, init) {
@@ -374,7 +755,17 @@ function conversationFor(chatKey) {
   }
   return conversation;
 }
-function agyRequestIds(chatKey, accountSeed, request, wireModel, messageCount) {
+function agyStepCount(contents) {
+  if (!Array.isArray(contents)) return 0;
+  let steps = 0;
+  for (const content of contents) {
+    const parts = content?.parts;
+    const results = Array.isArray(parts) ? parts.filter((part) => typeof part === "object" && part !== null && "functionResponse" in part).length : 0;
+    steps += Math.max(1, results);
+  }
+  return steps;
+}
+function agyRequestIds(chatKey, accountSeed, request, wireModel, stepCount) {
   const conversation = conversationFor(chatKey ? `${chatKey}
 ${accountSeed}` : void 0);
   if (request !== void 0 && conversation.lastRequest === request) {
@@ -384,7 +775,7 @@ ${accountSeed}` : void 0);
     conversation.lastRequest = request;
   }
   const number = conversation.calls - 1;
-  const lastStep = Math.max(0, messageCount - 1) + conversation.failedAttempts;
+  const lastStep = Math.max(0, stepCount - 1) + conversation.failedAttempts;
   const isClaude = wireModel.toLowerCase().includes("claude");
   const isGemini = wireModel.toLowerCase().includes("gemini");
   const modelEnum = modelEnumFor(wireModel);
@@ -395,6 +786,7 @@ ${accountSeed}` : void 0);
     request_id: `${conversation.trajectoryId}-${number}`,
     root_cascade_id: conversation.cascadeId,
     trajectory_id: conversation.trajectoryId,
+    trajectory_source: "CORTEX_TRAJECTORY_SOURCE_CLI",
     used_claude: String(isClaude),
     used_claude_conservative: "false",
     used_non_gemini_model: String(!isGemini)
@@ -3001,7 +3393,7 @@ async function onboardManagedProject(accessToken, tierId, projectId, attempts = 
     metadata
   };
   for (const baseEndpoint of ANTIGRAVITY_ENDPOINT_FALLBACKS) {
-    for (let attempt2 = 0; attempt2 < attempts; attempt2 += 1) {
+    for (let attempt3 = 0; attempt3 < attempts; attempt3 += 1) {
       try {
         const response = await googleFetch(
           `${baseEndpoint}/v1internal:onboardUser`,
@@ -5504,7 +5896,7 @@ async function peekSseForContent(response) {
   };
 }
 async function fetchStreamWithHedge(send, hedgeAfterMs, signal, onRepeat, sendRepeat = send) {
-  const attempt2 = (sender = send) => {
+  const attempt3 = (sender = send) => {
     const controller = new AbortController();
     const linked = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
     const outcome = Promise.resolve().then(() => sender(linked)).then(async (response) => {
@@ -5523,7 +5915,7 @@ async function fetchStreamWithHedge(send, hedgeAfterMs, signal, onRepeat, sendRe
     void loser.outcome.then((o) => "error" in o ? void 0 : o.response.body?.cancel()).catch(() => {
     });
   };
-  const original = attempt2();
+  const original = attempt3();
   if (hedgeAfterMs <= 0) return unwrap(await original.outcome);
   let timer;
   const stalled = new Promise((resolve) => {
@@ -5533,7 +5925,7 @@ async function fetchStreamWithHedge(send, hedgeAfterMs, signal, onRepeat, sendRe
   clearTimeout(timer);
   if (early || signal?.aborted) return unwrap(early ?? await original.outcome);
   onRepeat?.("sent");
-  const repeat = attempt2(sendRepeat);
+  const repeat = attempt3(sendRepeat);
   const pending = /* @__PURE__ */ new Set([original, repeat]);
   while (pending.size > 0) {
     const settled = await Promise.race([...pending].map((a) => a.outcome.then(() => a)));
@@ -8478,15 +8870,27 @@ function stripHostClientHeaders(headers) {
     }
   }
 }
-function oneFunctionPerTool(tools) {
+function functionsInOneTool(tools) {
   if (!Array.isArray(tools)) return tools;
-  return tools.flatMap((tool2) => {
-    const declarations = tool2?.functionDeclarations;
-    if (!Array.isArray(declarations) || declarations.length <= 1) return [tool2];
-    const { functionDeclarations: _all, ...rest } = tool2;
-    const split = declarations.map((declaration) => ({ functionDeclarations: [declaration] }));
-    return Object.keys(rest).length > 0 ? [...split, rest] : split;
-  });
+  const declarations = [];
+  const merged = [];
+  let slot = -1;
+  for (const tool2 of tools) {
+    const own = tool2?.functionDeclarations;
+    if (!Array.isArray(own)) {
+      merged.push(tool2);
+      continue;
+    }
+    declarations.push(...own);
+    const { functionDeclarations: _own, ...rest } = tool2;
+    if (slot < 0) {
+      slot = merged.length;
+      merged.push(void 0);
+    }
+    if (Object.keys(rest).length > 0) merged.push(rest);
+  }
+  if (slot >= 0) merged[slot] = { functionDeclarations: declarations };
+  return merged;
 }
 function prepareAntigravityRequest(input3, init, accessToken, projectId, endpointOverride, headerStyle = "antigravity", forceThinkingRecovery = false, options) {
   if (typeof input3 !== "string" && init?.body === void 0 && input3.body) {
@@ -9117,7 +9521,6 @@ ${hint}`;
           const existingSystemInstruction = requestPayload.systemInstruction;
           if (existingSystemInstruction && typeof existingSystemInstruction === "object") {
             const sys = existingSystemInstruction;
-            sys.role = "user";
             if (Array.isArray(sys.parts)) sys.parts = stripRefusedSystemParts(sys.parts);
             if (Array.isArray(sys.parts) && sys.parts.length > 0) {
               const firstPart = sys.parts[0];
@@ -9132,6 +9535,8 @@ ${hint}`;
             } else {
               sys.parts = [{ text: ANTIGRAVITY_SYSTEM_INSTRUCTION }];
             }
+            const { role: _role, ...others } = sys;
+            requestPayload.systemInstruction = { role: "user", ...others };
           } else if (typeof existingSystemInstruction === "string") {
             requestPayload.systemInstruction = {
               role: "user",
@@ -9157,7 +9562,8 @@ ${hint}`;
           if (!isClaudeModel(effectiveModel)) agyToolResults(contents);
           const thinkingConfig = generationConfig?.thinkingConfig;
           if (typeof thinkingConfig?.thinkingLevel === "string") {
-            thinkingConfig.thinkingLevel = thinkingConfig.thinkingLevel.toUpperCase();
+            const level = thinkingConfig.thinkingLevel.toUpperCase();
+            thinkingConfig.thinkingLevel = level === "XHIGH" ? 100 : level;
           }
           const isTitle = new Headers(init?.headers).has(TITLE_REQUEST_HEADER);
           const { requestId, labels } = agyRequestIds(
@@ -9165,7 +9571,7 @@ ${hint}`;
             options?.fingerprint?.deviceId ?? PLUGIN_SESSION_ID,
             options?.pluginRequestId,
             wireModel,
-            Array.isArray(contents) ? contents.length : 0
+            agyStepCount(contents)
           );
           wrappedBody = {
             project: effectiveProjectId,
@@ -9173,7 +9579,7 @@ ${hint}`;
             request: {
               contents,
               systemInstruction,
-              tools: oneFunctionPerTool(tools),
+              tools: functionsInOneTool(tools),
               ...rest,
               labels,
               generationConfig,
@@ -13967,15 +14373,15 @@ function getRateLimitBackoff(accountIndex, quotaKey, serverRetryAfterMs, maxBack
       isDuplicate: true
     };
   }
-  const attempt2 = previous && now - previous.lastAt < RATE_LIMIT_STATE_RESET_MS ? previous.consecutive429 + 1 : 1;
+  const attempt3 = previous && now - previous.lastAt < RATE_LIMIT_STATE_RESET_MS ? previous.consecutive429 + 1 : 1;
   rateLimitStateByAccountQuota.set(stateKey, {
-    consecutive429: attempt2,
+    consecutive429: attempt3,
     lastAt: now,
     quotaKey
   });
   const baseDelay = serverRetryAfterMs ?? 1e3;
-  const backoffDelay = Math.min(baseDelay * Math.pow(2, attempt2 - 1), maxBackoffMs);
-  return { attempt: attempt2, delayMs: Math.max(baseDelay, backoffDelay), isDuplicate: false };
+  const backoffDelay = Math.min(baseDelay * Math.pow(2, attempt3 - 1), maxBackoffMs);
+  return { attempt: attempt3, delayMs: Math.max(baseDelay, backoffDelay), isDuplicate: false };
 }
 function resetRateLimitState(accountIndex, quotaKey) {
   const stateKey = `${accountIndex}:${quotaKey}`;
@@ -15020,11 +15426,11 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                         return createRequestRefusedResponse(urlString, 1);
                       }
                       const quotaKey2 = headerStyleToQuotaKey(family);
-                      const { attempt: attempt2, delayMs } = getRateLimitBackoff(account.index, quotaKey2, serverRetryMs);
+                      const { attempt: attempt3, delayMs } = getRateLimitBackoff(account.index, quotaKey2, serverRetryMs);
                       const smartBackoffMs = calculateBackoffMs(rateLimitReason, account.consecutiveFailures ?? 0, serverRetryMs);
                       const effectiveDelayMs = Math.max(delayMs, smartBackoffMs);
                       pushDebug(
-                        `429 idx=${account.index} email=${account.email ?? ""} family=${family} delayMs=${effectiveDelayMs} attempt=${attempt2} reason=${rateLimitReason}`
+                        `429 idx=${account.index} email=${account.email ?? ""} family=${family} delayMs=${effectiveDelayMs} attempt=${attempt3} reason=${rateLimitReason}`
                       );
                       if (bodyInfo.message) {
                         pushDebug(`429 message=${bodyInfo.message}`);
@@ -15053,7 +15459,7 @@ var createAntigravityRuntime = (providerId) => async ({ client: client2, directo
                         softQuotaCacheTtlMs,
                         /* @__PURE__ */ new Set([...triedSwitchIndices, account.index])
                       );
-                      const retryHere = rateLimitReason !== "QUOTA_EXHAUSTED" && (!otherAccount || attempt2 === 1 && (config.scheduling_mode === "cache_first" || !config.switch_on_first_rate_limit));
+                      const retryHere = rateLimitReason !== "QUOTA_EXHAUSTED" && (!otherAccount || attempt3 === 1 && (config.scheduling_mode === "cache_first" || !config.switch_on_first_rate_limit));
                       if (retryHere && await retryLikeAgy(response.status, bodyInfo.retryDelayMs ?? null)) {
                         i -= 1;
                         continue;

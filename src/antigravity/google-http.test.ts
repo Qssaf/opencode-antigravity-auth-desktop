@@ -4,8 +4,18 @@ import { gzipSync } from "node:zlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // test-setup.ts routes googleRequest through fetch for every other test.
-const { googleFetch, googleRequest, GO_HTTP2_USER_AGENT } =
+const { googleFetch, googleRequest, usesHttp1, GO_HTTP2_USER_AGENT } =
   await vi.importActual<typeof import("./google-http")>("./google-http");
+
+describe("usesHttp1", () => {
+  it("sends the Antigravity backend over HTTP/1.1 and sign-in over HTTP/2, as agy 1.5.18 does", () => {
+    expect(usesHttp1(new URL("https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse"))).toBe(true);
+    expect(usesHttp1(new URL("https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist"))).toBe(true);
+    expect(usesHttp1(new URL("https://oauth2.googleapis.com/token"))).toBe(false);
+    expect(usesHttp1(new URL("https://www.googleapis.com/oauth2/v2/userinfo"))).toBe(false);
+    expect(usesHttp1(new URL("https://notcloudcode-pa.googleapis.com/x"))).toBe(false);
+  });
+});
 
 describe("googleRequest", () => {
   let close: (() => void) | undefined;

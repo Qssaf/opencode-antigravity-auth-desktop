@@ -50,7 +50,7 @@ import {
   transformThinkingParts,
   type AntigravityApiBody,
 } from "./request-helpers";
-import { agyRequestIds, agySessionId, agyToolCallIds, agyToolResults } from "./agy-wire";
+import { agyRequestIds, agySessionId, agyStepCount, agyToolCallIds, agyToolResults } from "./agy-wire";
 import { TITLE_REQUEST_HEADER } from "../v2/request-kind";
 import {
   CLAUDE_TOOL_SYSTEM_INSTRUCTION,
@@ -1168,18 +1168,30 @@ export function stripHostClientHeaders(headers: Headers): void {
 }
 
 /**
- * agy sends every function in a tools entry of its own; other tools (search,
- * code execution) keep their place.
+ * agy 1.5.18 sends every function in one tools entry (1.5.3 sent one entry per
+ * function); other tools (search, code execution) keep their place.
  */
-function oneFunctionPerTool(tools: unknown): unknown {
+function functionsInOneTool(tools: unknown): unknown {
   if (!Array.isArray(tools)) return tools;
-  return tools.flatMap((tool) => {
-    const declarations = (tool as { functionDeclarations?: unknown } | null)?.functionDeclarations;
-    if (!Array.isArray(declarations) || declarations.length <= 1) return [tool];
-    const { functionDeclarations: _all, ...rest } = tool as Record<string, unknown>;
-    const split = declarations.map((declaration) => ({ functionDeclarations: [declaration] }));
-    return Object.keys(rest).length > 0 ? [...split, rest] : split;
-  });
+  const declarations: unknown[] = [];
+  const merged: unknown[] = [];
+  let slot = -1;
+  for (const tool of tools) {
+    const own = (tool as { functionDeclarations?: unknown } | null)?.functionDeclarations;
+    if (!Array.isArray(own)) {
+      merged.push(tool);
+      continue;
+    }
+    declarations.push(...own);
+    const { functionDeclarations: _own, ...rest } = tool as Record<string, unknown>;
+    if (slot < 0) {
+      slot = merged.length;
+      merged.push(undefined);
+    }
+    if (Object.keys(rest).length > 0) merged.push(rest);
+  }
+  if (slot >= 0) merged[slot] = { functionDeclarations: declarations };
+  return merged;
 }
 
 export function prepareAntigravityRequest(
@@ -2212,7 +2224,6 @@ export function prepareAntigravityRequest(
             typeof existingSystemInstruction === "object"
           ) {
             const sys = existingSystemInstruction as Record<string, unknown>;
-            sys.role = "user";
             if (Array.isArray(sys.parts)) sys.parts = stripRefusedSystemParts(sys.parts);
             if (Array.isArray(sys.parts) && sys.parts.length > 0) {
               const firstPart = sys.parts[0] as Record<string, unknown>;
@@ -2228,6 +2239,9 @@ export function prepareAntigravityRequest(
             } else {
               sys.parts = [{ text: ANTIGRAVITY_SYSTEM_INSTRUCTION }];
             }
+            // agy writes the role first.
+            const { role: _role, ...others } = sys;
+            requestPayload.systemInstruction = { role: "user", ...others };
           } else if (typeof existingSystemInstruction === "string") {
             requestPayload.systemInstruction = {
               role: "user",
@@ -2262,7 +2276,9 @@ export function prepareAntigravityRequest(
           if (!isClaudeModel(effectiveModel)) agyToolResults(contents);
           const thinkingConfig = (generationConfig as { thinkingConfig?: Record<string, unknown> } | undefined)?.thinkingConfig;
           if (typeof thinkingConfig?.thinkingLevel === "string") {
-            thinkingConfig.thinkingLevel = thinkingConfig.thinkingLevel.toUpperCase();
+            // Google's model list gives XHigh the level 100; agy 1.5.18 has no name for it and sends the number.
+            const level = thinkingConfig.thinkingLevel.toUpperCase();
+            thinkingConfig.thinkingLevel = level === "XHIGH" ? 100 : level;
           }
           const isTitle = new Headers(init?.headers).has(TITLE_REQUEST_HEADER);
           const { requestId, labels } = agyRequestIds(
@@ -2270,7 +2286,7 @@ export function prepareAntigravityRequest(
             options?.fingerprint?.deviceId ?? PLUGIN_SESSION_ID,
             options?.pluginRequestId,
             wireModel,
-            Array.isArray(contents) ? contents.length : 0,
+            agyStepCount(contents),
           );
           wrappedBody = {
             project: effectiveProjectId,
@@ -2278,7 +2294,7 @@ export function prepareAntigravityRequest(
             request: {
               contents,
               systemInstruction,
-              tools: oneFunctionPerTool(tools),
+              tools: functionsInOneTool(tools),
               ...rest,
               labels,
               generationConfig,

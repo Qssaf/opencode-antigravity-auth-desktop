@@ -684,7 +684,7 @@ describe("request.ts", () => {
       };
 
       expect(ANTIGRAVITY_CLI_USER_AGENT).toBe(
-        "antigravity/cli/1.5.3 (aidev_client; os_type=linux; arch=amd64; cl=1016078699; auth_method=consumer)",
+        "antigravity/cli/1.5.18 (aidev_client; os_type=linux; arch=amd64; cl=1030252320; auth_method=consumer)",
       );
       expect(userAgentFor("antigravity-gemini-4-argon")).toBe(ANTIGRAVITY_CLI_USER_AGENT);
       expect(userAgentFor("antigravity-gemini-4-argon-low")).toBe(ANTIGRAVITY_CLI_USER_AGENT);
@@ -1357,7 +1357,9 @@ it("removes API key headers", () => {
       };
 
       expect(send("xhigh").model).toBe("gemini-4-hydrogen-xhigh");
-      expect(send("xhigh").request.generationConfig.thinkingConfig.thinkingLevel).toBe("XHIGH");
+      // agy 1.5.18 has no name for Google's level 100 and sends the number.
+      expect(send("xhigh").request.generationConfig.thinkingConfig.thinkingLevel).toBe(100);
+      expect(send("high").request.generationConfig.thinkingConfig.thinkingLevel).toBe("HIGH");
       expect(send("medium").model).toBe("gemini-4-hydrogen-medium");
       // "minimal" is sent as low; nothing chosen means high.
       expect(send("minimal").model).toBe("gemini-4-hydrogen-low");

@@ -50,13 +50,14 @@ export const ANTIGRAVITY_ENDPOINT = ANTIGRAVITY_ENDPOINT_DAILY;
 export const ANTIGRAVITY_DEFAULT_PROJECT_ID = "default-cli-project";
 
 /**
- * User-Agent of the official Antigravity CLI (agy 1.5.3, captured from its
- * own requests), sent on every request to the Antigravity backend: models,
+ * User-Agent of the official Antigravity CLI (agy 1.5.18, captured from its
+ * own requests 2026-11-27; `cl` is the build number and changes with the
+ * version), sent on every request to the Antigravity backend: models,
  * project lookup, quota and search alike, as agy does. The backend gates newer
  * models (Gemini 3.8 Flash, Gemini 4 Argon) on the client version it sees.
  */
 export const ANTIGRAVITY_CLI_USER_AGENT =
-  "antigravity/cli/1.5.3 (aidev_client; os_type=linux; arch=amd64; cl=1016078699; auth_method=consumer)";
+  "antigravity/cli/1.5.18 (aidev_client; os_type=linux; arch=amd64; cl=1030252320; auth_method=consumer)";
 
 export const ANTIGRAVITY_VERSION_FALLBACK = "1.18.3";
 

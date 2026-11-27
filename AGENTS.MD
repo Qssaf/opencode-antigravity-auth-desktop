@@ -92,7 +92,8 @@ src/
 ├── plugin.ts                # Shared runtime + OpenCode 1.x entry, fetch interceptor
 ├── constants.ts             # Endpoints, headers, API config, system prompts
 ├── antigravity/oauth.ts     # OAuth sign-in and token exchange (agy's flow: paste the code)
-├── antigravity/google-http.ts # HTTP/2 client for every request to Google (Go's header set)
+├── antigravity/google-http.ts # Every request to Google: HTTP/2 for sign-in hosts (Go's header set)
+├── antigravity/google-http1.ts # HTTP/1.1 for the Antigravity backend, written as agy's Go client writes it
 ├── cli/accounts.ts          # `antigravity-accounts` binary (account pool management)
 ├── v2/                      # OpenCode 2.x adapter (see below)
 └── plugin/
@@ -159,7 +160,7 @@ Tool schemas are cleaned via allowlist. Unsupported fields (`const`, `$ref`, `$d
 Accounts rotate on rate limits. Every request uses the Antigravity quota (the Gemini CLI quota is deprecated). Fingerprints are per-account and regenerated on capacity exhaustion.
 
 ### 6. Fingerprint System
-Per-account device fingerprints stored in `antigravity-accounts.json`. Each fingerprint includes deviceId, sessionToken, userAgent, and a reduced clientMetadata (ideType, platform, pluginType — no osVersion, arch, or sqmId). No fingerprint header is sent: the antigravity request path in `request.ts` sets the fixed CLI `User-Agent` (`ANTIGRAVITY_CLI_USER_AGENT`, agy 1.5.3's, used on every Antigravity backend request), because the backend gates newer models on it. `buildFingerprintHeaders()` has no caller in the request path. History tracked (max 5), restorable.
+Per-account device fingerprints stored in `antigravity-accounts.json`. Each fingerprint includes deviceId, sessionToken, userAgent, and a reduced clientMetadata (ideType, platform, pluginType — no osVersion, arch, or sqmId). No fingerprint header is sent: the antigravity request path in `request.ts` sets the fixed CLI `User-Agent` (`ANTIGRAVITY_CLI_USER_AGENT`, agy 1.5.18's, used on every Antigravity backend request), because the backend gates newer models on it. `buildFingerprintHeaders()` has no caller in the request path. History tracked (max 5), restorable.
 
 ## Dependencies
 

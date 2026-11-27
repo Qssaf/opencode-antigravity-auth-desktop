@@ -1,6 +1,7 @@
 /**
  * Request identifiers formatted as the Antigravity CLI sends them (agy 1.5.3,
- * captured from its own requests on 2026-11-07):
+ * captured from its own requests on 2026-11-07; re-checked against 1.5.18 on
+ * 2026-11-27):
  *
  * - `request.sessionId`: one signed 64-bit number per installation, the same
  *   in every conversation. Here: one per account, derived from its device id,
@@ -11,7 +12,8 @@
  *   model's enum and which model families the conversation used. Go encodes
  *   the map with its keys in alphabetical order.
  *
- * Steps are the conversation's messages, plus one for every failed attempt:
+ * Steps are the conversation's turns, with each tool result a step of its own
+ * (`agyStepCount`), plus one for every failed attempt:
  * agy retries a call with the same `request_id` and the next step index.
  *
  * A conversation is an OpenCode chat (the `x-opencode-session` header) on one
@@ -87,6 +89,23 @@ function conversationFor(chatKey: string | undefined): Conversation {
 }
 
 /**
+ * How many steps agy would have numbered for this history: one per turn, and
+ * one per tool result where a turn carries several (seen in agy 1.5.18).
+ */
+export function agyStepCount(contents: unknown): number {
+  if (!Array.isArray(contents)) return 0;
+  let steps = 0;
+  for (const content of contents) {
+    const parts = (content as { parts?: unknown } | null)?.parts;
+    const results = Array.isArray(parts)
+      ? parts.filter((part) => typeof part === "object" && part !== null && "functionResponse" in part).length
+      : 0;
+    steps += Math.max(1, results);
+  }
+  return steps;
+}
+
+/**
  * The ids of a model call. `request` names the plugin request (one OpenCode
  * call) it serves: a second call for the same one is a retry.
  */
@@ -95,7 +114,7 @@ export function agyRequestIds(
   accountSeed: string,
   request: string | undefined,
   wireModel: string,
-  messageCount: number,
+  stepCount: number,
 ): { requestId: string; labels: Record<string, string> } {
   const conversation = conversationFor(chatKey ? `${chatKey}\n${accountSeed}` : undefined);
   if (request !== undefined && conversation.lastRequest === request) {
@@ -105,7 +124,7 @@ export function agyRequestIds(
     conversation.lastRequest = request;
   }
   const number = conversation.calls - 1;
-  const lastStep = Math.max(0, messageCount - 1) + conversation.failedAttempts;
+  const lastStep = Math.max(0, stepCount - 1) + conversation.failedAttempts;
   const isClaude = wireModel.toLowerCase().includes("claude");
   const isGemini = wireModel.toLowerCase().includes("gemini");
   const modelEnum = modelEnumFor(wireModel);
@@ -116,6 +135,7 @@ export function agyRequestIds(
     request_id: `${conversation.trajectoryId}-${number}`,
     root_cascade_id: conversation.cascadeId,
     trajectory_id: conversation.trajectoryId,
+    trajectory_source: "CORTEX_TRAJECTORY_SOURCE_CLI",
     used_claude: String(isClaude),
     used_claude_conservative: "false",
     used_non_gemini_model: String(!isGemini),
