@@ -77,6 +77,15 @@ export function getCachedAntigravityAvailableModels(): AntigravityAvailableModel
   return antigravityCatalog.models;
 }
 
+/**
+ * The enum name Google's model list gives a wire model id (`MODEL_PLACEHOLDER_M528`).
+ * Read from the last list fetched however old: an id does not expire with the cache.
+ */
+export function getAntigravityModelEnum(wireModel: string): string | undefined {
+  const model = antigravityCatalog?.models[wireModel]?.model;
+  return typeof model === "string" && model.length > 0 ? model : undefined;
+}
+
 export function resetPublicGeminiApiModelCatalogForTests(): void {
   catalog = undefined;
 }

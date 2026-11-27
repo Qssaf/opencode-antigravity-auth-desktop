@@ -14,6 +14,7 @@
 
 import { connect, constants } from "node:http2";
 import type { ClientHttp2Session, IncomingHttpHeaders, OutgoingHttpHeaders } from "node:http2";
+import type { Socket } from "node:net";
 import { createGunzip } from "node:zlib";
 
 /** What Go's HTTP/2 client sends when the caller sets no User-Agent. */
@@ -21,6 +22,8 @@ export const GO_HTTP2_USER_AGENT = "Go-http-client/2.0";
 
 /** Go's `http.DefaultTransport` IdleConnTimeout. */
 const IDLE_CLOSE_MS = 90_000;
+/** How long a closing connection may wait for the server to close its side. */
+const CLOSE_GRACE_MS = 1_000;
 
 /** Never sent: HTTP/2 forbids connection headers, and the client sets these itself. */
 const DROPPED_HEADERS = new Set([
@@ -41,6 +44,8 @@ function toPayload(body: RequestInit["body"]): Buffer | undefined {
 
 interface PooledSession {
   session: ClientHttp2Session;
+  /** The connection's own socket: a session that is closing no longer destroys it. */
+  socket?: Socket;
   active: number;
   idleTimer?: ReturnType<typeof setTimeout>;
 }
@@ -62,6 +67,9 @@ function openSession(origin: string, key: string | undefined): PooledSession {
   const session = connect(origin);
   session.unref();
   const entry: PooledSession = { session, active: 0 };
+  session.on("connect", (_session, socket) => {
+    entry.socket = socket;
+  });
   const forget = () => {
     clearTimeout(entry.idleTimer);
     if (key && pool.get(key) === entry) pool.delete(key);
@@ -73,16 +81,37 @@ function openSession(origin: string, key: string | undefined): PooledSession {
   return entry;
 }
 
+/**
+ * Closes a connection no request needs any more. A graceful close waits for
+ * the server to close its side too, so the session is unreferenced (or a server
+ * that never does keeps the accounts CLI running forever) and its socket is
+ * destroyed after a grace period (or it leaks in a long-lived process).
+ */
+function closeSession(entry: PooledSession): void {
+  const { session, socket } = entry;
+  session.close();
+  session.unref();
+  if (!socket) {
+    // Never connected: nothing is waiting on a peer.
+    session.destroy();
+    return;
+  }
+  if (socket.destroyed) return;
+  const timer = setTimeout(() => socket.destroy(), CLOSE_GRACE_MS);
+  timer.unref?.();
+  socket.once("close", () => clearTimeout(timer));
+}
+
 function release(entry: PooledSession, pooled: boolean): void {
   entry.active -= 1;
   if (!pooled) {
-    entry.session.close();
+    closeSession(entry);
     return;
   }
   if (entry.active > 0) return;
   entry.session.unref();
   clearTimeout(entry.idleTimer);
-  entry.idleTimer = setTimeout(() => entry.session.close(), IDLE_CLOSE_MS);
+  entry.idleTimer = setTimeout(() => closeSession(entry), IDLE_CLOSE_MS);
   entry.idleTimer.unref?.();
 }
 
@@ -201,6 +230,11 @@ function attempt(
       const source = gzipped ? stream.pipe(createGunzip()) : stream;
 
       if (status === 204 || status === 304 || init.method === "HEAD") {
+        // No body to read, so the stream's own end is what releases the connection.
+        stream.on("end", () => {
+          sourceEnded = true;
+          endIfDone();
+        });
         stream.resume();
         resolve(new Response(null, { status, headers }));
         return;

@@ -1,5 +1,6 @@
 import { createWriteStream, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import type { WriteStream } from "node:fs";
+import { dirname, join } from "node:path";
 import { env } from "node:process";
 import type { AntigravityConfig } from "./config";
 import {
@@ -31,29 +32,16 @@ interface DebugState {
 
 let debugState: DebugState | null = null;
 
-/**
- * Returns the logs directory, creating it if needed.
- */
-function getLogsDir(customLogDir?: string): string {
-  const logsDir = customLogDir || join(getConfigDir(), "antigravity-logs");
-
-  try {
-    mkdirSync(logsDir, { recursive: true });
-  } catch {
-    // Directory may already exist or we don't have permission
-  }
-
-  return logsDir;
+function logsDirPath(customLogDir?: string): string {
+  return customLogDir || join(getConfigDir(), "antigravity-logs");
 }
 
 /**
- * Builds a timestamped log file path.
+ * Builds a timestamped log file path. The file is created by the first line written to it.
  */
 function createLogFilePath(customLogDir?: string): string {
-  const logsDir = getLogsDir(customLogDir);
-  cleanupOldLogs(logsDir, 25);
   const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  return join(logsDir, `antigravity-debug-${timestamp}.log`);
+  return join(logsDirPath(customLogDir), `antigravity-debug-${timestamp}.log`);
 }
 
 /**
@@ -89,24 +77,34 @@ function cleanupOldLogs(logsDir: string, maxFiles: number): void {
 }
 
 /**
- * Creates a log writer function that writes to a file.
+ * Creates a log writer function that writes to a file. The file is opened, and old logs rotated
+ * out, on the first line: a process that logs nothing must not push a real log out of the folder.
  */
 function createLogWriter(filePath?: string): (line: string) => void {
   if (!filePath) {
     return () => {};
   }
 
-  try {
-    const stream = createWriteStream(filePath, { flags: "a" });
-    stream.on("error", () => {});
-    return (line: string) => {
-      const timestamp = new Date().toISOString();
-      const formatted = `[${timestamp}] ${line}`;
-      stream.write(`${formatted}\n`);
-    };
-  } catch {
-    return () => {};
-  }
+  let stream: WriteStream | undefined;
+  const open = (): WriteStream => {
+    const logsDir = dirname(filePath);
+    try {
+      mkdirSync(logsDir, { recursive: true });
+    } catch {
+      // Directory may already exist or we don't have permission
+    }
+    cleanupOldLogs(logsDir, 25);
+    const opened = createWriteStream(filePath, { flags: "a" });
+    opened.on("error", () => {});
+    return opened;
+  };
+
+  return (line: string) => {
+    stream ??= open();
+    const timestamp = new Date().toISOString();
+    const formatted = `[${timestamp}] ${line}`;
+    stream.write(`${formatted}\n`);
+  };
 }
 
 /**
@@ -123,8 +121,11 @@ export function initializeDebug(config: AntigravityConfig): void {
     envDebugTuiFlag: env.OPENCODE_ANTIGRAVITY_DEBUG_TUI,
   });
   const debugTuiEnabled = config.debug_tui || isTruthyFlag(env.OPENCODE_ANTIGRAVITY_DEBUG_TUI);
-  const logFilePath = debugEnabled ? createLogFilePath(config.log_dir) : undefined;
-  const logWriter = createLogWriter(logFilePath);
+  // A runtime rebuilt in this process keeps writing to the file it already has.
+  const previous = debugState?.logFilePath;
+  const keepPrevious = debugEnabled && previous !== undefined && dirname(previous) === logsDirPath(config.log_dir);
+  const logFilePath = keepPrevious ? previous : debugEnabled ? createLogFilePath(config.log_dir) : undefined;
+  const logWriter = keepPrevious && debugState ? debugState.logWriter : createLogWriter(logFilePath);
 
   if (debugEnabled) {
     ensureGitignoreSync(getConfigDir());

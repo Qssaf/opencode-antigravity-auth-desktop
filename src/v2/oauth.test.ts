@@ -1,7 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { promises as fs } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it, onTestFinished, vi } from "vitest";
 import { OAUTH_METHOD_ID } from "./credentials";
 import { createOAuthMethod } from "./oauth";
 import type { OAuthFlowHelpers, OAuthMethodDeps } from "./oauth";
+import type { AccountStorageV4 } from "../plugin/storage";
 import type { PluginClient } from "../plugin/types";
 
 const AUTH_URL = "https://accounts.google.com/o/oauth2/auth?state=abc123";
@@ -72,6 +75,16 @@ describe("authorize", () => {
   });
 
   it("runs a management action instead of signing in, and reports its result", async () => {
+    // The action lists the stored accounts, so the (temporary) pool needs one.
+    const pool: AccountStorageV4 = {
+      version: 4,
+      accounts: [{ email: "first@example.com", refreshToken: "token-1", addedAt: 1, lastUsed: 2, enabled: true }],
+      activeIndex: 0,
+    };
+    const poolFile = join(process.env.OPENCODE_CONFIG_DIR ?? "", "antigravity-accounts.json");
+    await fs.writeFile(poolFile, JSON.stringify(pool));
+    onTestFinished(() => fs.rm(poolFile, { force: true }));
+
     const createAuthorization = vi.fn(async () => ({ url: AUTH_URL, projectId: "" }));
     const authorization = await createOAuthMethod(
       deps({

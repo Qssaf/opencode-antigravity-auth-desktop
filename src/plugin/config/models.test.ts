@@ -44,7 +44,24 @@ describe("OPENCODE_MODEL_DEFINITIONS", () => {
     expect(argon.temperature).toBe(false);
     // Paid Pro accounts get it too, so the name no longer says Ultra.
     expect(argon.name).toBe("Gemini 4 Argon (Antigravity)");
-    expect(argon.limit).toEqual({ context: 1048576, output: 65536 });
+    expect(argon.limit).toEqual({ context: 1048576, input: 512000, output: 65536 });
+  });
+
+  it("caps Gemini 4 prompts at Antigravity's 512k checkpoint limit and keeps the 1M window", () => {
+    expect(getModel("antigravity-gemini-4-hydrogen").limit).toEqual({
+      context: 1048576,
+      input: 512000,
+      output: 262144,
+    });
+    expect(getModel("antigravity-gemini-4-argon").limit.input).toBe(512000);
+  });
+
+  it("caps Gemini 3.8 Flash prompts at the 256k where Antigravity checkpoints it", () => {
+    expect(getModel("antigravity-gemini-3.8-flash").limit).toEqual({
+      context: 1048576,
+      input: 256000,
+      output: 65536,
+    });
   });
 });
 
@@ -142,7 +159,7 @@ describe("dynamic model discovery helpers", () => {
       medium: { thinkingLevel: "medium" },
       high: { thinkingLevel: "high" },
     });
-    expect(models["antigravity-gemini-3.8-flash"]?.limit).toEqual({ context: 1048576, output: 65536 });
+    expect(models["antigravity-gemini-3.8-flash"]?.limit).toEqual({ context: 1048576, input: 256000, output: 65536 });
     // Inferred variants for dynamically discovered models not in static table
     expect(models["antigravity-gemini-3.8-pro"]?.variants).toEqual({
       low: { thinkingLevel: "low" },
@@ -172,6 +189,29 @@ describe("dynamic model discovery helpers", () => {
     });
 
     expect(Object.keys(models)).toEqual(["antigravity-gemini-4-hydrogen-xhigh"]);
+  });
+
+  it("caps the prompt of discovered Gemini 4 ids that are not in the static table", () => {
+    const models = modelsFromAntigravityAvailableModels({
+      "gemini-4-hydrogen-xhigh": { displayName: "Gemini 4 Hydrogen (XHigh)", supportsThinking: true },
+      "gemini-4-argon-high": { displayName: "Gemini 4 Argon (High)", supportsThinking: true },
+      "gemini-3.8-flash-high": { displayName: "Gemini 3.8 Flash (High)", supportsThinking: true },
+      "gemini-3.8-flash-lite": { displayName: "Gemini 3.8 Flash Lite" },
+      "gemini-3.9-flash": { displayName: "Gemini 3.9 Flash" },
+      "claude-sonnet-4-6": { displayName: "Claude Sonnet 4.6" },
+    });
+
+    expect(models["antigravity-gemini-4-hydrogen-xhigh"]?.limit).toEqual({
+      context: 1048576,
+      input: 512000,
+      output: 65536,
+    });
+    expect(models["antigravity-gemini-4-argon-high"]?.limit.input).toBe(512000);
+    expect(models["antigravity-gemini-3.8-flash-high"]?.limit.input).toBe(256000);
+    // A model Antigravity was never seen checkpointing keeps its whole window.
+    expect(models["antigravity-gemini-3.8-flash-lite"]?.limit).toEqual({ context: 1048576, output: 65536 });
+    expect(models["antigravity-gemini-3.9-flash"]?.limit).toEqual({ context: 1048576, output: 65536 });
+    expect(models["antigravity-claude-sonnet-4-6"]?.limit).toEqual({ context: 200000, output: 64000 });
   });
 
   it("gives thinking variants only to models Google says think", () => {

@@ -77,6 +77,7 @@ import { connect, constants } from "node:http2";
 import { createGunzip } from "node:zlib";
 var GO_HTTP2_USER_AGENT = "Go-http-client/2.0";
 var IDLE_CLOSE_MS = 9e4;
+var CLOSE_GRACE_MS = 1e3;
 var DROPPED_HEADERS = /* @__PURE__ */ new Set([
   "connection",
   "keep-alive",
@@ -105,6 +106,9 @@ function openSession(origin, key) {
   const session = connect(origin);
   session.unref();
   const entry = { session, active: 0 };
+  session.on("connect", (_session, socket) => {
+    entry.socket = socket;
+  });
   const forget = () => {
     clearTimeout(entry.idleTimer);
     if (key && pool.get(key) === entry) pool.delete(key);
@@ -115,16 +119,29 @@ function openSession(origin, key) {
   if (key) pool.set(key, entry);
   return entry;
 }
+function closeSession(entry) {
+  const { session, socket } = entry;
+  session.close();
+  session.unref();
+  if (!socket) {
+    session.destroy();
+    return;
+  }
+  if (socket.destroyed) return;
+  const timer = setTimeout(() => socket.destroy(), CLOSE_GRACE_MS);
+  timer.unref?.();
+  socket.once("close", () => clearTimeout(timer));
+}
 function release(entry, pooled) {
   entry.active -= 1;
   if (!pooled) {
-    entry.session.close();
+    closeSession(entry);
     return;
   }
   if (entry.active > 0) return;
   entry.session.unref();
   clearTimeout(entry.idleTimer);
-  entry.idleTimer = setTimeout(() => entry.session.close(), IDLE_CLOSE_MS);
+  entry.idleTimer = setTimeout(() => closeSession(entry), IDLE_CLOSE_MS);
   entry.idleTimer.unref?.();
 }
 function toHeaderList(headers) {
@@ -220,6 +237,10 @@ function attempt(url, init, payload, entry, pooled) {
       if (gzipped) headers.delete("content-encoding");
       const source = gzipped ? stream.pipe(createGunzip()) : stream;
       if (status === 204 || status === 304 || init.method === "HEAD") {
+        stream.on("end", () => {
+          sourceEnded = true;
+          endIfDone();
+        });
         stream.resume();
         resolve(new Response(null, { status, headers }));
         return;
@@ -281,18 +302,59 @@ function googleRequest(url, init) {
 
 // src/plugin/agy-wire.ts
 import { createHash, randomUUID } from "node:crypto";
+
+// src/plugin/model-catalog.ts
+var CATALOG_TTL_MS = 60 * 60 * 1e3;
+var catalog;
+var antigravityCatalog;
+function modelIdFromName(model) {
+  const raw = (model.name ? model.name.replace(/^models\//, "") : model.baseModelId)?.trim();
+  return raw || null;
+}
+function recordPublicGeminiApiModels(models) {
+  const ids = /* @__PURE__ */ new Set();
+  for (const model of models) {
+    const id = modelIdFromName(model);
+    if (id) ids.add(id.toLowerCase());
+  }
+  if (ids.size === 0) return;
+  catalog = { ids, fetchedAt: Date.now() };
+}
+function getPublicGeminiApiModelIds() {
+  if (!catalog) return void 0;
+  if (Date.now() - catalog.fetchedAt > CATALOG_TTL_MS) return void 0;
+  return catalog.ids;
+}
+function recordAntigravityAvailableModels(models) {
+  if (!models || Object.keys(models).length === 0) return;
+  antigravityCatalog = {
+    models: { ...models },
+    fetchedAt: Date.now()
+  };
+}
+function getCachedAntigravityAvailableModels() {
+  if (!antigravityCatalog) return void 0;
+  if (Date.now() - antigravityCatalog.fetchedAt > CATALOG_TTL_MS) return void 0;
+  return antigravityCatalog.models;
+}
+function getAntigravityModelEnum(wireModel) {
+  const model = antigravityCatalog?.models[wireModel]?.model;
+  return typeof model === "string" && model.length > 0 ? model : void 0;
+}
+
+// src/plugin/agy-wire.ts
 var MODEL_ENUMS = {
   "gemini-3.8-flash-high": "MODEL_PLACEHOLDER_M318",
   "gemini-3.8-flash-medium": "MODEL_PLACEHOLDER_M319",
   "gemini-3.8-flash-low": "MODEL_PLACEHOLDER_M320",
-  "gemini-4-argon-high": "MODEL_PLACEHOLDER_M417",
-  "gemini-4-argon-medium": "MODEL_PLACEHOLDER_M418",
-  "gemini-4-argon-low": "MODEL_PLACEHOLDER_M419",
-  "gemini-4-hydrogen-high": "MODEL_PLACEHOLDER_M461",
-  "gemini-4-hydrogen-medium": "MODEL_PLACEHOLDER_M462",
-  "gemini-4-hydrogen-low": "MODEL_PLACEHOLDER_M463",
-  "gemini-4-hydrogen-xhigh": "MODEL_PLACEHOLDER_M464"
+  "gemini-4-hydrogen-high": "MODEL_PLACEHOLDER_M525",
+  "gemini-4-hydrogen-medium": "MODEL_PLACEHOLDER_M526",
+  "gemini-4-hydrogen-low": "MODEL_PLACEHOLDER_M527",
+  "gemini-4-hydrogen-xhigh": "MODEL_PLACEHOLDER_M528"
 };
+function modelEnumFor(wireModel) {
+  return getAntigravityModelEnum(wireModel) ?? MODEL_ENUMS[wireModel];
+}
 var MAX_CONVERSATIONS = 1e3;
 var conversations = globalThis[/* @__PURE__ */ Symbol.for("opencode-antigravity-auth/agy-conversations/v2")] ??= /* @__PURE__ */ new Map();
 function agySessionId(seed) {
@@ -325,10 +387,11 @@ ${accountSeed}` : void 0);
   const lastStep = Math.max(0, messageCount - 1) + conversation.failedAttempts;
   const isClaude = wireModel.toLowerCase().includes("claude");
   const isGemini = wireModel.toLowerCase().includes("gemini");
+  const modelEnum = modelEnumFor(wireModel);
   const labels = {
     cascade_id: conversation.cascadeId,
     last_step_index: String(lastStep),
-    ...MODEL_ENUMS[wireModel] ? { model_enum: MODEL_ENUMS[wireModel] } : {},
+    ...modelEnum ? { model_enum: modelEnum } : {},
     request_id: `${conversation.trajectoryId}-${number}`,
     root_cascade_id: conversation.cascadeId,
     trajectory_id: conversation.trajectoryId,
@@ -389,7 +452,7 @@ import { createHash as createHash3, randomBytes as randomBytes2 } from "node:cry
 
 // src/plugin/debug.ts
 import { createWriteStream, mkdirSync as mkdirSync2, readdirSync, statSync, unlinkSync as unlinkSync2 } from "node:fs";
-import { join as join2 } from "node:path";
+import { dirname as dirname2, join as join2 } from "node:path";
 import { env } from "node:process";
 
 // src/plugin/logging-utils.ts
@@ -1235,19 +1298,12 @@ var MAX_BODY_PREVIEW_CHARS = 12e3;
 var MAX_BODY_LOG_CHARS = 5e4;
 var DEBUG_MESSAGE_PREFIX = "[opencode-antigravity-auth debug]";
 var debugState = null;
-function getLogsDir(customLogDir) {
-  const logsDir = customLogDir || join2(getConfigDir(), "antigravity-logs");
-  try {
-    mkdirSync2(logsDir, { recursive: true });
-  } catch {
-  }
-  return logsDir;
+function logsDirPath(customLogDir) {
+  return customLogDir || join2(getConfigDir(), "antigravity-logs");
 }
 function createLogFilePath(customLogDir) {
-  const logsDir = getLogsDir(customLogDir);
-  cleanupOldLogs(logsDir, 25);
   const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
-  return join2(logsDir, `antigravity-debug-${timestamp}.log`);
+  return join2(logsDirPath(customLogDir), `antigravity-debug-${timestamp}.log`);
 }
 function cleanupOldLogs(logsDir, maxFiles) {
   try {
@@ -1273,20 +1329,26 @@ function createLogWriter(filePath) {
     return () => {
     };
   }
-  try {
-    const stream = createWriteStream(filePath, { flags: "a" });
-    stream.on("error", () => {
+  let stream;
+  const open = () => {
+    const logsDir = dirname2(filePath);
+    try {
+      mkdirSync2(logsDir, { recursive: true });
+    } catch {
+    }
+    cleanupOldLogs(logsDir, 25);
+    const opened = createWriteStream(filePath, { flags: "a" });
+    opened.on("error", () => {
     });
-    return (line) => {
-      const timestamp = (/* @__PURE__ */ new Date()).toISOString();
-      const formatted = `[${timestamp}] ${line}`;
-      stream.write(`${formatted}
+    return opened;
+  };
+  return (line) => {
+    stream ??= open();
+    const timestamp = (/* @__PURE__ */ new Date()).toISOString();
+    const formatted = `[${timestamp}] ${line}`;
+    stream.write(`${formatted}
 `);
-    };
-  } catch {
-    return () => {
-    };
-  }
+  };
 }
 function initializeDebug(config) {
   const envDebugFlag = env.OPENCODE_ANTIGRAVITY_DEBUG ?? "";
@@ -1297,8 +1359,10 @@ function initializeDebug(config) {
     envDebugTuiFlag: env.OPENCODE_ANTIGRAVITY_DEBUG_TUI
   });
   const debugTuiEnabled = config.debug_tui || isTruthyFlag(env.OPENCODE_ANTIGRAVITY_DEBUG_TUI);
-  const logFilePath = debugEnabled ? createLogFilePath(config.log_dir) : void 0;
-  const logWriter = createLogWriter(logFilePath);
+  const previous = debugState?.logFilePath;
+  const keepPrevious = debugEnabled && previous !== void 0 && dirname2(previous) === logsDirPath(config.log_dir);
+  const logFilePath = keepPrevious ? previous : debugEnabled ? createLogFilePath(config.log_dir) : void 0;
+  const logWriter = keepPrevious && debugState ? debugState.logWriter : createLogWriter(logFilePath);
   if (debugEnabled) {
     ensureGitignoreSync(getConfigDir());
   }
@@ -2144,7 +2208,7 @@ async function showAccountDetails(account) {
 
 // src/plugin/config/updater.ts
 import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2, mkdirSync as mkdirSync3 } from "node:fs";
-import { join as join3, dirname as dirname2 } from "node:path";
+import { join as join3, dirname as dirname3 } from "node:path";
 import { homedir as homedir2 } from "node:os";
 
 // src/plugin/transform/model-resolver.ts
@@ -2470,6 +2534,13 @@ function resolveModelForHeaderStyle(requestedModel, headerStyle) {
 }
 
 // src/plugin/config/models.ts
+var GEMINI_4_PROMPT_LIMIT = 512e3;
+var GEMINI_3_8_FLASH_PROMPT_LIMIT = 256e3;
+function promptLimitForModel(modelId) {
+  if (/(?:^|-)gemini-4-(?:argon|hydrogen)(?:-|$)/.test(modelId)) return GEMINI_4_PROMPT_LIMIT;
+  if (/(?:^|-)gemini-3\.8-flash(?:-(?:low|medium|high))?$/.test(modelId)) return GEMINI_3_8_FLASH_PROMPT_LIMIT;
+  return void 0;
+}
 var DEFAULT_MODALITIES = {
   input: ["text", "image", "pdf"],
   output: ["text"]
@@ -2478,7 +2549,7 @@ var OPENCODE_MODEL_DEFINITIONS = {
   "antigravity-gemini-3.8-flash": {
     name: "Gemini 3.8 Flash (Antigravity)",
     temperature: false,
-    limit: { context: 1048576, output: 65536 },
+    limit: { context: 1048576, input: GEMINI_3_8_FLASH_PROMPT_LIMIT, output: 65536 },
     modalities: DEFAULT_MODALITIES,
     variants: {
       low: { thinkingLevel: "low" },
@@ -2492,7 +2563,7 @@ var OPENCODE_MODEL_DEFINITIONS = {
   "antigravity-gemini-4-argon": {
     name: "Gemini 4 Argon (Antigravity)",
     temperature: false,
-    limit: { context: 1048576, output: 65536 },
+    limit: { context: 1048576, input: GEMINI_4_PROMPT_LIMIT, output: 65536 },
     modalities: DEFAULT_MODALITIES,
     variants: {
       low: { thinkingLevel: "low" },
@@ -2505,7 +2576,7 @@ var OPENCODE_MODEL_DEFINITIONS = {
   "antigravity-gemini-4-hydrogen": {
     name: "Gemini 4 Hydrogen (Antigravity)",
     temperature: false,
-    limit: { context: 1048576, output: 262144 },
+    limit: { context: 1048576, input: GEMINI_4_PROMPT_LIMIT, output: 262144 },
     modalities: DEFAULT_MODALITIES,
     variants: {
       low: { thinkingLevel: "low" },
@@ -2531,7 +2602,8 @@ function defaultLimitForModel(modelId) {
   if (modelId.includes("claude")) {
     return { context: 2e5, output: 64e3 };
   }
-  return { context: 1048576, output: 65536 };
+  const input3 = promptLimitForModel(modelId);
+  return { context: 1048576, ...input3 ? { input: input3 } : {}, output: 65536 };
 }
 function defaultVariantsForModel(modelId) {
   const normalized = modelId.toLowerCase().replace(/^antigravity-/, "");
@@ -2683,7 +2755,7 @@ async function updateOpencodeConfig(options = {}) {
       config.provider.google = {};
     }
     config.provider.google.models = { ...OPENCODE_MODEL_DEFINITIONS };
-    const configDir = dirname2(configPath);
+    const configDir = dirname3(configPath);
     if (!existsSync2(configDir)) {
       mkdirSync3(configDir, { recursive: true });
     }
@@ -3049,7 +3121,7 @@ import { createHash as createHash4 } from "node:crypto";
 
 // src/plugin/cache/signature-cache.ts
 import { existsSync as existsSync3, mkdirSync as mkdirSync4, readFileSync as readFileSync3, writeFileSync as writeFileSync3, renameSync as renameSync2, unlinkSync as unlinkSync3 } from "node:fs";
-import { join as join4, dirname as dirname3 } from "node:path";
+import { join as join4, dirname as dirname4 } from "node:path";
 function getCacheFilePath() {
   return join4(getConfigDir(), "antigravity-signature-cache.json");
 }
@@ -3256,7 +3328,7 @@ var SignatureCache = class {
    */
   saveToDisk() {
     try {
-      const dir = dirname3(this.cacheFilePath);
+      const dir = dirname4(this.cacheFilePath);
       if (!existsSync3(dir)) {
         mkdirSync4(dir, { recursive: true });
       }
@@ -11059,41 +11131,6 @@ var AccountManager = class _AccountManager {
     return minWait === 0 ? null : minWait;
   }
 };
-
-// src/plugin/model-catalog.ts
-var CATALOG_TTL_MS = 60 * 60 * 1e3;
-var catalog;
-var antigravityCatalog;
-function modelIdFromName(model) {
-  const raw = (model.name ? model.name.replace(/^models\//, "") : model.baseModelId)?.trim();
-  return raw || null;
-}
-function recordPublicGeminiApiModels(models) {
-  const ids = /* @__PURE__ */ new Set();
-  for (const model of models) {
-    const id = modelIdFromName(model);
-    if (id) ids.add(id.toLowerCase());
-  }
-  if (ids.size === 0) return;
-  catalog = { ids, fetchedAt: Date.now() };
-}
-function getPublicGeminiApiModelIds() {
-  if (!catalog) return void 0;
-  if (Date.now() - catalog.fetchedAt > CATALOG_TTL_MS) return void 0;
-  return catalog.ids;
-}
-function recordAntigravityAvailableModels(models) {
-  if (!models || Object.keys(models).length === 0) return;
-  antigravityCatalog = {
-    models: { ...models },
-    fetchedAt: Date.now()
-  };
-}
-function getCachedAntigravityAvailableModels() {
-  if (!antigravityCatalog) return void 0;
-  if (Date.now() - antigravityCatalog.fetchedAt > CATALOG_TTL_MS) return void 0;
-  return antigravityCatalog.models;
-}
 
 // src/plugin/quota.ts
 var FETCH_TIMEOUT_MS2 = 1e4;

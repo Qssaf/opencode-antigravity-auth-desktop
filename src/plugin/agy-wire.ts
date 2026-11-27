@@ -22,19 +22,27 @@
 
 import { createHash, randomUUID } from "node:crypto";
 
-/** `model` of each id in Antigravity's fetchAvailableModels answer (Gemini 4 ids read from Antigravity 2.35.0's language server, not yet seen in a live answer). */
+import { getAntigravityModelEnum } from "./model-catalog";
+
+/**
+ * `model` of each id in Antigravity's fetchAvailableModels answer (read 2026-11-26).
+ * Only ids Google itself listed: Gemini 4 Argon's are not known (accounts that
+ * cannot use it get no per-level entry), so it gets its label from the live list.
+ */
 const MODEL_ENUMS: Record<string, string> = {
   "gemini-3.8-flash-high": "MODEL_PLACEHOLDER_M318",
   "gemini-3.8-flash-medium": "MODEL_PLACEHOLDER_M319",
   "gemini-3.8-flash-low": "MODEL_PLACEHOLDER_M320",
-  "gemini-4-argon-high": "MODEL_PLACEHOLDER_M417",
-  "gemini-4-argon-medium": "MODEL_PLACEHOLDER_M418",
-  "gemini-4-argon-low": "MODEL_PLACEHOLDER_M419",
-  "gemini-4-hydrogen-high": "MODEL_PLACEHOLDER_M461",
-  "gemini-4-hydrogen-medium": "MODEL_PLACEHOLDER_M462",
-  "gemini-4-hydrogen-low": "MODEL_PLACEHOLDER_M463",
-  "gemini-4-hydrogen-xhigh": "MODEL_PLACEHOLDER_M464",
+  "gemini-4-hydrogen-high": "MODEL_PLACEHOLDER_M525",
+  "gemini-4-hydrogen-medium": "MODEL_PLACEHOLDER_M526",
+  "gemini-4-hydrogen-low": "MODEL_PLACEHOLDER_M527",
+  "gemini-4-hydrogen-xhigh": "MODEL_PLACEHOLDER_M528",
 };
+
+/** Google's own answer wins over the table, which covers the time before the first fetch. */
+function modelEnumFor(wireModel: string): string | undefined {
+  return getAntigravityModelEnum(wireModel) ?? MODEL_ENUMS[wireModel];
+}
 
 const MAX_CONVERSATIONS = 1000;
 
@@ -100,10 +108,11 @@ export function agyRequestIds(
   const lastStep = Math.max(0, messageCount - 1) + conversation.failedAttempts;
   const isClaude = wireModel.toLowerCase().includes("claude");
   const isGemini = wireModel.toLowerCase().includes("gemini");
+  const modelEnum = modelEnumFor(wireModel);
   const labels: Record<string, string> = {
     cascade_id: conversation.cascadeId,
     last_step_index: String(lastStep),
-    ...(MODEL_ENUMS[wireModel] ? { model_enum: MODEL_ENUMS[wireModel] } : {}),
+    ...(modelEnum ? { model_enum: modelEnum } : {}),
     request_id: `${conversation.trajectoryId}-${number}`,
     root_cascade_id: conversation.cascadeId,
     trajectory_id: conversation.trajectoryId,

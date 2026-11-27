@@ -147,6 +147,8 @@ opencode run "Hello" --model=google/antigravity-gemini-3.8-flash --variant=high
 | `antigravity-claude-sonnet-4-6` | — | Claude Sonnet 4.6 |
 | `antigravity-gpt-oss-120b-medium` | — | GPT-OSS 120B |
 
+> **Long chats are compacted before the 1M window fills.** Every step re-sends the whole chat and Google's quota counts all of it, so the plugin gives these models the prompt limit Antigravity itself works to: 512k tokens for Gemini 4 Hydrogen and Argon, 256k for Gemini 3.8 Flash. OpenCode compacts a chat at about 85% of that. To choose your own, set `limit.input` (below `context`) on the model in `opencode.json` (for example `"limit": { "context": 1048576, "input": 800000, "output": 262144 }`); a lower value saves quota, a higher one compacts less often.
+
 > **Gemini 4 Hydrogen Sonar is gone.** Google replaced it with Gemini 4 Hydrogen. A session still set to `antigravity-gemini-4-hydrogen-sonar` is served by Gemini 4 Hydrogen at the same variant.
 
 > **Gemini 4 Argon needs a paid Google AI Pro or Google AI Ultra subscription.** Free plans, Google AI Plus and Pro free trials do not include it. The plugin cannot read your subscription, so it learns it from Google: an account Google refuses Argon for is skipped for an hour and the next account is tried. When no signed-in account may use it, the request is answered with a message saying so instead of an error. With an API key configured (`agy_sdk`), Argon is tried through the public Gemini API before that message.

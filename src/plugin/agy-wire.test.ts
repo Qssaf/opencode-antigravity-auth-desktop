@@ -1,7 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { generateFingerprint } from "./fingerprint";
+import { recordAntigravityAvailableModels, resetAntigravityModelCatalogForTests } from "./model-catalog";
 import { prepareAntigravityRequest } from "./request";
 import { TITLE_REQUEST_HEADER } from "../v2/request-kind";
+
+afterEach(() => resetAntigravityModelCatalogForTests());
 
 const URL_38 =
   "https://generativelanguage.googleapis.com/v1beta/models/antigravity-gemini-3.8-flash:streamGenerateContent?alt=sse";
@@ -202,35 +205,63 @@ describe("Antigravity CLI wire format", () => {
     ]);
   });
 
-  it("includes Antigravity 2.35.0 model_enum labels for Gemini 4 Argon and Hydrogen tiers", () => {
-    const cases: Array<[string, string]> = [
-      ["antigravity-gemini-4-argon-high", "MODEL_PLACEHOLDER_M417"],
-      ["antigravity-gemini-4-argon-medium", "MODEL_PLACEHOLDER_M418"],
-      ["antigravity-gemini-4-argon-low", "MODEL_PLACEHOLDER_M419"],
-      ["antigravity-gemini-4-hydrogen-high", "MODEL_PLACEHOLDER_M461"],
-      ["antigravity-gemini-4-hydrogen-medium", "MODEL_PLACEHOLDER_M462"],
-      ["antigravity-gemini-4-hydrogen-low", "MODEL_PLACEHOLDER_M463"],
-      ["antigravity-gemini-4-hydrogen-xhigh", "MODEL_PLACEHOLDER_M464"],
-    ];
+  function modelEnumFor(model: string): string | undefined {
+    const prepared = prepareAntigravityRequest(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,
+      {
+        method: "POST",
+        headers: { "x-opencode-session": "ses_enum" },
+        body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "hi" }] }] }),
+      },
+      "token",
+      "aicode-consumers",
+      undefined,
+      "antigravity",
+      false,
+      { fingerprint: generateFingerprint() },
+    );
+    return JSON.parse(prepared.init.body as string).request.labels.model_enum;
+  }
 
-    for (const [model, expectedEnum] of cases) {
-      const prepared = prepareAntigravityRequest(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse`,
-        {
-          method: "POST",
-          headers: { "x-opencode-session": "ses_enum" },
-          body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: "hi" }] }] }),
-        },
-        "token",
-        "aicode-consumers",
-        undefined,
-        "antigravity",
-        false,
-        { fingerprint: generateFingerprint() },
-      );
-      const body = JSON.parse(prepared.init.body as string);
-      expect(body.request.labels.model_enum).toBe(expectedEnum);
+  it("labels Gemini 4 Hydrogen with the model ids Google's fetchAvailableModels lists", () => {
+    expect(modelEnumFor("antigravity-gemini-4-hydrogen-high")).toBe("MODEL_PLACEHOLDER_M525");
+    expect(modelEnumFor("antigravity-gemini-4-hydrogen-medium")).toBe("MODEL_PLACEHOLDER_M526");
+    expect(modelEnumFor("antigravity-gemini-4-hydrogen-low")).toBe("MODEL_PLACEHOLDER_M527");
+    expect(modelEnumFor("antigravity-gemini-4-hydrogen-xhigh")).toBe("MODEL_PLACEHOLDER_M528");
+  });
+
+  it("sends no model_enum for a model whose id Google has not told us", () => {
+    expect(modelEnumFor("antigravity-gemini-4-argon-high")).toBeUndefined();
+  });
+
+  it("keeps using Google's model_enum after the fetched list has gone stale", () => {
+    vi.useFakeTimers();
+    try {
+      recordAntigravityAvailableModels({ "gemini-4-argon-high": { model: "MODEL_PLACEHOLDER_M900" } });
+      vi.advanceTimersByTime(3 * 60 * 60 * 1000);
+      expect(modelEnumFor("antigravity-gemini-4-argon-high")).toBe("MODEL_PLACEHOLDER_M900");
+    } finally {
+      vi.useRealTimers();
     }
+  });
+
+  it("ignores a model id in Google's list that is not a string", () => {
+    const malformed = JSON.parse('{"gemini-4-hydrogen-xhigh":{"model":528}}') as Parameters<
+      typeof recordAntigravityAvailableModels
+    >[0];
+    recordAntigravityAvailableModels(malformed);
+    expect(modelEnumFor("antigravity-gemini-4-hydrogen-xhigh")).toBe("MODEL_PLACEHOLDER_M528");
+  });
+
+  it("takes the model_enum from Google's own model list once it has been fetched", () => {
+    recordAntigravityAvailableModels({
+      "gemini-4-argon-high": { displayName: "Gemini 4 Argon (High)", model: "MODEL_PLACEHOLDER_M900" },
+      "gemini-4-hydrogen-xhigh": { displayName: "Gemini 4 Hydrogen (XHigh)", model: "MODEL_PLACEHOLDER_M901" },
+    });
+    expect(modelEnumFor("antigravity-gemini-4-argon-high")).toBe("MODEL_PLACEHOLDER_M900");
+    expect(modelEnumFor("antigravity-gemini-4-hydrogen-xhigh")).toBe("MODEL_PLACEHOLDER_M901");
+    // A model the list does not mention keeps its known id.
+    expect(modelEnumFor("antigravity-gemini-4-hydrogen-low")).toBe("MODEL_PLACEHOLDER_M527");
   });
 });
 

@@ -177,6 +177,124 @@ describe("googleRequest", () => {
     expect(stdout).toContain("answer:ok");
   });
 
+  it("lets a short-lived process exit when the server never closes its side of the connection", async () => {
+    const server = createServer((_req, res) => res.end("ok"));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const upstreamPort = (server.address() as AddressInfo).port;
+    // A middlebox that swallows the client's FIN: the client's socket stays
+    // half-closed (FIN-WAIT-2), as seen on a hung `antigravity-accounts quota`.
+    const { connect, createServer: createTcpServer } = await import("node:net");
+    const proxy = createTcpServer({ allowHalfOpen: true }, (client) => {
+      const upstream = connect(upstreamPort, "127.0.0.1");
+      client.on("data", (chunk) => upstream.write(chunk));
+      upstream.on("data", (chunk) => client.write(chunk));
+      client.on("error", () => upstream.destroy());
+      upstream.on("error", () => client.destroy());
+      client.on("close", () => upstream.destroy());
+    });
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+    close = () => {
+      proxy.close();
+      server.close();
+    };
+    const origin = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`;
+
+    const { build } = await import("esbuild");
+    const { mkdtemp, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { fileURLToPath, pathToFileURL } = await import("node:url");
+    const dir = await mkdtemp(join(tmpdir(), "google-http-"));
+    const outfile = join(dir, "google-http.mjs");
+    await build({
+      entryPoints: [fileURLToPath(new URL("./google-http.ts", import.meta.url))],
+      bundle: true, format: "esm", platform: "node", outfile, logLevel: "silent",
+    });
+    const script = `import(${JSON.stringify(pathToFileURL(outfile).href)}).then(({ googleRequest }) =>
+      googleRequest(${JSON.stringify(`${origin}/token`)}, { method: "POST", body: "{}" }))
+      .then((res) => res.text()).then((text) => console.log("answer:" + text));`;
+    const { execFile } = await import("node:child_process");
+    const started = Date.now();
+    const result = await new Promise<{ killed: boolean; stdout: string }>((resolve) =>
+      execFile(process.execPath, ["--input-type=module", "-e", script], { timeout: 6_000 }, (error, stdout) =>
+        resolve({ killed: Boolean(error?.killed), stdout })))
+      .finally(() => rm(dir, { recursive: true, force: true }));
+
+    expect(result.stdout).toContain("answer:ok");
+    expect(result.killed).toBe(false);
+    expect(Date.now() - started).toBeLessThan(5_000);
+  }, 15_000);
+
+  it("drops a closed connection whose server never closes its side", async () => {
+    const server = createServer((_req, res) => res.end("ok"));
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const upstreamPort = (server.address() as AddressInfo).port;
+    const { connect, createServer: createTcpServer } = await import("node:net");
+    // Swallows the client's FIN, then writes to it later: the write only fails
+    // (the socket closes with an error) once the client has really let go.
+    let dropped: Promise<boolean> | undefined;
+    const proxy = createTcpServer({ allowHalfOpen: true }, (client) => {
+      const upstream = connect(upstreamPort, "127.0.0.1");
+      client.on("data", (chunk) => upstream.write(chunk));
+      upstream.on("data", (chunk) => client.write(chunk));
+      upstream.on("error", () => client.destroy());
+      client.on("close", () => upstream.destroy());
+      dropped = new Promise<boolean>((resolve) => {
+        client.on("error", () => resolve(true));
+        client.on("end", () => {
+          setTimeout(() => client.write("x"), 1_800);
+          setTimeout(() => client.write("x"), 2_000);
+          setTimeout(() => resolve(false), 2_600);
+        });
+      });
+    });
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+    close = () => {
+      proxy.close();
+      server.close();
+    };
+
+    const response = await googleRequest(`http://127.0.0.1:${(proxy.address() as AddressInfo).port}/token`, {
+      method: "POST",
+      body: "{}",
+    });
+    expect(await response.text()).toBe("ok");
+    expect(await dropped).toBe(true);
+  }, 10_000);
+
+  it("lets a short-lived process exit after an answer without a body", async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(204);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    close = () => server.close();
+    const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+    const { build } = await import("esbuild");
+    const { mkdtemp, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { fileURLToPath, pathToFileURL } = await import("node:url");
+    const dir = await mkdtemp(join(tmpdir(), "google-http-"));
+    const outfile = join(dir, "google-http.mjs");
+    await build({
+      entryPoints: [fileURLToPath(new URL("./google-http.ts", import.meta.url))],
+      bundle: true, format: "esm", platform: "node", outfile, logLevel: "silent",
+    });
+    const script = `import(${JSON.stringify(pathToFileURL(outfile).href)}).then(({ googleRequest }) =>
+      googleRequest(${JSON.stringify(`${origin}/revoke`)}, { method: "POST", body: "{}" }))
+      .then((res) => console.log("status:" + res.status));`;
+    const { execFile } = await import("node:child_process");
+    const result = await new Promise<{ killed: boolean; stdout: string }>((resolve) =>
+      execFile(process.execPath, ["--input-type=module", "-e", script], { timeout: 6_000 }, (error, stdout) =>
+        resolve({ killed: Boolean(error?.killed), stdout })))
+      .finally(() => rm(dir, { recursive: true, force: true }));
+
+    expect(result.stdout).toContain("status:204");
+    expect(result.killed).toBe(false);
+  }, 15_000);
+
   it("fails at once when no connection can be made", async () => {
     const server = createServer(() => {});
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

@@ -159,6 +159,25 @@ describe("mergeCatalog", () => {
     expect(mergeCatalog(existing, new Map(), { free: true })).toBeUndefined();
   });
 
+  it("caps the prompt of a user-configured model that sets no input limit", () => {
+    const configured = model({ limit: { context: 1_048_576, output: 262_144 } });
+    const curated = model({ limit: { context: 1_048_576, input: 512_000, output: 262_144 } });
+    const merged = mergeCatalog(new Map([["m", configured]]), new Map([["m", curated]]));
+    expect(merged?.[0]?.limit).toEqual({ context: 1_048_576, input: 512_000, output: 262_144 });
+  });
+
+  it("keeps an input limit the user configured", () => {
+    const configured = model({ limit: { context: 1_048_576, input: 900_000, output: 65_536 } });
+    const curated = model({ limit: { context: 1_048_576, input: 512_000, output: 65_536 } });
+    expect(mergeCatalog(new Map([["m", configured]]), new Map([["m", curated]]))).toBeUndefined();
+  });
+
+  it("does not raise the prompt limit of a model the user gave a smaller context", () => {
+    const configured = model({ limit: { context: 256_000, output: 65_536 } });
+    const curated = model({ limit: { context: 1_048_576, input: 512_000, output: 65_536 } });
+    expect(mergeCatalog(new Map([["m", configured]]), new Map([["m", curated]]))).toBeUndefined();
+  });
+
   it("returns undefined when the provider already matches", () => {
     const existing = new Map([["m", model()]]);
     expect(mergeCatalog(existing, new Map([["m", model({ name: "other" })]]))).toBeUndefined();

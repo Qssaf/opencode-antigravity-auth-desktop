@@ -1,3 +1,6 @@
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { DEFAULT_CONFIG } from "./config"
 
@@ -75,6 +78,53 @@ describe("debug sink policy", () => {
     expect(isDebugEnabled()).toBe(true)
     expect(isDebugTuiEnabled()).toBe(false)
     expect(getLogFilePath()).toContain("antigravity-debug-")
+  })
+
+  describe("log files", () => {
+    let logDir: string
+
+    beforeEach(() => {
+      logDir = mkdtempSync(join(tmpdir(), "antigravity-debug-logs-"))
+    })
+
+    afterEach(() => {
+      rmSync(logDir, { recursive: true, force: true })
+    })
+
+    const logFiles = () => readdirSync(logDir).filter((file) => file.endsWith(".log")).sort()
+
+    it("creates no log file and deletes no old one until something is logged", async () => {
+      const old = Array.from({ length: 30 }, (_, i) => `antigravity-debug-old-${String(i).padStart(2, "0")}.log`)
+      for (const file of old) writeFileSync(join(logDir, file), "kept\n")
+      const { initializeDebug, debugLogToFile, getLogFilePath } = await import("./debug")
+
+      initializeDebug({ ...DEFAULT_CONFIG, debug: true, log_dir: logDir })
+      expect(logFiles()).toEqual(old)
+
+      debugLogToFile("first line")
+      const logFile = getLogFilePath()
+      if (!logFile) throw new Error("no log file path")
+      await vi.waitFor(() => expect(readFileSync(logFile, "utf8")).toContain("first line"))
+      // The 25 newest old files and the new one.
+      expect(logFiles()).toHaveLength(26)
+    })
+
+    it("keeps writing to one file when it is initialised again", async () => {
+      const { initializeDebug, debugLogToFile, getLogFilePath } = await import("./debug")
+      const config = { ...DEFAULT_CONFIG, debug: true, log_dir: logDir }
+
+      initializeDebug(config)
+      debugLogToFile("before")
+      const logFile = getLogFilePath()
+      if (!logFile) throw new Error("no log file path")
+      await new Promise((resolve) => setTimeout(resolve, 5))
+      initializeDebug(config)
+      debugLogToFile("after")
+
+      expect(getLogFilePath()).toBe(logFile)
+      await vi.waitFor(() => expect(readFileSync(logFile, "utf8")).toMatch(/before[\s\S]*after/))
+      expect(logFiles()).toHaveLength(1)
+    })
   })
 
   it("redacts API keys in debug headers and URLs", async () => {

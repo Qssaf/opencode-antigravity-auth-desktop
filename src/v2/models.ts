@@ -150,10 +150,21 @@ export interface MergeCatalogOptions {
 }
 
 /**
+ * Gives a configured model the catalog's prompt cap when its config sets none.
+ * A model listed in opencode.json with only `context` and `output` would
+ * otherwise be compacted near its full window instead of where Antigravity does.
+ */
+function withCatalogPromptLimit(model: ModelInfo, curated: ModelInfo | undefined): ModelInfo {
+  const input = curated?.limit.input;
+  if (input === undefined || model.limit.input !== undefined || input >= model.limit.context) return model;
+  return { ...model, limit: { ...model.limit, input } };
+}
+
+/**
  * Adds catalog models the provider does not have yet and migrates legacy
  * thinking keys on models it does have. Existing models keep every other
- * field (apart from their price when `free`), so user configuration always
- * wins over the plugin defaults.
+ * field (apart from their price when `free`, and a prompt cap they do not
+ * set), so user configuration always wins over the plugin defaults.
  *
  * Returns `undefined` when the provider already matches, so callers can skip
  * rewriting the provider's model inventory.
@@ -167,7 +178,7 @@ export function mergeCatalog(
   let changed = false;
 
   for (const [id, model] of existing) {
-    let next = migrateModelSettings(model);
+    let next = withCatalogPromptLimit(migrateModelSettings(model), catalog.get(id));
     if (options.free && !isFree(next.cost)) {
       next = { ...next, cost: FREE_COST };
     }

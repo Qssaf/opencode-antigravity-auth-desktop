@@ -19,7 +19,23 @@ export interface ModelVariant {
 
 export interface ModelLimit {
   context: number;
+  /** Largest prompt OpenCode may send; it compacts the chat before reaching this. */
+  input?: number;
   output: number;
+}
+
+/**
+ * Where Antigravity 2.35.0 checkpoints (compacts) a chat although the window is 1M: Hydrogen at
+ * 500-537k and 3.8 Flash at 240-256k in its own transcripts (2026-11-26); Argon is assumed to match Hydrogen.
+ * Every step re-sends the whole chat against the quota, so the same caps apply here.
+ */
+export const GEMINI_4_PROMPT_LIMIT = 512_000;
+export const GEMINI_3_8_FLASH_PROMPT_LIMIT = 256_000;
+
+function promptLimitForModel(modelId: string): number | undefined {
+  if (/(?:^|-)gemini-4-(?:argon|hydrogen)(?:-|$)/.test(modelId)) return GEMINI_4_PROMPT_LIMIT;
+  if (/(?:^|-)gemini-3\.8-flash(?:-(?:low|medium|high))?$/.test(modelId)) return GEMINI_3_8_FLASH_PROMPT_LIMIT;
+  return undefined;
 }
 
 export type ModelModality = "text" | "image" | "pdf";
@@ -54,6 +70,8 @@ export interface AntigravityAvailableModel {
   /** Listed but not served to this account (a paid-plan model on a free one). */
   disabled?: boolean;
   supportsThinking?: boolean;
+  /** The model's enum name (`MODEL_PLACEHOLDER_M528`), sent back as the `model_enum` label. */
+  model?: string;
 }
 
 export type AntigravityAvailableModels = Record<string, AntigravityAvailableModel>;
@@ -67,7 +85,7 @@ export const OPENCODE_MODEL_DEFINITIONS: OpencodeModelDefinitions = {
   "antigravity-gemini-3.8-flash": {
     name: "Gemini 3.8 Flash (Antigravity)",
     temperature: false,
-    limit: { context: 1048576, output: 65536 },
+    limit: { context: 1048576, input: GEMINI_3_8_FLASH_PROMPT_LIMIT, output: 65536 },
     modalities: DEFAULT_MODALITIES,
     variants: {
       low: { thinkingLevel: "low" },
@@ -81,7 +99,7 @@ export const OPENCODE_MODEL_DEFINITIONS: OpencodeModelDefinitions = {
   "antigravity-gemini-4-argon": {
     name: "Gemini 4 Argon (Antigravity)",
     temperature: false,
-    limit: { context: 1048576, output: 65536 },
+    limit: { context: 1048576, input: GEMINI_4_PROMPT_LIMIT, output: 65536 },
     modalities: DEFAULT_MODALITIES,
     variants: {
       low: { thinkingLevel: "low" },
@@ -94,7 +112,7 @@ export const OPENCODE_MODEL_DEFINITIONS: OpencodeModelDefinitions = {
   "antigravity-gemini-4-hydrogen": {
     name: "Gemini 4 Hydrogen (Antigravity)",
     temperature: false,
-    limit: { context: 1048576, output: 262144 },
+    limit: { context: 1048576, input: GEMINI_4_PROMPT_LIMIT, output: 262144 },
     modalities: DEFAULT_MODALITIES,
     variants: {
       low: { thinkingLevel: "low" },
@@ -128,7 +146,8 @@ function defaultLimitForModel(modelId: string): ModelLimit {
   if (modelId.includes("claude")) {
     return { context: 200000, output: 64000 };
   }
-  return { context: 1048576, output: 65536 };
+  const input = promptLimitForModel(modelId);
+  return { context: 1048576, ...(input ? { input } : {}), output: 65536 };
 }
 
 function defaultVariantsForModel(modelId: string): Record<string, ModelVariant> | undefined {
